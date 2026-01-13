@@ -6,7 +6,7 @@ import { STOCK_LIST, StockSymbol } from "@/lib/stockList";
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
 } from 'recharts';
-import { ArrowUp, ArrowDown, Activity, BarChart2, Zap, TrendingUp, ScanEye } from 'lucide-react';
+import { ArrowUp, ArrowDown, Activity, BarChart2, Zap, TrendingUp, ScanEye, Newspaper, Briefcase } from 'lucide-react';
 
 export default function Home() {
   const [selectedStock, setSelectedStock] = useState<string>(STOCK_LIST[0].symbol);
@@ -37,6 +37,12 @@ export default function Home() {
     if (score <= 40) return "text-rose-400";
     return "text-yellow-400";
   };
+
+  const formatLargeNumber = (num: number) => {
+    if (num >= 1.0e+7) return (num / 1.0e+7).toFixed(2) + " Cr";
+    if (num >= 1.0e+5) return (num / 1.0e+5).toFixed(2) + " L";
+    return num.toString();
+  }
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
@@ -88,6 +94,7 @@ export default function Home() {
               onChange={(e) => setTimeframe(e.target.value)}
               className="bg-transparent text-white text-sm px-4 py-2 outline-none cursor-pointer [&>option]:bg-slate-900"
             >
+              <option value="1W">1 Week</option>
               <option value="1M">1 Month</option>
               <option value="3M">3 Months</option>
               <option value="6M">6 Months</option>
@@ -133,7 +140,7 @@ export default function Home() {
               </div>
 
               {/* Chart */}
-              <div className="bg-[#0A0A0A] border border-white/5 rounded-2xl p-6 h-100 shadow-2xl relative overflow-hidden">
+              <div className="bg-[#0A0A0A] border border-white/5 rounded-2xl p-6 h-[400px] shadow-2xl relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-full bg-blue-500/5 blur-3xl pointer-events-none"></div>
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={analysis.history}>
@@ -174,32 +181,54 @@ export default function Home() {
                 </ResponsiveContainer>
               </div>
 
-              {/* NEW: Pattern Radar */}
-              <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
-                <h3 className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
-                  <ScanEye size={14} className="text-blue-400" /> Candlestick Patterns Detected
-                </h3>
+              {/* Patterns & News Container */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 
-                {analysis.patterns.length > 0 ? (
-                  <div className="flex flex-wrap gap-3">
-                    {analysis.patterns.map((pattern: string, i: number) => (
-                      <div key={i} className="px-4 py-2 bg-blue-500/20 border border-blue-500/30 text-blue-300 rounded-lg text-sm font-medium animate-pulse">
-                        {pattern}
-                      </div>
+                {/* Patterns */}
+                <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
+                  <h3 className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
+                    <ScanEye size={14} className="text-blue-400" /> Patterns
+                  </h3>
+                  {analysis.patterns.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {analysis.patterns.map((pattern: string, i: number) => (
+                        <div key={i} className="px-3 py-1 bg-blue-500/10 border border-blue-500/20 text-blue-300 rounded-md text-xs font-medium">
+                          {pattern}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-gray-500 text-sm italic">No patterns detected.</p>
+                  )}
+                </div>
+
+                {/* Signals List */}
+                <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
+                    <h3 className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
+                    <Zap size={14} className="text-yellow-400" /> Active Signals
+                    </h3>
+                    <div className="space-y-2 max-h-[150px] overflow-y-auto pr-2 custom-scrollbar">
+                    {analysis.details.map((detail: string, index: number) => (
+                        <div key={index} className="flex gap-2 items-start text-xs p-2 bg-white/5 rounded border border-white/5">
+                        <div className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${
+                            detail.includes("Bullish") || detail.includes("Uptrend") || detail.includes("Positive") || detail.includes("BUY") ? "bg-emerald-500" :
+                            detail.includes("Bearish") || detail.includes("Downtrend") || detail.includes("Negative") || detail.includes("SELL") ? "bg-rose-500" : 
+                            "bg-gray-400"
+                        }`} />
+                        <span className="text-gray-300 leading-snug">{detail}</span>
+                        </div>
                     ))}
-                  </div>
-                ) : (
-                  <p className="text-gray-500 text-sm italic">
-                    No clear reversal patterns (Doji, Hammer, Engulfing) detected in the last 5 candles.
-                  </p>
-                )}
+                    </div>
+                </div>
+
               </div>
+
             </div>
 
             {/* RIGHT COLUMN (4 cols) */}
             <div className="lg:col-span-4 space-y-6">
               
-              {/* Gauge */}
+              {/* Score Gauge */}
               <div className="bg-[#0A0A0A] border border-white/5 p-8 rounded-2xl flex flex-col items-center justify-center relative overflow-hidden">
                 <h3 className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-6">AI Technical Score</h3>
                 <div className="relative w-40 h-40 flex items-center justify-center">
@@ -225,8 +254,37 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Metrics Grid */}
-              <div className="grid grid-cols-2 gap-4">
+              {/* NEW: Fundamentals Card */}
+              <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
+                <h3 className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
+                  <Briefcase size={14} className="text-emerald-400" /> Fundamentals
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-3 bg-white/5 rounded-lg">
+                    <p className="text-xs text-gray-500 mb-1">Market Cap</p>
+                    <p className="text-sm font-bold text-white">₹{formatLargeNumber(analysis.fundamentals.marketCap)}</p>
+                  </div>
+                  <div className="p-3 bg-white/5 rounded-lg">
+                    <p className="text-xs text-gray-500 mb-1">P/E Ratio</p>
+                    <p className={`text-sm font-bold ${analysis.fundamentals.peRatio < 20 ? 'text-emerald-400' : 'text-white'}`}>
+                      {analysis.fundamentals.peRatio ? analysis.fundamentals.peRatio.toFixed(2) : 'N/A'}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-white/5 rounded-lg">
+                    <p className="text-xs text-gray-500 mb-1">P/B Ratio</p>
+                    <p className="text-sm font-bold text-white">
+                      {analysis.fundamentals.pbRatio ? analysis.fundamentals.pbRatio.toFixed(2) : 'N/A'}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-white/5 rounded-lg">
+                    <p className="text-xs text-gray-500 mb-1">52W High</p>
+                    <p className="text-sm font-bold text-white">₹{analysis.fundamentals.fiftyTwoWeekHigh}</p>
+                  </div>
+                </div>
+              </div>
+
+               {/* Metrics Grid */}
+               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-[#0A0A0A] border border-white/5 p-4 rounded-xl">
                   <div className="flex items-center gap-2 text-gray-400 mb-2">
                     <Activity size={14} /> <span className="text-xs font-medium uppercase">RSI (14)</span>
@@ -251,22 +309,30 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Signals */}
-              <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl grow">
+              {/* NEWS FEED */}
+              <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl flex-grow">
                 <h3 className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
-                  <Zap size={14} className="text-yellow-400" /> Active Signals
+                  <Newspaper size={14} className="text-purple-400" /> Recent News
                 </h3>
-                <div className="space-y-3">
-                  {analysis.details.map((detail: string, index: number) => (
-                    <div key={index} className="flex gap-3 items-start text-sm p-3 bg-white/5 rounded-lg border border-white/5">
-                      <div className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${
-                        detail.includes("Bullish") || detail.includes("Uptrend") || detail.includes("BUY") ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
-                        detail.includes("Bearish") || detail.includes("Downtrend") || detail.includes("SELL") ? "bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]" : 
-                        "bg-gray-400"
-                      }`} />
-                      <span className="text-gray-300 leading-snug">{detail}</span>
-                    </div>
-                  ))}
+                <div className="space-y-4">
+                  {analysis.news.length > 0 ? analysis.news.map((item: any, index: number) => (
+                    <a key={index} href={item.link} target="_blank" rel="noopener noreferrer" className="block group">
+                        <div className="flex gap-3 items-start">
+                            <div className={`mt-1.5 w-1 h-full rounded-full shrink-0 ${
+                                item.sentiment === 'Positive' ? 'bg-emerald-500' : 
+                                item.sentiment === 'Negative' ? 'bg-rose-500' : 'bg-gray-600'
+                            }`} style={{ minHeight: '30px' }} />
+                            <div>
+                                <h4 className="text-sm text-gray-300 group-hover:text-blue-400 transition-colors line-clamp-2">
+                                    {item.title}
+                                </h4>
+                                <p className="text-[10px] text-gray-600 mt-1">{new Date(item.pubDate).toDateString()}</p>
+                            </div>
+                        </div>
+                    </a>
+                  )) : (
+                    <p className="text-gray-500 text-sm">No recent news found.</p>
+                  )}
                 </div>
               </div>
 
