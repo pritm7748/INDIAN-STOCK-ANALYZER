@@ -2,8 +2,11 @@
 "use client";
 
 import { useState } from "react";
-// Import the interface along with the list
 import { STOCK_LIST, StockSymbol } from "@/lib/stockList";
+import { 
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
+} from 'recharts';
+import { ArrowUp, ArrowDown, Activity, BarChart2, Zap, TrendingUp } from 'lucide-react';
 
 export default function Home() {
   const [selectedStock, setSelectedStock] = useState<string>(STOCK_LIST[0].symbol);
@@ -18,109 +21,237 @@ export default function Home() {
       const res = await fetch(
         `/api/analyze?symbol=${selectedStock}&timeframe=${timeframe}`
       );
-      if (!res.ok) throw new Error("Analysis failed");
       const data = await res.json();
+      if (data.error) throw new Error(data.error);
       setAnalysis(data);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert("Failed to analyze. Please check the console.");
+      alert(err.message || "Analysis failed");
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <main className="min-h-screen bg-slate-950 text-white p-8">
-      <div className="max-w-4xl mx-auto space-y-8">
-        
-        {/* Header */}
-        <div className="text-center space-y-2">
-          <h1 className="text-4xl font-bold bg-linear-to-r from-blue-400 to-emerald-400 text-transparent bg-clip-text">
-            Indian Stock Analyzer
-          </h1>
-          <p className="text-slate-400">Nifty 500 & F&O Advanced Analysis</p>
-        </div>
+  const getScoreColor = (score: number) => {
+    if (score >= 60) return "text-emerald-400";
+    if (score <= 40) return "text-rose-400";
+    return "text-yellow-400";
+  };
 
-        {/* Controls */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-900 p-6 rounded-xl border border-slate-800">
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-slate-900 border border-slate-700 p-3 rounded-lg shadow-xl">
+          <p className="text-slate-400 text-xs mb-1">{label}</p>
+          <p className="text-white font-bold text-lg">
+            ₹{payload[0].value.toFixed(2)}
+          </p>
+        </div>
+      );
+    }
+    return null;
+  };
+
+  return (
+    <main className="min-h-screen bg-[#050505] text-gray-100 p-4 md:p-8 font-sans">
+      <div className="max-w-7xl mx-auto space-y-8">
+        
+        {/* Navbar */}
+        <div className="flex flex-col md:flex-row justify-between items-center border-b border-white/10 pb-6">
+          <div className="flex items-center gap-3">
+             <div className="bg-blue-600 p-2 rounded-lg">
+                <TrendingUp size={24} className="text-white" />
+             </div>
+             <div>
+                <h1 className="text-2xl font-bold tracking-tight text-white">
+                  TradeSense AI
+                </h1>
+                <p className="text-gray-500 text-xs uppercase tracking-wider">Pro Market Analytics</p>
+             </div>
+          </div>
           
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-slate-400">Select Stock</label>
-            <select
+          <div className="flex gap-3 mt-4 md:mt-0 w-full md:w-auto bg-white/5 p-1 rounded-xl">
+             <select
               value={selectedStock}
               onChange={(e) => setSelectedStock(e.target.value)}
-              className="bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-blue-500 outline-none"
+              className="bg-transparent text-white text-sm px-4 py-2 outline-none w-full md:w-48 cursor-pointer [&>option]:bg-slate-900"
             >
-              {/* We explicitly type 'stock' here */}
               {STOCK_LIST.map((stock: StockSymbol) => (
                 <option key={stock.symbol} value={stock.symbol}>
                   {stock.name}
                 </option>
               ))}
             </select>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-slate-400">Timeframe</label>
+            <div className="w-px bg-white/10 my-2"></div>
             <select
               value={timeframe}
               onChange={(e) => setTimeframe(e.target.value)}
-              className="bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-blue-500 outline-none"
+              className="bg-transparent text-white text-sm px-4 py-2 outline-none cursor-pointer [&>option]:bg-slate-900"
             >
-              <option value="1W">1 Week (Short Term)</option>
-              <option value="1M">1 Month (Short-Medium)</option>
-              <option value="3M">3 Months (Medium Term)</option>
-              <option value="6M">6 Months (Medium-Long)</option>
-              <option value="1Y">1 Year (Long Term)</option>
+              <option value="1M">1 Month</option>
+              <option value="3M">3 Months</option>
+              <option value="6M">6 Months</option>
+              <option value="1Y">1 Year</option>
             </select>
-          </div>
 
-          <div className="flex items-end">
             <button
               onClick={handleAnalyze}
               disabled={loading}
-              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-lg transition-all"
+              className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium px-6 py-2 rounded-lg transition-all text-sm shadow-lg shadow-blue-500/20"
             >
-              {loading ? "Analyzing..." : "Run Analysis"}
+              {loading ? "Analysing..." : "Run Analysis"}
             </button>
           </div>
         </div>
 
-        {/* Results Section */}
+        {/* DASHBOARD CONTENT */}
         {analysis && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-slate-900 p-6 rounded-xl border border-slate-800 text-center">
-                <p className="text-slate-400 mb-2">Recommendation</p>
-                <h2 className={`text-3xl font-black ${
-                  analysis.recommendation === 'BUY' ? 'text-green-400' : 
-                  analysis.recommendation === 'SELL' ? 'text-red-400' : 'text-yellow-400'
-                }`}>
-                  {analysis.recommendation}
-                </h2>
-              </div>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in duration-500">
+            
+            {/* MAIN CHART SECTION (Left - 8 cols) */}
+            <div className="lg:col-span-8 space-y-6">
               
-              <div className="bg-slate-900 p-6 rounded-xl border border-slate-800 text-center">
-                <p className="text-slate-400 mb-2">Technical Score</p>
-                <h2 className="text-3xl font-black text-white">{analysis.score}/100</h2>
+              {/* Price Banner */}
+              <div className="flex items-end justify-between">
+                <div>
+                  <h2 className="text-3xl font-bold text-white mb-1">{analysis.symbol}</h2>
+                  <div className="flex items-center gap-3">
+                    <span className="text-4xl font-light text-white">₹{analysis.price.toFixed(2)}</span>
+                    <span className={`flex items-center px-2 py-1 rounded-md text-sm font-medium ${analysis.change >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                      {analysis.change >= 0 ? <ArrowUp size={16} className="mr-1" /> : <ArrowDown size={16} className="mr-1" />}
+                      {Math.abs(analysis.change).toFixed(2)} ({analysis.changePercent.toFixed(2)}%)
+                    </span>
+                  </div>
+                </div>
+                <div className={`px-6 py-2 rounded-xl text-sm font-bold tracking-wide border ${
+                    analysis.recommendation.includes('BUY') ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' :
+                    analysis.recommendation.includes('SELL') ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' :
+                    'bg-yellow-500/10 border-yellow-500/20 text-yellow-400'
+                  }`}>
+                    {analysis.recommendation}
+                </div>
               </div>
 
-              <div className="bg-slate-900 p-6 rounded-xl border border-slate-800 text-center">
-                <p className="text-slate-400 mb-2">Current Price</p>
-                <h2 className="text-3xl font-black text-white">₹{analysis.price.toFixed(2)}</h2>
+              {/* Advanced Chart */}
+              <div className="bg-[#0A0A0A] border border-white/5 rounded-2xl p-6 h-112.5 shadow-2xl relative overflow-hidden">
+                {/* Background Glow */}
+                <div className="absolute top-0 left-0 w-full h-full bg-blue-500/5 blur-3xl pointer-events-none"></div>
+                
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={analysis.history}>
+                    <defs>
+                      <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
+                    <XAxis 
+                      dataKey="date" 
+                      stroke="#666" 
+                      fontSize={12} 
+                      tickLine={false}
+                      axisLine={false}
+                      dy={10}
+                    />
+                    <YAxis 
+                      stroke="#666" 
+                      fontSize={12} 
+                      domain={['auto', 'auto']} 
+                      tickLine={false}
+                      axisLine={false}
+                      dx={-10}
+                      tickFormatter={(value) => `₹${value}`}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Area 
+                      type="monotone" 
+                      dataKey="price" 
+                      stroke="#3b82f6" 
+                      strokeWidth={3}
+                      fillOpacity={1} 
+                      fill="url(#colorPrice)" 
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
             </div>
 
-            <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
-              <h3 className="text-xl font-bold mb-4 text-white">Analysis Breakdown</h3>
-              <ul className="space-y-3">
-                {analysis.details.map((detail: string, index: number) => (
-                  <li key={index} className="flex items-start gap-3 text-slate-300">
-                    <span className="mt-1.5 w-2 h-2 rounded-full bg-blue-500 shrink-0" />
-                    {detail}
-                  </li>
-                ))}
-              </ul>
+            {/* SIDEBAR METRICS (Right - 4 cols) */}
+            <div className="lg:col-span-4 space-y-6">
+              
+              {/* Score Gauge */}
+              <div className="bg-[#0A0A0A] border border-white/5 p-8 rounded-2xl flex flex-col items-center justify-center relative overflow-hidden">
+                <div className="absolute inset-0 bg-linear-to-br from-white/5 to-transparent pointer-events-none"></div>
+                <h3 className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-6">AI Technical Score</h3>
+                <div className="relative w-40 h-40 flex items-center justify-center">
+                  <svg className="w-full h-full transform -rotate-90">
+                    <circle cx="80" cy="80" r="70" stroke="#1f2937" strokeWidth="12" fill="none" />
+                    <circle 
+                      cx="80" cy="80" r="70" 
+                      stroke={analysis.score >= 60 ? "#10b981" : analysis.score <= 40 ? "#f43f5e" : "#eab308"} 
+                      strokeWidth="12" 
+                      fill="none" 
+                      strokeDasharray={440} 
+                      strokeDashoffset={440 - (440 * analysis.score) / 100}
+                      className="transition-all duration-1000 ease-out"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <span className={`text-4xl font-bold ${getScoreColor(analysis.score)}`}>
+                      {analysis.score}
+                    </span>
+                    <span className="text-xs text-gray-500 uppercase mt-1">out of 100</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Key Stats Grid */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-[#0A0A0A] border border-white/5 p-4 rounded-xl">
+                  <div className="flex items-center gap-2 text-gray-400 mb-2">
+                    <Activity size={14} /> <span className="text-xs font-medium uppercase">RSI (14)</span>
+                  </div>
+                  <p className={`text-2xl font-bold ${
+                    analysis.metrics.rsi > 70 ? 'text-rose-400' : 
+                    analysis.metrics.rsi < 30 ? 'text-emerald-400' : 'text-white'
+                  }`}>
+                    {analysis.metrics.rsi.toFixed(1)}
+                  </p>
+                </div>
+                
+                <div className="bg-[#0A0A0A] border border-white/5 p-4 rounded-xl">
+                  <div className="flex items-center gap-2 text-gray-400 mb-2">
+                    <BarChart2 size={14} /> <span className="text-xs font-medium uppercase">MACD</span>
+                  </div>
+                  <p className={`text-2xl font-bold ${
+                    analysis.metrics.macdHistogram > 0 ? 'text-emerald-400' : 'text-rose-400'
+                  }`}>
+                    {analysis.metrics.macdHistogram > 0 ? 'Bullish' : 'Bearish'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Signals List */}
+              <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl grow">
+                <h3 className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
+                  <Zap size={14} className="text-yellow-400" /> Active Signals
+                </h3>
+                <div className="space-y-3">
+                  {analysis.details.map((detail: string, index: number) => (
+                    <div key={index} className="flex gap-3 items-start text-sm p-3 bg-white/5 rounded-lg border border-white/5">
+                      <div className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${
+                        detail.includes("Bullish") || detail.includes("Uptrend") || detail.includes("BUY") ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
+                        detail.includes("Bearish") || detail.includes("Downtrend") || detail.includes("SELL") ? "bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]" : 
+                        "bg-gray-400"
+                      }`} />
+                      <span className="text-gray-300 leading-snug">{detail}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
             </div>
           </div>
         )}
