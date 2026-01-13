@@ -4,9 +4,9 @@
 import { useState } from "react";
 import { STOCK_LIST, StockSymbol } from "@/lib/stockList";
 import { 
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine 
 } from 'recharts';
-import { ArrowUp, ArrowDown, Activity, BarChart2, Zap, TrendingUp, ScanEye, Newspaper, Briefcase } from 'lucide-react';
+import { ArrowUp, ArrowDown, Activity, BarChart2, Zap, TrendingUp, ScanEye, Newspaper, Briefcase, History, BrainCircuit } from 'lucide-react';
 
 export default function Home() {
   const [selectedStock, setSelectedStock] = useState<string>(STOCK_LIST[0].symbol);
@@ -39,6 +39,7 @@ export default function Home() {
   };
 
   const formatLargeNumber = (num: number) => {
+    if (!num) return "N/A";
     if (num >= 1.0e+7) return (num / 1.0e+7).toFixed(2) + " Cr";
     if (num >= 1.0e+5) return (num / 1.0e+5).toFixed(2) + " L";
     return num.toString();
@@ -169,6 +170,29 @@ export default function Home() {
                       tickFormatter={(value) => `₹${value}`}
                     />
                     <Tooltip content={<CustomTooltip />} />
+                    
+                    {/* Support Lines (Green) */}
+                    {analysis.levels?.support?.map((level: number, i: number) => (
+                      <ReferenceLine 
+                        key={`sup-${i}`} 
+                        y={level} 
+                        stroke="#10b981" 
+                        strokeDasharray="3 3" 
+                        label={{ value: 'SUP', position: 'insideRight', fill: '#10b981', fontSize: 10 }} 
+                      />
+                    ))}
+
+                    {/* Resistance Lines (Red) */}
+                    {analysis.levels?.resistance?.map((level: number, i: number) => (
+                      <ReferenceLine 
+                        key={`res-${i}`} 
+                        y={level} 
+                        stroke="#f43f5e" 
+                        strokeDasharray="3 3" 
+                        label={{ value: 'RES', position: 'insideRight', fill: '#f43f5e', fontSize: 10 }} 
+                      />
+                    ))}
+
                     <Area 
                       type="monotone" 
                       dataKey="price" 
@@ -254,7 +278,62 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* NEW: Fundamentals Card */}
+              {/* AI Forecast */}
+              {analysis.prediction && analysis.prediction.length > 0 && (
+                <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
+                  <h3 className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
+                    <BrainCircuit size={14} className="text-purple-400" /> AI Forecast ({timeframe})
+                  </h3>
+                  
+                  <div className="flex items-end justify-between mb-4">
+                    <div>
+                      <p className="text-xs text-gray-500">Target (Avg)</p>
+                      <p className="text-xl font-bold text-white">
+                        ₹{analysis.prediction[analysis.prediction.length - 1].price.toFixed(2)}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-gray-500">Trend</p>
+                      <p className={`text-sm font-bold ${
+                        analysis.prediction[analysis.prediction.length - 1].price > analysis.price 
+                          ? 'text-emerald-400' 
+                          : 'text-rose-400'
+                      }`}>
+                        {analysis.prediction[analysis.prediction.length - 1].price > analysis.price ? 'BULLISH' : 'BEARISH'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="h-[100px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={analysis.prediction}>
+                        <defs>
+                          <linearGradient id="colorCone" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <XAxis dataKey="date" hide />
+                        <YAxis domain={['auto', 'auto']} hide />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#111', borderColor: '#333', fontSize: '12px' }}
+                          itemStyle={{ color: '#fff' }}
+                          formatter={(val: number) => `₹${val.toFixed(2)}`}
+                          labelStyle={{ color: '#888' }}
+                        />
+                        <Area type="monotone" dataKey="upper" stroke="none" fill="#8b5cf6" fillOpacity={0.1} />
+                        <Area type="monotone" dataKey="price" stroke="#8b5cf6" strokeWidth={2} fill="url(#colorCone)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="mt-2 flex justify-between text-[10px] text-gray-500">
+                    <span>{analysis.prediction[0].date}</span>
+                    <span>{analysis.prediction[analysis.prediction.length - 1].date}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Fundamentals Card (Crash Fixed) */}
               <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
                 <h3 className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
                   <Briefcase size={14} className="text-emerald-400" /> Fundamentals
@@ -262,23 +341,25 @@ export default function Home() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-3 bg-white/5 rounded-lg">
                     <p className="text-xs text-gray-500 mb-1">Market Cap</p>
-                    <p className="text-sm font-bold text-white">₹{formatLargeNumber(analysis.fundamentals.marketCap)}</p>
+                    <p className="text-sm font-bold text-white">
+                        ₹{formatLargeNumber(analysis.fundamentals?.marketCap)}
+                    </p>
                   </div>
                   <div className="p-3 bg-white/5 rounded-lg">
                     <p className="text-xs text-gray-500 mb-1">P/E Ratio</p>
-                    <p className={`text-sm font-bold ${analysis.fundamentals.peRatio < 20 ? 'text-emerald-400' : 'text-white'}`}>
-                      {analysis.fundamentals.peRatio ? analysis.fundamentals.peRatio.toFixed(2) : 'N/A'}
+                    <p className={`text-sm font-bold ${analysis.fundamentals?.peRatio < 20 ? 'text-emerald-400' : 'text-white'}`}>
+                      {analysis.fundamentals?.peRatio ? analysis.fundamentals.peRatio.toFixed(2) : 'N/A'}
                     </p>
                   </div>
                   <div className="p-3 bg-white/5 rounded-lg">
                     <p className="text-xs text-gray-500 mb-1">P/B Ratio</p>
                     <p className="text-sm font-bold text-white">
-                      {analysis.fundamentals.pbRatio ? analysis.fundamentals.pbRatio.toFixed(2) : 'N/A'}
+                      {analysis.fundamentals?.pbRatio ? analysis.fundamentals.pbRatio.toFixed(2) : 'N/A'}
                     </p>
                   </div>
                   <div className="p-3 bg-white/5 rounded-lg">
                     <p className="text-xs text-gray-500 mb-1">52W High</p>
-                    <p className="text-sm font-bold text-white">₹{analysis.fundamentals.fiftyTwoWeekHigh}</p>
+                    <p className="text-sm font-bold text-white">₹{analysis.fundamentals?.fiftyTwoWeekHigh || 'N/A'}</p>
                   </div>
                 </div>
               </div>
@@ -308,6 +389,48 @@ export default function Home() {
                   </p>
                 </div>
               </div>
+
+              {/* Backtest Accuracy Card */}
+              {analysis.backtest && (
+                <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
+                    <h3 className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
+                    <History size={14} className="text-orange-400" /> Model Accuracy ({timeframe})
+                    </h3>
+                    
+                    <div className="flex items-end justify-between mb-2">
+                    <span className="text-3xl font-bold text-white">{analysis.backtest.accuracy.toFixed(1)}%</span>
+                    <span className={`text-sm font-medium ${analysis.backtest.totalReturn >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {analysis.backtest.totalReturn >= 0 ? '+' : ''}{analysis.backtest.totalReturn.toFixed(1)}% Return
+                    </span>
+                    </div>
+
+                    <div className="w-full bg-gray-800 rounded-full h-2 mb-6">
+                    <div 
+                        className={`h-2 rounded-full ${analysis.backtest.accuracy > 50 ? 'bg-emerald-500' : 'bg-rose-500'}`} 
+                        style={{ width: `${analysis.backtest.accuracy}%` }}
+                    ></div>
+                    </div>
+
+                    <div className="space-y-3">
+                    <p className="text-xs text-gray-500 mb-2">Recent Simulated Trades</p>
+                    {analysis.backtest.results.slice(-4).reverse().map((trade: any, i: number) => (
+                        <div key={i} className="flex justify-between items-center text-xs p-2 bg-white/5 rounded border border-white/5">
+                        <div className="flex gap-2">
+                            <span className="text-gray-400">{trade.date}</span>
+                            <span className={`font-bold ${trade.signal === 'BUY' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {trade.signal}
+                            </span>
+                        </div>
+                        <div className="text-right">
+                            <span className={trade.isWin ? 'text-emerald-400' : 'text-rose-400'}>
+                            {trade.isWin ? 'WIN' : 'LOSS'} ({trade.returnPct.toFixed(1)}%)
+                            </span>
+                        </div>
+                        </div>
+                    ))}
+                    </div>
+                </div>
+                )}
 
               {/* NEWS FEED */}
               <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl flex-grow">
