@@ -1,8 +1,8 @@
 // src/lib/analyzer.ts
-import yahooFinance from 'yahoo-finance2';
+import yahooFinance from 'yahoo-finance2'; // Standard default import
 import { RSI, SMA } from 'technicalindicators';
 
-// 1. Define Strict Types for our Analysis
+// Define Analysis Types
 export type TimeFrame = '1W' | '1M' | '3M' | '6M' | '1Y';
 
 export interface AnalysisResult {
@@ -18,34 +18,32 @@ export interface AnalysisResult {
 }
 
 export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promise<AnalysisResult> {
-  // 2. Setup the query options
   let interval: '1d' | '1wk' = '1d';
   const period1 = '2023-01-01'; 
 
+  // Adjust data fetch based on timeframe
   if (timeframe === '6M' || timeframe === '1Y') {
-    interval = '1wk';
+    interval = '1wk'; 
   }
 
   const queryOptions = { period1, interval };
 
-  // 3. Fetch Data with Explicit Casting
-  // We cast to 'any' to bypass the 'never' type error
+  // 1. Fetch Data
+  // We explicitly cast the result to 'any[]' to prevent TypeScript from blocking us.
+  // We use the default 'yahooFinance' instance directly.
   const historical = await yahooFinance.historical(symbol, queryOptions as any) as any[];
   const quote = await yahooFinance.quote(symbol) as any;
 
-  // 4. Validate Data
+  // 2. Validate Data
   if (!historical || historical.length < 50) {
     throw new Error(`Insufficient data for ${symbol}. Market might be closed or symbol invalid.`);
   }
 
-  // 5. Extract closing prices safely
-  // Since we cast 'historical' to any[], we can now map it without errors
+  // 3. Extract closing prices safely
   const closes: number[] = historical.map((h: any) => h.close);
-  
-  // Get current price safely
   const currentPrice = quote.regularMarketPrice || closes[closes.length - 1];
 
-  // 6. Calculate Indicators
+  // 4. Calculate Indicators
   const rsiInput = { values: closes, period: 14 };
   const rsiValues = RSI.calculate(rsiInput);
   const currentRSI = rsiValues[rsiValues.length - 1] || 0;
@@ -54,7 +52,7 @@ export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promis
   const sma50Values = SMA.calculate(smaInput);
   const currentSMA50 = sma50Values[sma50Values.length - 1] || 0;
 
-  // 7. Analysis Logic
+  // 5. Analysis Logic
   let score = 50;
   let details: string[] = [];
   let recommendation: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
@@ -71,7 +69,7 @@ export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promis
       details.push("RSI Overbought (Bearish)");
     }
 
-    // SMA Logic
+    // Trend Logic
     if (currentPrice > currentSMA50) {
       score += 10;
       details.push("Price above 50 SMA (Uptrend)");
@@ -90,7 +88,7 @@ export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promis
     }
   }
 
-  // 8. Final Scoring
+  // Final Verdict
   if (score >= 70) recommendation = 'BUY';
   else if (score <= 30) recommendation = 'SELL';
 
