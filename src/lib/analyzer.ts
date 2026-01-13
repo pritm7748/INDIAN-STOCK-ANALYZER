@@ -186,3 +186,5 @@ export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promis
     prediction 
   };
 }
+
+export type { TimeFrame };
