@@ -6,7 +6,7 @@ import { STOCK_LIST, StockSymbol } from "@/lib/stockList";
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
 } from 'recharts';
-import { ArrowUp, ArrowDown, Activity, BarChart2, Zap, TrendingUp } from 'lucide-react';
+import { ArrowUp, ArrowDown, Activity, BarChart2, Zap, TrendingUp, ScanEye } from 'lucide-react';
 
 export default function Home() {
   const [selectedStock, setSelectedStock] = useState<string>(STOCK_LIST[0].symbol);
@@ -108,7 +108,7 @@ export default function Home() {
         {analysis && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in duration-500">
             
-            {/* MAIN CHART SECTION (Left - 8 cols) */}
+            {/* LEFT COLUMN (8 cols) */}
             <div className="lg:col-span-8 space-y-6">
               
               {/* Price Banner */}
@@ -132,11 +132,9 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Advanced Chart */}
-              <div className="bg-[#0A0A0A] border border-white/5 rounded-2xl p-6 h-112.5 shadow-2xl relative overflow-hidden">
-                {/* Background Glow */}
+              {/* Chart */}
+              <div className="bg-[#0A0A0A] border border-white/5 rounded-2xl p-6 h-100 shadow-2xl relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-full bg-blue-500/5 blur-3xl pointer-events-none"></div>
-                
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={analysis.history}>
                     <defs>
@@ -175,14 +173,34 @@ export default function Home() {
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
+
+              {/* NEW: Pattern Radar */}
+              <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
+                <h3 className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
+                  <ScanEye size={14} className="text-blue-400" /> Candlestick Patterns Detected
+                </h3>
+                
+                {analysis.patterns.length > 0 ? (
+                  <div className="flex flex-wrap gap-3">
+                    {analysis.patterns.map((pattern: string, i: number) => (
+                      <div key={i} className="px-4 py-2 bg-blue-500/20 border border-blue-500/30 text-blue-300 rounded-lg text-sm font-medium animate-pulse">
+                        {pattern}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-gray-500 text-sm italic">
+                    No clear reversal patterns (Doji, Hammer, Engulfing) detected in the last 5 candles.
+                  </p>
+                )}
+              </div>
             </div>
 
-            {/* SIDEBAR METRICS (Right - 4 cols) */}
+            {/* RIGHT COLUMN (4 cols) */}
             <div className="lg:col-span-4 space-y-6">
               
-              {/* Score Gauge */}
+              {/* Gauge */}
               <div className="bg-[#0A0A0A] border border-white/5 p-8 rounded-2xl flex flex-col items-center justify-center relative overflow-hidden">
-                <div className="absolute inset-0 bg-linear-to-br from-white/5 to-transparent pointer-events-none"></div>
                 <h3 className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-6">AI Technical Score</h3>
                 <div className="relative w-40 h-40 flex items-center justify-center">
                   <svg className="w-full h-full transform -rotate-90">
@@ -207,7 +225,7 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Key Stats Grid */}
+              {/* Metrics Grid */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-[#0A0A0A] border border-white/5 p-4 rounded-xl">
                   <div className="flex items-center gap-2 text-gray-400 mb-2">
@@ -233,7 +251,7 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Signals List */}
+              {/* Signals */}
               <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl grow">
                 <h3 className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
                   <Zap size={14} className="text-yellow-400" /> Active Signals
