@@ -13,7 +13,7 @@ import {
   Shield, Target, AlertTriangle, Bookmark, BookmarkCheck, RefreshCw,
   ChevronDown, ChevronUp, Info, Gauge, Waves, LineChart
 } from 'lucide-react';
-import { VolatilityData } from "@/lib/types";
+
 
 // Types for enhanced analysis
 interface AnalysisData {
