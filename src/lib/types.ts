@@ -7,6 +7,7 @@ export interface NewsItem {
   link: string;
   pubDate: string;
   sentiment: 'Positive' | 'Negative' | 'Neutral';
+  recencyWeight?: number; // NEW: How much this news matters
 }
 
 export interface MetricData {
@@ -16,6 +17,9 @@ export interface MetricData {
   bollingerLower: number;
   sma50: number;
   sma200: number;
+  // NEW: EMA
+  ema9: number;
+  ema21: number;
 }
 
 export interface FundamentalData {
@@ -57,14 +61,49 @@ export interface PredictionPoint {
   isFuture: boolean;
 }
 
-// NEW: Risk & Context Data
-export interface RiskData {
-  beta: number;
-  alpha: number;
-  correlation: number; // -1 to 1
-  marketTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+// NEW: Volume Analysis Data
+export interface VolumeData {
+  obv: number;
+  obvTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  vwap: number;
+  volumeSpike: boolean;
+  avgVolume: number;
+  currentVolume: number;
+  volumeRatio: number; // current / avg (>2 = spike)
+  volumeTrend: 'ACCUMULATION' | 'DISTRIBUTION' | 'NEUTRAL';
 }
 
+// NEW: Volatility & Trend Data
+export interface VolatilityData {
+  atr: number;
+  atrPercent: number; // ATR as % of price (useful for stop-loss)
+  supertrend: number;
+  supertrendSignal: 'BUY' | 'SELL';
+  adx: number;
+  trendStrength: 'STRONG' | 'MODERATE' | 'WEAK' | 'NO TREND';
+  plusDI: number;
+  minusDI: number;
+}
+
+// UPDATED: Risk & Context Data (Enhanced)
+export interface RiskData {
+  // Market Correlation
+  beta: number;
+  alpha: number;
+  correlation: number;
+  marketTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  // NEW: Advanced Risk Metrics
+  sharpeRatio: number;
+  sortinoRatio: number;
+  maxDrawdown: number;
+  maxDrawdownPercent: number;
+  volatility: number; // Annualized
+  valueAtRisk: number; // 95% 1-day VaR
+  // NEW: Risk Grade
+  riskGrade: 'LOW' | 'MODERATE' | 'HIGH' | 'VERY HIGH';
+}
+
+// UPDATED: Analysis Result
 export interface AnalysisResult {
   symbol: string;
   price: number;
@@ -72,15 +111,18 @@ export interface AnalysisResult {
   changePercent: number;
   recommendation: 'STRONG BUY' | 'BUY' | 'HOLD' | 'SELL' | 'STRONG SELL';
   score: number;
+  confidence: number; // NEW: 0-100 confidence in the recommendation
   details: string[];
   patterns: string[];
   news: NewsItem[];
   fundamentals: FundamentalData;
   metrics: MetricData;
   levels: LevelData;
-  risk: RiskData; // NEW FIELD
+  risk: RiskData;
+  volume: VolumeData; // NEW
+  volatility: VolatilityData; // NEW
   zigzag: ZigZagPoint[];
-  history: { date: string; price: number }[];
+  history: { date: string; price: number; volume?: number }[];
   backtest: {
     results: BacktestResult[];
     accuracy: number;
