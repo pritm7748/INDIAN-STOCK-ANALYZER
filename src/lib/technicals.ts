@@ -1,7 +1,7 @@
 // src/lib/technicals.ts
 
-import { RSI, SMA, EMA, MACD, BollingerBands, ATR, ADX } from 'technicalindicators';
-import { ZigZagPoint, VolumeData, VolatilityData } from './types';
+import { RSI, SMA, EMA, MACD, BollingerBands, ATR, ADX, StochasticRSI } from 'technicalindicators';
+import { ZigZagPoint, VolumeData, VolatilityData, StochRSIData, IchimokuData } from './types';
 
 // ============================================================
 // 1. BASIC INDICATORS (Enhanced with EMA)
@@ -677,4 +677,314 @@ export function calculateRiskMetrics(
     valueAtRisk,
     riskGrade
   };
+}
+
+// ============================================================
+// 10. STOCHASTIC RSI
+// ============================================================
+
+/**
+ * Stochastic RSI - Momentum oscillator that measures RSI relative to its range
+ * More sensitive than regular RSI, good for identifying momentum shifts
+ * 
+ * Signals:
+ * - K < 20: Oversold
+ * - K > 80: Overbought  
+ * - K crosses above D: Bullish
+ * - K crosses below D: Bearish
+ */
+export function calculateStochRSI(closes: number[], period: number = 14): StochRSIData {
+  const stochRsiResult = StochasticRSI.calculate({
+    values: closes,
+    rsiPeriod: period,
+    stochasticPeriod: period,
+    kPeriod: 3,
+    dPeriod: 3
+  });
+
+  if (stochRsiResult.length < 2) {
+    return {
+      k: 50,
+      d: 50,
+      signal: 'NEUTRAL',
+      crossover: false
+    };
+  }
+
+  const current = stochRsiResult[stochRsiResult.length - 1];
+  const previous = stochRsiResult[stochRsiResult.length - 2];
+
+  const k = (current.k ?? 50) * 100;  // Convert to 0-100 scale
+  const d = (current.d ?? 50) * 100;
+  const prevK = (previous.k ?? 50) * 100;
+  const prevD = (previous.d ?? 50) * 100;
+
+  // Detect crossovers
+  const bullishCross = prevK <= prevD && k > d;
+  const bearishCross = prevK >= prevD && k < d;
+
+  // Determine signal
+  let signal: StochRSIData['signal'] = 'NEUTRAL';
+  
+  if (bullishCross && k < 30) {
+    signal = 'BULLISH_CROSS';  // Bullish cross in oversold zone - strong signal
+  } else if (bearishCross && k > 70) {
+    signal = 'BEARISH_CROSS';  // Bearish cross in overbought zone - strong signal
+  } else if (k < 20) {
+    signal = 'OVERSOLD';
+  } else if (k > 80) {
+    signal = 'OVERBOUGHT';
+  } else if (bullishCross) {
+    signal = 'BULLISH_CROSS';
+  } else if (bearishCross) {
+    signal = 'BEARISH_CROSS';
+  }
+
+  return {
+    k: Math.round(k * 100) / 100,
+    d: Math.round(d * 100) / 100,
+    signal,
+    crossover: bullishCross || bearishCross
+  };
+}
+
+// ============================================================
+// 11. ICHIMOKU CLOUD
+// ============================================================
+
+/**
+ * Ichimoku Kinko Hyo - Complete trading system from Japan
+ * 
+ * Components:
+ * - Tenkan-sen (Conversion Line): (9-period high + 9-period low) / 2
+ * - Kijun-sen (Base Line): (26-period high + 26-period low) / 2
+ * - Senkou Span A (Leading Span A): (Tenkan + Kijun) / 2, plotted 26 periods ahead
+ * - Senkou Span B (Leading Span B): (52-period high + 52-period low) / 2, plotted 26 periods ahead
+ * - Chikou Span (Lagging Span): Close plotted 26 periods behind
+ * 
+ * Signals:
+ * - Price above cloud: Bullish
+ * - Price below cloud: Bearish
+ * - Tenkan crosses above Kijun: Bullish (TK Cross)
+ * - Green cloud (Span A > Span B): Bullish momentum
+ */
+export function calculateIchimoku(
+  highs: number[], 
+  lows: number[], 
+  closes: number[]
+): IchimokuData {
+  const len = closes.length;
+  
+  // Minimum data check
+  if (len < 52) {
+    return {
+      tenkanSen: closes[len - 1] || 0,
+      kijunSen: closes[len - 1] || 0,
+      senkouSpanA: closes[len - 1] || 0,
+      senkouSpanB: closes[len - 1] || 0,
+      chikouSpan: closes[len - 1] || 0,
+      cloudTop: closes[len - 1] || 0,
+      cloudBottom: closes[len - 1] || 0,
+      priceVsCloud: 'INSIDE',
+      tkCross: 'NONE',
+      cloudColor: 'GREEN',
+      signal: 'NEUTRAL'
+    };
+  }
+
+  // Helper: Get highest high and lowest low for a period
+  const getHighLow = (startIdx: number, period: number) => {
+    const sliceHighs = highs.slice(startIdx, startIdx + period);
+    const sliceLows = lows.slice(startIdx, startIdx + period);
+    return {
+      high: Math.max(...sliceHighs),
+      low: Math.min(...sliceLows)
+    };
+  };
+
+  // Calculate Tenkan-sen (9 periods)
+  const tenkanPeriod = 9;
+  const tenkanHL = getHighLow(len - tenkanPeriod, tenkanPeriod);
+  const tenkanSen = (tenkanHL.high + tenkanHL.low) / 2;
+
+  // Calculate Kijun-sen (26 periods)
+  const kijunPeriod = 26;
+  const kijunHL = getHighLow(len - kijunPeriod, kijunPeriod);
+  const kijunSen = (kijunHL.high + kijunHL.low) / 2;
+
+  // Calculate Senkou Span A (projected 26 periods ahead, but we use current value)
+  const senkouSpanA = (tenkanSen + kijunSen) / 2;
+
+  // Calculate Senkou Span B (52 periods)
+  const senkouBPeriod = 52;
+  const senkouBHL = getHighLow(len - senkouBPeriod, senkouBPeriod);
+  const senkouSpanB = (senkouBHL.high + senkouBHL.low) / 2;
+
+  // Chikou Span (current close, compared to price 26 periods ago)
+  const chikouSpan = closes[len - 1];
+  const price26Ago = closes[len - 27] || closes[0];
+
+  // Current price
+  const currentPrice = closes[len - 1];
+
+  // Cloud boundaries
+  const cloudTop = Math.max(senkouSpanA, senkouSpanB);
+  const cloudBottom = Math.min(senkouSpanA, senkouSpanB);
+
+  // Price vs Cloud
+  let priceVsCloud: IchimokuData['priceVsCloud'] = 'INSIDE';
+  if (currentPrice > cloudTop) priceVsCloud = 'ABOVE';
+  else if (currentPrice < cloudBottom) priceVsCloud = 'BELOW';
+
+  // TK Cross detection (look at last 3 periods)
+  let tkCross: IchimokuData['tkCross'] = 'NONE';
+  
+  // Calculate previous Tenkan and Kijun
+  const prevTenkanHL = getHighLow(len - tenkanPeriod - 1, tenkanPeriod);
+  const prevTenkanSen = (prevTenkanHL.high + prevTenkanHL.low) / 2;
+  const prevKijunHL = getHighLow(len - kijunPeriod - 1, kijunPeriod);
+  const prevKijunSen = (prevKijunHL.high + prevKijunHL.low) / 2;
+
+  if (prevTenkanSen <= prevKijunSen && tenkanSen > kijunSen) {
+    tkCross = 'BULLISH';
+  } else if (prevTenkanSen >= prevKijunSen && tenkanSen < kijunSen) {
+    tkCross = 'BEARISH';
+  }
+
+  // Cloud color (future cloud direction)
+  const cloudColor: IchimokuData['cloudColor'] = senkouSpanA > senkouSpanB ? 'GREEN' : 'RED';
+
+  // Generate overall signal
+  let signal: IchimokuData['signal'] = 'NEUTRAL';
+  let bullPoints = 0;
+  let bearPoints = 0;
+
+  // Price position (most important)
+  if (priceVsCloud === 'ABOVE') bullPoints += 2;
+  else if (priceVsCloud === 'BELOW') bearPoints += 2;
+
+  // TK Cross
+  if (tkCross === 'BULLISH') bullPoints += 2;
+  else if (tkCross === 'BEARISH') bearPoints += 2;
+
+  // Cloud color
+  if (cloudColor === 'GREEN') bullPoints += 1;
+  else bearPoints += 1;
+
+  // Chikou Span (lagging) above/below price
+  if (chikouSpan > price26Ago) bullPoints += 1;
+  else if (chikouSpan < price26Ago) bearPoints += 1;
+
+  // Price above Kijun (base line)
+  if (currentPrice > kijunSen) bullPoints += 1;
+  else bearPoints += 1;
+
+  // Determine signal
+  const netScore = bullPoints - bearPoints;
+  if (netScore >= 5) signal = 'STRONG_BUY';
+  else if (netScore >= 2) signal = 'BUY';
+  else if (netScore <= -5) signal = 'STRONG_SELL';
+  else if (netScore <= -2) signal = 'SELL';
+  else signal = 'NEUTRAL';
+
+  return {
+    tenkanSen: Math.round(tenkanSen * 100) / 100,
+    kijunSen: Math.round(kijunSen * 100) / 100,
+    senkouSpanA: Math.round(senkouSpanA * 100) / 100,
+    senkouSpanB: Math.round(senkouSpanB * 100) / 100,
+    chikouSpan: Math.round(chikouSpan * 100) / 100,
+    cloudTop: Math.round(cloudTop * 100) / 100,
+    cloudBottom: Math.round(cloudBottom * 100) / 100,
+    priceVsCloud,
+    tkCross,
+    cloudColor,
+    signal
+  };
+}
+
+// ============================================================
+// 12. WILLIAMS %R (Bonus - pairs well with Stoch RSI)
+// ============================================================
+
+/**
+ * Williams %R - Momentum indicator showing overbought/oversold
+ * Similar to Stochastic but inverted scale (-100 to 0)
+ * 
+ * - Above -20: Overbought
+ * - Below -80: Oversold
+ */
+export function calculateWilliamsR(
+  highs: number[], 
+  lows: number[], 
+  closes: number[], 
+  period: number = 14
+): { value: number; signal: 'OVERBOUGHT' | 'OVERSOLD' | 'NEUTRAL' } {
+  const len = closes.length;
+  
+  if (len < period) {
+    return { value: -50, signal: 'NEUTRAL' };
+  }
+
+  const highestHigh = Math.max(...highs.slice(-period));
+  const lowestLow = Math.min(...lows.slice(-period));
+  const currentClose = closes[len - 1];
+
+  const williamsR = ((highestHigh - currentClose) / (highestHigh - lowestLow)) * -100;
+
+  let signal: 'OVERBOUGHT' | 'OVERSOLD' | 'NEUTRAL' = 'NEUTRAL';
+  if (williamsR > -20) signal = 'OVERBOUGHT';
+  else if (williamsR < -80) signal = 'OVERSOLD';
+
+  return {
+    value: Math.round(williamsR * 100) / 100,
+    signal
+  };
+}
+
+// ============================================================
+// 13. COMBINED MOMENTUM SCORE
+// ============================================================
+
+/**
+ * Combines multiple momentum indicators into single score
+ * Useful for confirming signals
+ */
+export function calculateMomentumScore(
+  closes: number[],
+  highs: number[],
+  lows: number[]
+): { score: number; interpretation: string } {
+  let score = 50; // Neutral starting point
+
+  // RSI
+  const rsiValues = RSI.calculate({ values: closes, period: 14 });
+  const rsi = rsiValues[rsiValues.length - 1] || 50;
+  if (rsi < 30) score += 15;
+  else if (rsi < 40) score += 5;
+  else if (rsi > 70) score -= 15;
+  else if (rsi > 60) score -= 5;
+
+  // Stochastic RSI
+  const stochRsi = calculateStochRSI(closes);
+  if (stochRsi.signal === 'BULLISH_CROSS') score += 10;
+  else if (stochRsi.signal === 'BEARISH_CROSS') score -= 10;
+  else if (stochRsi.signal === 'OVERSOLD') score += 5;
+  else if (stochRsi.signal === 'OVERBOUGHT') score -= 5;
+
+  // Williams %R
+  const williamsR = calculateWilliamsR(highs, lows, closes);
+  if (williamsR.signal === 'OVERSOLD') score += 5;
+  else if (williamsR.signal === 'OVERBOUGHT') score -= 5;
+
+  // Clamp score
+  score = Math.max(0, Math.min(100, score));
+
+  // Interpretation
+  let interpretation = 'Neutral momentum';
+  if (score >= 75) interpretation = 'Strong bullish momentum';
+  else if (score >= 60) interpretation = 'Bullish momentum';
+  else if (score <= 25) interpretation = 'Strong bearish momentum';
+  else if (score <= 40) interpretation = 'Bearish momentum';
+
+  return { score, interpretation };
 }

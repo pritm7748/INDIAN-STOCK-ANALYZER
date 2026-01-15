@@ -5,17 +5,22 @@ import { useState, useEffect, useCallback } from "react";
 import { STOCK_LIST, StockSymbol } from "@/lib/stockList";
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, 
-  ResponsiveContainer, ReferenceLine, ComposedChart, Bar, Line
+  ResponsiveContainer, ReferenceLine, ComposedChart, Bar, Line,
+  BarChart, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis
 } from 'recharts';
 import { 
   ArrowUp, ArrowDown, Activity, BarChart2, Zap, TrendingUp, TrendingDown,
   ScanEye, Newspaper, Briefcase, History, BrainCircuit, Volume2, 
   Shield, Target, AlertTriangle, Bookmark, BookmarkCheck, RefreshCw,
-  ChevronDown, ChevronUp, Info, Gauge, Waves, LineChart
+  ChevronDown, ChevronUp, Info, Gauge, Waves, LineChart, Cloud,
+  Crosshair, Layers, ArrowRightLeft, TrendingUpDown, CircleDot,
+  Flame, Snowflake, Radio, Radar as RadarIcon
 } from 'lucide-react';
 
+// ============================================================
+// TYPE DEFINITIONS (Matching Backend)
+// ============================================================
 
-// Types for enhanced analysis
 interface AnalysisData {
   symbol: string;
   price: number;
@@ -31,8 +36,11 @@ interface AnalysisData {
   metrics: MetricData;
   levels: LevelData;
   risk: RiskData;
-  volume?: VolumeData;  // Make it optional with ?
-  volatility?: VolatilityData;  // Make it optional with ?
+  volume?: VolumeData;
+  volatility?: VolatilityData;
+  stochRsi?: StochRSIData;
+  ichimoku?: IchimokuData;
+  momentum?: { score: number; interpretation: string };
   zigzag: ZigZagPoint[];
   history: HistoryPoint[];
   backtest: BacktestData;
@@ -44,6 +52,7 @@ interface NewsItem {
   link: string;
   pubDate: string;
   sentiment: 'Positive' | 'Negative' | 'Neutral';
+  recencyWeight?: number;
 }
 
 interface FundamentalData {
@@ -52,8 +61,6 @@ interface FundamentalData {
   pbRatio: number;
   fiftyTwoWeekHigh: number;
   fiftyTwoWeekLow: number;
-  dividendYield?: number;
-  eps?: number;
 }
 
 interface MetricData {
@@ -61,15 +68,10 @@ interface MetricData {
   macdHistogram: number;
   bollingerUpper: number;
   bollingerLower: number;
-  bollingerMiddle?: number;
   sma50: number;
   sma200: number;
   ema9?: number;
   ema21?: number;
-  atr?: number;
-  adx?: number;
-  supertrend?: { value: number; direction: 'UP' | 'DOWN' };
-  stochRsi?: { k: number; d: number };
 }
 
 interface LevelData {
@@ -78,8 +80,6 @@ interface LevelData {
   pivot: number;
   r1: number;
   s1: number;
-  r2?: number;
-  s2?: number;
 }
 
 interface RiskData {
@@ -118,6 +118,27 @@ interface VolatilityData {
   minusDI: number;
 }
 
+interface StochRSIData {
+  k: number;
+  d: number;
+  signal: 'OVERBOUGHT' | 'OVERSOLD' | 'BULLISH_CROSS' | 'BEARISH_CROSS' | 'NEUTRAL';
+  crossover: boolean;
+}
+
+interface IchimokuData {
+  tenkanSen: number;
+  kijunSen: number;
+  senkouSpanA: number;
+  senkouSpanB: number;
+  chikouSpan: number;
+  cloudTop: number;
+  cloudBottom: number;
+  priceVsCloud: 'ABOVE' | 'BELOW' | 'INSIDE';
+  tkCross: 'BULLISH' | 'BEARISH' | 'NONE';
+  cloudColor: 'GREEN' | 'RED';
+  signal: 'STRONG_BUY' | 'BUY' | 'NEUTRAL' | 'SELL' | 'STRONG_SELL';
+}
+
 interface ZigZagPoint {
   date: string;
   price: number;
@@ -128,18 +149,12 @@ interface HistoryPoint {
   date: string;
   price: number;
   volume?: number;
-  sma50?: number;
-  sma200?: number;
 }
 
 interface BacktestData {
   results: BacktestResult[];
   accuracy: number;
   totalReturn: number;
-  winRate?: number;
-  avgWin?: number;
-  avgLoss?: number;
-  profitFactor?: number;
 }
 
 interface BacktestResult {
@@ -159,7 +174,10 @@ interface PredictionPoint {
   isFuture: boolean;
 }
 
-// Watchlist Hook
+// ============================================================
+// CUSTOM HOOKS
+// ============================================================
+
 function useWatchlist() {
   const [watchlist, setWatchlist] = useState<string[]>([]);
 
@@ -185,7 +203,10 @@ function useWatchlist() {
   return { watchlist, toggleWatchlist, isInWatchlist };
 }
 
-// Metric Card Component
+// ============================================================
+// REUSABLE COMPONENTS
+// ============================================================
+
 function MetricCard({ 
   icon: Icon, 
   label, 
@@ -208,12 +229,14 @@ function MetricCard({
     yellow: 'text-yellow-400',
     blue: 'text-blue-400',
     purple: 'text-purple-400',
+    orange: 'text-orange-400',
+    cyan: 'text-cyan-400',
   };
 
   return (
     <div className="bg-[#0A0A0A] border border-white/5 p-4 rounded-xl hover:border-white/10 transition-colors group relative">
       {tooltip && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-slate-800 text-xs text-gray-300 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none">
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-slate-800 text-xs text-gray-300 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none max-w-xs text-center">
           {tooltip}
         </div>
       )}
@@ -231,8 +254,7 @@ function MetricCard({
   );
 }
 
-// Section Header Component
-function SectionHeader({ icon: Icon, title, color = 'blue' }: { icon: any; title: string; color?: string }) {
+function SectionHeader({ icon: Icon, title, color = 'blue', badge }: { icon: any; title: string; color?: string; badge?: string }) {
   const colorClasses: Record<string, string> = {
     blue: 'text-blue-400',
     green: 'text-emerald-400',
@@ -240,50 +262,89 @@ function SectionHeader({ icon: Icon, title, color = 'blue' }: { icon: any; title
     yellow: 'text-yellow-400',
     purple: 'text-purple-400',
     orange: 'text-orange-400',
+    cyan: 'text-cyan-400',
+    pink: 'text-pink-400',
   };
 
   return (
-    <h3 className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
-      <Icon size={14} className={colorClasses[color]} /> {title}
-    </h3>
+    <div className="flex items-center justify-between mb-4">
+      <h3 className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest">
+        <Icon size={14} className={colorClasses[color]} /> {title}
+      </h3>
+      {badge && (
+        <span className="text-[10px] px-2 py-0.5 bg-white/5 rounded-full text-gray-400">
+          {badge}
+        </span>
+      )}
+    </div>
   );
 }
 
-// Collapsible Section Component
-function CollapsibleSection({ 
-  title, 
-  icon: Icon, 
-  color = 'blue',
-  defaultOpen = true, 
-  children 
-}: { 
-  title: string; 
-  icon: any;
-  color?: string;
-  defaultOpen?: boolean; 
-  children: React.ReactNode;
-}) {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
+function SignalBadge({ signal, size = 'md' }: { signal: string; size?: 'sm' | 'md' | 'lg' }) {
+  const sizeClasses = {
+    sm: 'text-[10px] px-1.5 py-0.5',
+    md: 'text-xs px-2 py-1',
+    lg: 'text-sm px-3 py-1.5'
+  };
+
+  const getSignalStyle = (signal: string) => {
+    const s = signal.toUpperCase();
+    if (s.includes('STRONG_BUY') || s.includes('STRONG BUY')) 
+      return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
+    if (s.includes('BUY') || s.includes('BULLISH')) 
+      return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+    if (s.includes('STRONG_SELL') || s.includes('STRONG SELL')) 
+      return 'bg-rose-500/20 text-rose-400 border-rose-500/30';
+    if (s.includes('SELL') || s.includes('BEARISH')) 
+      return 'bg-rose-500/10 text-rose-400 border-rose-500/20';
+    if (s.includes('OVERBOUGHT')) 
+      return 'bg-orange-500/10 text-orange-400 border-orange-500/20';
+    if (s.includes('OVERSOLD')) 
+      return 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20';
+    return 'bg-gray-500/10 text-gray-400 border-gray-500/20';
+  };
 
   return (
-    <div className="bg-[#0A0A0A] border border-white/5 rounded-2xl overflow-hidden">
-      <button 
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full p-6 flex items-center justify-between hover:bg-white/5 transition-colors"
-      >
-        <SectionHeader icon={Icon} title={title} color={color} />
-        {isOpen ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
-      </button>
-      {isOpen && (
-        <div className="px-6 pb-6 pt-0">
-          {children}
+    <span className={`${sizeClasses[size]} ${getSignalStyle(signal)} rounded-md font-medium border`}>
+      {signal.replace(/_/g, ' ')}
+    </span>
+  );
+}
+
+function ProgressBar({ value, max = 100, color = 'blue', showLabel = true }: { value: number; max?: number; color?: string; showLabel?: boolean }) {
+  const percentage = Math.min(100, Math.max(0, (value / max) * 100));
+  
+  const colorClasses: Record<string, string> = {
+    blue: 'bg-blue-500',
+    green: 'bg-emerald-500',
+    red: 'bg-rose-500',
+    yellow: 'bg-yellow-500',
+    purple: 'bg-purple-500',
+    gradient: 'bg-gradient-to-r from-rose-500 via-yellow-500 to-emerald-500'
+  };
+
+  return (
+    <div className="w-full">
+      <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+        <div 
+          className={`h-full ${colorClasses[color]} rounded-full transition-all duration-500`}
+          style={{ width: `${percentage}%` }}
+        />
+      </div>
+      {showLabel && (
+        <div className="flex justify-between text-[10px] text-gray-500 mt-1">
+          <span>0</span>
+          <span>{max}</span>
         </div>
       )}
     </div>
   );
 }
 
-// Main Component
+// ============================================================
+// MAIN COMPONENT
+// ============================================================
+
 export default function Home() {
   const [selectedStock, setSelectedStock] = useState<string>(STOCK_LIST[0].symbol);
   const [timeframe, setTimeframe] = useState<string>("1M");
@@ -291,7 +352,7 @@ export default function Home() {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [showVolume, setShowVolume] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'chart' | 'technicals' | 'backtest'>('chart');
+  const [activeTab, setActiveTab] = useState<'chart' | 'technicals' | 'momentum' | 'backtest'>('chart');
 
   const { watchlist, toggleWatchlist, isInWatchlist } = useWatchlist();
 
@@ -330,16 +391,14 @@ export default function Home() {
     return () => window.removeEventListener('keydown', handleKeyPress);
   }, [handleAnalyze]);
 
+  // ============================================================
+  // HELPER FUNCTIONS
+  // ============================================================
+
   const getScoreColor = (score: number) => {
     if (score >= 60) return "text-emerald-400";
     if (score <= 40) return "text-rose-400";
     return "text-yellow-400";
-  };
-
-  const getScoreGradient = (score: number) => {
-    if (score >= 60) return "from-emerald-500 to-emerald-600";
-    if (score <= 40) return "from-rose-500 to-rose-600";
-    return "from-yellow-500 to-yellow-600";
   };
 
   const formatLargeNumber = (num: number) => {
@@ -364,6 +423,22 @@ export default function Home() {
     return { text: 'Neutral', color: 'yellow' };
   };
 
+  const getStochRSIColor = (signal: string) => {
+    if (signal.includes('BULLISH')) return 'green';
+    if (signal.includes('BEARISH')) return 'red';
+    if (signal === 'OVERSOLD') return 'cyan';
+    if (signal === 'OVERBOUGHT') return 'orange';
+    return 'white';
+  };
+
+  const getIchimokuSignalColor = (signal: string) => {
+    if (signal === 'STRONG_BUY') return 'text-emerald-400';
+    if (signal === 'BUY') return 'text-emerald-300';
+    if (signal === 'STRONG_SELL') return 'text-rose-400';
+    if (signal === 'SELL') return 'text-rose-300';
+    return 'text-gray-400';
+  };
+
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
@@ -385,11 +460,17 @@ export default function Home() {
 
   const selectedStockData = STOCK_LIST.find(s => s.symbol === selectedStock);
 
+  // ============================================================
+  // RENDER
+  // ============================================================
+
   return (
     <main className="min-h-screen bg-[#050505] text-gray-100 p-4 md:p-8 font-sans">
       <div className="max-w-7xl mx-auto space-y-8">
         
-        {/* Header/Navbar */}
+        {/* ============================================================ */}
+        {/* HEADER / NAVBAR */}
+        {/* ============================================================ */}
         <header className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-white/10 pb-6">
           <div className="flex items-center gap-3">
             <div className="bg-linear-to-br from-blue-600 to-blue-700 p-2.5 rounded-xl shadow-lg shadow-blue-500/20">
@@ -400,7 +481,7 @@ export default function Home() {
                 TradeSense AI
               </h1>
               <p className="text-gray-500 text-xs uppercase tracking-wider">
-                Pro Market Analytics • NSE/BSE
+                Pro Market Analytics • Phase 2
               </p>
             </div>
           </div>
@@ -497,22 +578,26 @@ export default function Home() {
               <div className="absolute inset-0 border-4 border-transparent border-t-blue-500 rounded-full animate-spin"></div>
             </div>
             <p className="text-gray-400 text-sm">Analyzing {selectedStockData?.name}...</p>
-            <p className="text-gray-600 text-xs">Fetching market data, calculating indicators, running backtest...</p>
+            <p className="text-gray-600 text-xs">Running Phase 2 indicators: Stoch RSI, Ichimoku, ADX...</p>
           </div>
         )}
 
+        {/* ============================================================ */}
         {/* DASHBOARD CONTENT */}
+        {/* ============================================================ */}
         {analysis && !loading && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in duration-500">
             
+            {/* ============================================================ */}
             {/* LEFT COLUMN (8 cols) */}
+            {/* ============================================================ */}
             <div className="lg:col-span-8 space-y-6">
               
               {/* Price Banner */}
               <div className="bg-[#0A0A0A] border border-white/5 rounded-2xl p-6">
                 <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
                   <div>
-                    <div className="flex items-center gap-3 mb-2">
+                    <div className="flex items-center gap-3 mb-2 flex-wrap">
                       <h2 className="text-2xl font-bold text-white">{analysis.symbol.replace('.NS', '')}</h2>
                       {selectedStockData?.sector && (
                         <span className="px-2 py-0.5 bg-white/5 text-gray-400 rounded text-xs">
@@ -530,8 +615,13 @@ export default function Home() {
                           Market: {analysis.risk.marketTrend}
                         </span>
                       )}
+                      {analysis.confidence !== undefined && (
+                        <span className="px-2 py-0.5 bg-purple-500/10 text-purple-400 rounded text-xs">
+                          {analysis.confidence}% Confidence
+                        </span>
+                      )}
                     </div>
-                    <div className="flex items-baseline gap-3">
+                    <div className="flex items-baseline gap-3 flex-wrap">
                       <span className="text-4xl font-light text-white">
                         ₹{analysis.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
@@ -560,8 +650,8 @@ export default function Home() {
                           <div 
                             className="absolute w-3 h-3 bg-white rounded-full shadow-lg -top-0.5 transform -translate-x-1/2"
                             style={{ 
-                              left: `${((analysis.price - analysis.fundamentals.fiftyTwoWeekLow) / 
-                                (analysis.fundamentals.fiftyTwoWeekHigh - analysis.fundamentals.fiftyTwoWeekLow)) * 100}%` 
+                              left: `${Math.min(100, Math.max(0, ((analysis.price - analysis.fundamentals.fiftyTwoWeekLow) / 
+                                (analysis.fundamentals.fiftyTwoWeekHigh - analysis.fundamentals.fiftyTwoWeekLow)) * 100))}%` 
                             }}
                           />
                         </div>
@@ -582,10 +672,11 @@ export default function Home() {
               </div>
 
               {/* Chart Tabs */}
-              <div className="flex gap-2 bg-white/5 p-1 rounded-xl w-fit">
+              <div className="flex gap-2 bg-white/5 p-1 rounded-xl w-fit flex-wrap">
                 {[
                   { id: 'chart', label: 'Price Chart', icon: LineChart },
                   { id: 'technicals', label: 'Indicators', icon: Activity },
+                  { id: 'momentum', label: 'Momentum', icon: Gauge },
                   { id: 'backtest', label: 'Backtest', icon: History },
                 ].map((tab) => (
                   <button
@@ -598,18 +689,20 @@ export default function Home() {
                     }`}
                   >
                     <tab.icon size={16} />
-                    {tab.label}
+                    <span className="hidden sm:inline">{tab.label}</span>
                   </button>
                 ))}
               </div>
 
-              {/* Main Chart */}
+              {/* ============================================================ */}
+              {/* TAB: PRICE CHART */}
+              {/* ============================================================ */}
               {activeTab === 'chart' && (
                 <div className="bg-[#0A0A0A] border border-white/5 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
                   <div className="absolute top-0 left-0 w-full h-full bg-blue-500/5 blur-3xl pointer-events-none"></div>
                   
                   {/* Chart Controls */}
-                  <div className="flex justify-between items-center mb-4 relative z-10">
+                  <div className="flex justify-between items-center mb-4 relative z-10 flex-wrap gap-2">
                     <div className="flex items-center gap-4">
                       <span className="text-xs text-gray-500">Show:</span>
                       <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
@@ -622,15 +715,20 @@ export default function Home() {
                         Volume
                       </label>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-4 text-xs">
                       {analysis.levels?.support?.length > 0 && (
-                        <span className="text-xs text-emerald-400 flex items-center gap-1">
+                        <span className="text-emerald-400 flex items-center gap-1">
                           <div className="w-3 h-0.5 bg-emerald-400"></div> Support
                         </span>
                       )}
                       {analysis.levels?.resistance?.length > 0 && (
-                        <span className="text-xs text-rose-400 flex items-center gap-1">
+                        <span className="text-rose-400 flex items-center gap-1">
                           <div className="w-3 h-0.5 bg-rose-400"></div> Resistance
+                        </span>
+                      )}
+                      {analysis.ichimoku && (
+                        <span className={`flex items-center gap-1 ${analysis.ichimoku.cloudColor === 'GREEN' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <Cloud size={12} /> Ichimoku
                         </span>
                       )}
                     </div>
@@ -682,6 +780,26 @@ export default function Home() {
                         )}
                         <Tooltip content={<CustomTooltip />} />
                         
+                        {/* Ichimoku Cloud */}
+                        {analysis.ichimoku && (
+                          <>
+                            <ReferenceLine 
+                              yAxisId="price"
+                              y={analysis.ichimoku.cloudTop} 
+                              stroke={analysis.ichimoku.cloudColor === 'GREEN' ? '#10b981' : '#f43f5e'} 
+                              strokeDasharray="2 2" 
+                              strokeOpacity={0.3}
+                            />
+                            <ReferenceLine 
+                              yAxisId="price"
+                              y={analysis.ichimoku.cloudBottom} 
+                              stroke={analysis.ichimoku.cloudColor === 'GREEN' ? '#10b981' : '#f43f5e'} 
+                              strokeDasharray="2 2" 
+                              strokeOpacity={0.3}
+                            />
+                          </>
+                        )}
+                        
                         {/* Support Lines */}
                         {analysis.levels?.support?.map((level: number, i: number) => (
                           <ReferenceLine 
@@ -706,27 +824,14 @@ export default function Home() {
                           />
                         ))}
 
-                        {/* SMA Lines */}
-                        {analysis.history[0]?.sma50 && (
-                          <Line 
+                        {/* Supertrend Line */}
+                        {analysis.volatility?.supertrend && (
+                          <ReferenceLine 
                             yAxisId="price"
-                            type="monotone" 
-                            dataKey="sma50" 
-                            stroke="#f59e0b" 
-                            strokeWidth={1}
-                            dot={false}
-                            strokeOpacity={0.7}
-                          />
-                        )}
-                        {analysis.history[0]?.sma200 && (
-                          <Line 
-                            yAxisId="price"
-                            type="monotone" 
-                            dataKey="sma200" 
-                            stroke="#ef4444" 
-                            strokeWidth={1}
-                            dot={false}
-                            strokeOpacity={0.7}
+                            y={analysis.volatility.supertrend} 
+                            stroke={analysis.volatility.supertrendSignal === 'BUY' ? '#10b981' : '#f43f5e'} 
+                            strokeWidth={2}
+                            strokeOpacity={0.8}
                           />
                         )}
 
@@ -756,79 +861,348 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Technical Indicators Tab */}
+              {/* ============================================================ */}
+              {/* TAB: TECHNICAL INDICATORS */}
+              {/* ============================================================ */}
               {activeTab === 'technicals' && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <MetricCard 
-                    icon={Activity}
-                    label="RSI (14)"
-                    value={analysis.metrics.rsi.toFixed(1)}
-                    subValue={getRSIStatus(analysis.metrics.rsi).text}
-                    color={getRSIStatus(analysis.metrics.rsi).color}
-                    tooltip="Relative Strength Index: >70 Overbought, <30 Oversold"
-                  />
-                  <MetricCard 
-                    icon={BarChart2}
-                    label="MACD"
-                    value={analysis.metrics.macdHistogram > 0 ? 'Bullish' : 'Bearish'}
-                    subValue={`Histogram: ${analysis.metrics.macdHistogram.toFixed(2)}`}
-                    color={analysis.metrics.macdHistogram > 0 ? 'green' : 'red'}
-                    tooltip="Moving Average Convergence Divergence"
-                  />
-                  <MetricCard 
-                    icon={TrendingUp}
-                    label="SMA 50"
-                    value={`₹${analysis.metrics.sma50.toFixed(2)}`}
-                    subValue={analysis.price > analysis.metrics.sma50 ? 'Price Above' : 'Price Below'}
-                    color={analysis.price > analysis.metrics.sma50 ? 'green' : 'red'}
-                    tooltip="50-day Simple Moving Average"
-                  />
-                  <MetricCard 
-                    icon={TrendingDown}
-                    label="SMA 200"
-                    value={`₹${analysis.metrics.sma200.toFixed(2)}`}
-                    subValue={analysis.price > analysis.metrics.sma200 ? 'Price Above' : 'Price Below'}
-                    color={analysis.price > analysis.metrics.sma200 ? 'green' : 'red'}
-                    tooltip="200-day Simple Moving Average"
-                  />
-                  <MetricCard 
-                    icon={Waves}
-                    label="BB Upper"
-                    value={`₹${analysis.metrics.bollingerUpper.toFixed(2)}`}
-                    color="white"
-                    tooltip="Bollinger Band Upper (2 Std Dev)"
-                  />
-                  <MetricCard 
-                    icon={Waves}
-                    label="BB Lower"
-                    value={`₹${analysis.metrics.bollingerLower.toFixed(2)}`}
-                    color="white"
-                    tooltip="Bollinger Band Lower (2 Std Dev)"
-                  />
-                  {analysis.metrics.atr && (
+                <div className="space-y-6">
+                  {/* Basic Indicators Grid */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <MetricCard 
-                      icon={Target}
-                      label="ATR (14)"
-                      value={`₹${analysis.metrics.atr.toFixed(2)}`}
-                      subValue={`${((analysis.metrics.atr / analysis.price) * 100).toFixed(2)}% of price`}
-                      color="yellow"
-                      tooltip="Average True Range - Volatility Indicator"
+                      icon={Activity}
+                      label="RSI (14)"
+                      value={analysis.metrics.rsi.toFixed(1)}
+                      subValue={getRSIStatus(analysis.metrics.rsi).text}
+                      color={getRSIStatus(analysis.metrics.rsi).color}
+                      tooltip="Relative Strength Index: >70 Overbought, <30 Oversold"
                     />
+                    <MetricCard 
+                      icon={BarChart2}
+                      label="MACD"
+                      value={analysis.metrics.macdHistogram > 0 ? 'Bullish' : 'Bearish'}
+                      subValue={`Histogram: ${analysis.metrics.macdHistogram.toFixed(2)}`}
+                      color={analysis.metrics.macdHistogram > 0 ? 'green' : 'red'}
+                      tooltip="Moving Average Convergence Divergence"
+                    />
+                    <MetricCard 
+                      icon={TrendingUp}
+                      label="SMA 50"
+                      value={`₹${analysis.metrics.sma50.toFixed(2)}`}
+                      subValue={analysis.price > analysis.metrics.sma50 ? 'Price Above' : 'Price Below'}
+                      color={analysis.price > analysis.metrics.sma50 ? 'green' : 'red'}
+                    />
+                    <MetricCard 
+                      icon={TrendingDown}
+                      label="SMA 200"
+                      value={`₹${analysis.metrics.sma200.toFixed(2)}`}
+                      subValue={analysis.price > analysis.metrics.sma200 ? 'Price Above' : 'Price Below'}
+                      color={analysis.price > analysis.metrics.sma200 ? 'green' : 'red'}
+                    />
+                  </div>
+
+                  {/* Volatility Indicators */}
+                  {analysis.volatility && (
+                    <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
+                      <SectionHeader icon={Waves} title="Volatility & Trend" color="orange" />
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="p-4 bg-white/5 rounded-xl">
+                          <p className="text-xs text-gray-500 mb-1">ATR (14)</p>
+                          <p className="text-xl font-bold text-white">₹{analysis.volatility.atr.toFixed(2)}</p>
+                          <p className="text-[10px] text-gray-500">{analysis.volatility.atrPercent.toFixed(2)}% of price</p>
+                        </div>
+                        <div className="p-4 bg-white/5 rounded-xl">
+                          <p className="text-xs text-gray-500 mb-1">Supertrend</p>
+                          <p className={`text-xl font-bold ${analysis.volatility.supertrendSignal === 'BUY' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {analysis.volatility.supertrendSignal}
+                          </p>
+                          <p className="text-[10px] text-gray-500">₹{analysis.volatility.supertrend.toFixed(2)}</p>
+                        </div>
+                        <div className="p-4 bg-white/5 rounded-xl">
+                          <p className="text-xs text-gray-500 mb-1">ADX</p>
+                          <p className="text-xl font-bold text-white">{analysis.volatility.adx.toFixed(1)}</p>
+                          <p className={`text-[10px] ${
+                            analysis.volatility.trendStrength === 'STRONG' ? 'text-emerald-400' :
+                            analysis.volatility.trendStrength === 'MODERATE' ? 'text-yellow-400' : 'text-gray-500'
+                          }`}>{analysis.volatility.trendStrength}</p>
+                        </div>
+                        <div className="p-4 bg-white/5 rounded-xl">
+                          <p className="text-xs text-gray-500 mb-1">DI Spread</p>
+                          <p className={`text-xl font-bold ${analysis.volatility.plusDI > analysis.volatility.minusDI ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {analysis.volatility.plusDI > analysis.volatility.minusDI ? '+DI Leads' : '-DI Leads'}
+                          </p>
+                          <p className="text-[10px] text-gray-500">
+                            +{analysis.volatility.plusDI.toFixed(1)} / -{analysis.volatility.minusDI.toFixed(1)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
                   )}
-                  {analysis.metrics.adx && (
+
+                  {/* Bollinger Bands */}
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                     <MetricCard 
-                      icon={Gauge}
-                      label="ADX"
-                      value={analysis.metrics.adx.toFixed(1)}
-                      subValue={analysis.metrics.adx > 25 ? 'Strong Trend' : 'Weak Trend'}
-                      color={analysis.metrics.adx > 25 ? 'green' : 'yellow'}
-                      tooltip="Average Directional Index - Trend Strength"
+                      icon={Waves}
+                      label="BB Upper"
+                      value={`₹${analysis.metrics.bollingerUpper.toFixed(2)}`}
+                      color={analysis.price > analysis.metrics.bollingerUpper ? 'red' : 'white'}
                     />
+                    <MetricCard 
+                      icon={CircleDot}
+                      label="Current Price"
+                      value={`₹${analysis.price.toFixed(2)}`}
+                      color="blue"
+                    />
+                    <MetricCard 
+                      icon={Waves}
+                      label="BB Lower"
+                      value={`₹${analysis.metrics.bollingerLower.toFixed(2)}`}
+                      color={analysis.price < analysis.metrics.bollingerLower ? 'green' : 'white'}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* ============================================================ */}
+              {/* TAB: MOMENTUM (Phase 2 - Stoch RSI, Ichimoku) */}
+              {/* ============================================================ */}
+              {activeTab === 'momentum' && (
+                <div className="space-y-6">
+                  
+                  {/* Stochastic RSI Section */}
+                  {analysis.stochRsi && (
+                    <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
+                      <SectionHeader icon={Gauge} title="Stochastic RSI" color="cyan" badge="Phase 2" />
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {/* Gauge Visualization */}
+                        <div className="flex flex-col items-center justify-center p-4">
+                          <div className="relative w-32 h-32">
+                            <svg className="w-full h-full transform -rotate-90">
+                              <circle cx="64" cy="64" r="56" stroke="#1f2937" strokeWidth="8" fill="none" />
+                              <circle 
+                                cx="64" cy="64" r="56" 
+                                stroke={
+                                  analysis.stochRsi.k > 80 ? '#f43f5e' : 
+                                  analysis.stochRsi.k < 20 ? '#06b6d4' : '#3b82f6'
+                                }
+                                strokeWidth="8" 
+                                fill="none" 
+                                strokeDasharray={352}
+                                strokeDashoffset={352 - (352 * analysis.stochRsi.k) / 100}
+                                className="transition-all duration-500"
+                                strokeLinecap="round"
+                              />
+                            </svg>
+                            <div className="absolute inset-0 flex flex-col items-center justify-center">
+                              <span className="text-2xl font-bold text-white">{analysis.stochRsi.k.toFixed(0)}</span>
+                              <span className="text-[10px] text-gray-500">%K</span>
+                            </div>
+                          </div>
+                          <div className="mt-4">
+                            <SignalBadge signal={analysis.stochRsi.signal} size="md" />
+                          </div>
+                        </div>
+
+                        {/* K and D Lines */}
+                        <div className="space-y-4">
+                          <div className="p-4 bg-white/5 rounded-xl">
+                            <div className="flex justify-between items-center mb-2">
+                              <span className="text-xs text-gray-400">%K (Fast)</span>
+                              <span className="text-lg font-bold text-white">{analysis.stochRsi.k.toFixed(1)}</span>
+                            </div>
+                            <ProgressBar value={analysis.stochRsi.k} color="blue" showLabel={false} />
+                          </div>
+                          <div className="p-4 bg-white/5 rounded-xl">
+                            <div className="flex justify-between items-center mb-2">
+                              <span className="text-xs text-gray-400">%D (Slow)</span>
+                              <span className="text-lg font-bold text-white">{analysis.stochRsi.d.toFixed(1)}</span>
+                            </div>
+                            <ProgressBar value={analysis.stochRsi.d} color="purple" showLabel={false} />
+                          </div>
+                        </div>
+
+                        {/* Interpretation */}
+                        <div className="p-4 bg-white/5 rounded-xl">
+                          <h4 className="text-xs text-gray-400 uppercase mb-3">Interpretation</h4>
+                          <div className="space-y-2 text-sm">
+                            {analysis.stochRsi.crossover && (
+                              <div className="flex items-center gap-2 text-yellow-400">
+                                <Crosshair size={14} />
+                                <span>Crossover Detected!</span>
+                              </div>
+                            )}
+                            <div className="flex items-center gap-2 text-gray-300">
+                              <ArrowRightLeft size={14} />
+                              <span>K-D Spread: {(analysis.stochRsi.k - analysis.stochRsi.d).toFixed(1)}</span>
+                            </div>
+                            <div className="text-xs text-gray-500 mt-3">
+                              {analysis.stochRsi.k > 80 ? (
+                                <span className="text-orange-400">⚠️ Overbought territory - potential reversal</span>
+                              ) : analysis.stochRsi.k < 20 ? (
+                                <span className="text-cyan-400">📍 Oversold territory - potential bounce</span>
+                              ) : analysis.stochRsi.signal.includes('BULLISH') ? (
+                                <span className="text-emerald-400">✅ Bullish momentum building</span>
+                              ) : analysis.stochRsi.signal.includes('BEARISH') ? (
+                                <span className="text-rose-400">⚠️ Bearish momentum building</span>
+                              ) : (
+                                <span>Neutral - wait for clearer signal</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Ichimoku Cloud Section */}
+                  {analysis.ichimoku && (
+                    <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
+                      <SectionHeader icon={Cloud} title="Ichimoku Cloud" color="pink" badge="Phase 2" />
+                      
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        {/* Cloud Visualization */}
+                        <div className="p-4 bg-white/5 rounded-xl">
+                          <div className="flex items-center justify-between mb-4">
+                            <span className="text-sm text-gray-400">Cloud Position</span>
+                            <SignalBadge signal={analysis.ichimoku.signal} size="md" />
+                          </div>
+                          
+                          {/* Visual Cloud Representation */}
+                          <div className="relative h-40 flex flex-col justify-between py-4">
+                            {/* Resistance Zone */}
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-gray-500">Cloud Top</span>
+                              <span className="text-sm text-white">₹{analysis.ichimoku.cloudTop.toFixed(2)}</span>
+                            </div>
+                            
+                            {/* Cloud Area */}
+                            <div className={`relative flex-1 mx-4 my-2 rounded-lg ${
+                              analysis.ichimoku.cloudColor === 'GREEN' 
+                                ? 'bg-linear-to-b from-emerald-500/20 to-emerald-500/5' 
+                                : 'bg-linear-to-b from-rose-500/20 to-rose-500/5'
+                            }`}>
+                              {/* Price Position Indicator */}
+                              <div 
+                                className="absolute left-1/2 transform -translate-x-1/2 w-4 h-4 bg-blue-500 rounded-full shadow-lg shadow-blue-500/50 flex items-center justify-center"
+                                style={{
+                                  top: analysis.ichimoku.priceVsCloud === 'ABOVE' ? '-8px' :
+                                       analysis.ichimoku.priceVsCloud === 'BELOW' ? 'calc(100% - 8px)' : '50%'
+                                }}
+                              >
+                                <div className="w-2 h-2 bg-white rounded-full" />
+                              </div>
+                              
+                              {/* Cloud Label */}
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <span className={`text-xs font-medium ${
+                                  analysis.ichimoku.cloudColor === 'GREEN' ? 'text-emerald-400' : 'text-rose-400'
+                                }`}>
+                                  {analysis.ichimoku.cloudColor} CLOUD
+                                </span>
+                              </div>
+                            </div>
+                            
+                            {/* Support Zone */}
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-gray-500">Cloud Bottom</span>
+                              <span className="text-sm text-white">₹{analysis.ichimoku.cloudBottom.toFixed(2)}</span>
+                            </div>
+                          </div>
+
+                          <div className={`mt-4 p-3 rounded-lg ${
+                            analysis.ichimoku.priceVsCloud === 'ABOVE' ? 'bg-emerald-500/10' :
+                            analysis.ichimoku.priceVsCloud === 'BELOW' ? 'bg-rose-500/10' : 'bg-yellow-500/10'
+                          }`}>
+                            <p className={`text-sm font-medium ${
+                              analysis.ichimoku.priceVsCloud === 'ABOVE' ? 'text-emerald-400' :
+                              analysis.ichimoku.priceVsCloud === 'BELOW' ? 'text-rose-400' : 'text-yellow-400'
+                            }`}>
+                              Price is {analysis.ichimoku.priceVsCloud} the cloud
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Ichimoku Components */}
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="p-4 bg-white/5 rounded-xl">
+                              <p className="text-xs text-gray-500 mb-1">Tenkan-sen (9)</p>
+                              <p className="text-lg font-bold text-blue-400">₹{analysis.ichimoku.tenkanSen.toFixed(2)}</p>
+                              <p className="text-[10px] text-gray-500">Conversion Line</p>
+                            </div>
+                            <div className="p-4 bg-white/5 rounded-xl">
+                              <p className="text-xs text-gray-500 mb-1">Kijun-sen (26)</p>
+                              <p className="text-lg font-bold text-purple-400">₹{analysis.ichimoku.kijunSen.toFixed(2)}</p>
+                              <p className="text-[10px] text-gray-500">Base Line</p>
+                            </div>
+                            <div className="p-4 bg-white/5 rounded-xl">
+                              <p className="text-xs text-gray-500 mb-1">Senkou Span A</p>
+                              <p className="text-lg font-bold text-emerald-400">₹{analysis.ichimoku.senkouSpanA.toFixed(2)}</p>
+                              <p className="text-[10px] text-gray-500">Leading Span A</p>
+                            </div>
+                            <div className="p-4 bg-white/5 rounded-xl">
+                              <p className="text-xs text-gray-500 mb-1">Senkou Span B</p>
+                              <p className="text-lg font-bold text-rose-400">₹{analysis.ichimoku.senkouSpanB.toFixed(2)}</p>
+                              <p className="text-[10px] text-gray-500">Leading Span B</p>
+                            </div>
+                          </div>
+
+                          {/* TK Cross Status */}
+                          <div className={`p-4 rounded-xl ${
+                            analysis.ichimoku.tkCross === 'BULLISH' ? 'bg-emerald-500/10 border border-emerald-500/20' :
+                            analysis.ichimoku.tkCross === 'BEARISH' ? 'bg-rose-500/10 border border-rose-500/20' :
+                            'bg-white/5'
+                          }`}>
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-gray-400">TK Cross</span>
+                              <span className={`text-sm font-bold ${
+                                analysis.ichimoku.tkCross === 'BULLISH' ? 'text-emerald-400' :
+                                analysis.ichimoku.tkCross === 'BEARISH' ? 'text-rose-400' : 'text-gray-400'
+                              }`}>
+                                {analysis.ichimoku.tkCross === 'NONE' ? 'No Cross' : analysis.ichimoku.tkCross}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Momentum Score Summary */}
+                  {analysis.momentum && (
+                    <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
+                      <SectionHeader icon={Flame} title="Combined Momentum Score" color="orange" />
+                      
+                      <div className="flex items-center gap-6">
+                        <div className="shrink-0">
+                          <div className={`text-5xl font-bold ${
+                            analysis.momentum.score >= 60 ? 'text-emerald-400' :
+                            analysis.momentum.score <= 40 ? 'text-rose-400' : 'text-yellow-400'
+                          }`}>
+                            {analysis.momentum.score}
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">out of 100</p>
+                        </div>
+                        
+                        <div className="flex-1">
+                          <ProgressBar 
+                            value={analysis.momentum.score} 
+                            color="gradient" 
+                            showLabel={true}
+                          />
+                          <p className="text-sm text-gray-300 mt-2">
+                            {analysis.momentum.interpretation}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
                   )}
                 </div>
               )}
 
-              {/* Backtest Tab */}
+              {/* ============================================================ */}
+              {/* TAB: BACKTEST */}
+              {/* ============================================================ */}
               {activeTab === 'backtest' && analysis.backtest && (
                 <div className="space-y-6">
                   {/* Backtest Stats */}
@@ -878,8 +1252,8 @@ export default function Home() {
                           {analysis.backtest.results.slice(-10).reverse().map((trade, i) => (
                             <tr key={i} className="border-b border-white/5 hover:bg-white/5">
                               <td className="py-3 text-gray-400">{trade.date}</td>
-                              <td className={`py-3 font-medium ${trade.signal === 'BUY' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                {trade.signal}
+                              <td className="py-3">
+                                <SignalBadge signal={trade.signal} size="sm" />
                               </td>
                               <td className="py-3 text-white">₹{trade.priceAtSignal.toFixed(2)}</td>
                               <td className="py-3 text-white">₹{trade.priceAfter.toFixed(2)}</td>
@@ -904,7 +1278,9 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Patterns & Signals Row */}
+              {/* ============================================================ */}
+              {/* PATTERNS & SIGNALS ROW */}
+              {/* ============================================================ */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Patterns */}
                 <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
@@ -915,9 +1291,9 @@ export default function Home() {
                         <div 
                           key={i} 
                           className={`px-3 py-1.5 rounded-lg text-xs font-medium border ${
-                            pattern.toLowerCase().includes('bullish') || pattern.toLowerCase().includes('bottom') || pattern.toLowerCase().includes('hammer')
+                            pattern.toLowerCase().includes('bullish') || pattern.toLowerCase().includes('bottom') || pattern.toLowerCase().includes('hammer') || pattern.toLowerCase().includes('higher')
                               ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
-                              : pattern.toLowerCase().includes('bearish') || pattern.toLowerCase().includes('top') || pattern.toLowerCase().includes('shooting')
+                              : pattern.toLowerCase().includes('bearish') || pattern.toLowerCase().includes('top') || pattern.toLowerCase().includes('shooting') || pattern.toLowerCase().includes('lower')
                               ? 'bg-rose-500/10 border-rose-500/20 text-rose-400'
                               : 'bg-blue-500/10 border-blue-500/20 text-blue-300'
                           }`}
@@ -934,7 +1310,7 @@ export default function Home() {
                 {/* Active Signals */}
                 <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
                   <SectionHeader icon={Zap} title="Active Signals" color="yellow" />
-                  <div className="space-y-2 max-h-45 overflow-y-auto pr-2 custom-scrollbar">
+                  <div className="space-y-2 max-h-50 overflow-y-auto pr-2 custom-scrollbar">
                     {analysis.details.map((detail: string, index: number) => (
                       <div 
                         key={index} 
@@ -942,22 +1318,20 @@ export default function Home() {
                       >
                         <div className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${
                           detail.toLowerCase().includes("bullish") || 
-                          detail.toLowerCase().includes("uptrend") || 
-                          detail.toLowerCase().includes("positive") || 
                           detail.toLowerCase().includes("buy") ||
                           detail.toLowerCase().includes("golden") ||
                           detail.toLowerCase().includes("support") ||
                           detail.toLowerCase().includes("oversold") ||
-                          detail.toLowerCase().includes("undervalued")
+                          detail.toLowerCase().includes("accumulation") ||
+                          detail.toLowerCase().includes("above")
                             ? "bg-emerald-500" 
                             : detail.toLowerCase().includes("bearish") || 
-                              detail.toLowerCase().includes("downtrend") || 
-                              detail.toLowerCase().includes("negative") || 
                               detail.toLowerCase().includes("sell") ||
                               detail.toLowerCase().includes("death") ||
                               detail.toLowerCase().includes("resistance") ||
                               detail.toLowerCase().includes("overbought") ||
-                              detail.toLowerCase().includes("overvalued")
+                              detail.toLowerCase().includes("distribution") ||
+                              detail.toLowerCase().includes("below")
                             ? "bg-rose-500" 
                             : "bg-yellow-500"
                         }`} />
@@ -968,86 +1342,89 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Volume Analysis */}
-{analysis.volume && (
-  <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
-    <SectionHeader icon={Volume2} title="Volume Analysis" color="purple" />
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-      <div className="p-4 bg-white/5 rounded-xl">
-        <p className="text-xs text-gray-500 mb-1">Today's Volume</p>
-        <p className="text-lg font-bold text-white">
-          {formatLargeNumber(analysis.volume.currentVolume ?? 0)}
-        </p>
-      </div>
-      <div className="p-4 bg-white/5 rounded-xl">
-        <p className="text-xs text-gray-500 mb-1">Avg Volume (20D)</p>
-        <p className="text-lg font-bold text-white">
-          {formatLargeNumber(analysis.volume.avgVolume ?? 0)}
-        </p>
-      </div>
-      <div className="p-4 bg-white/5 rounded-xl">
-        <p className="text-xs text-gray-500 mb-1">Volume Ratio</p>
-        <p className={`text-lg font-bold ${
-          (analysis.volume.volumeRatio ?? 0) > 1.5 
-            ? 'text-emerald-400' 
-            : (analysis.volume.volumeRatio ?? 0) < 0.5 
-              ? 'text-rose-400' 
-              : 'text-white'
-        }`}>
-          {(analysis.volume.volumeRatio ?? 0).toFixed(2)}x
-        </p>
-        {analysis.volume.volumeSpike && (
-          <span className="text-xs text-yellow-400">🔥 Volume Spike!</span>
-        )}
-      </div>
-      <div className="p-4 bg-white/5 rounded-xl">
-        <p className="text-xs text-gray-500 mb-1">OBV Trend</p>
-        <p className={`text-lg font-bold ${
-          analysis.volume.obvTrend === 'BULLISH' 
-            ? 'text-emerald-400' 
-            : analysis.volume.obvTrend === 'BEARISH' 
-              ? 'text-rose-400' 
-              : 'text-white'
-        }`}>
-          {analysis.volume.obvTrend ?? 'N/A'}
-        </p>
-      </div>
-    </div>
-    
-    {/* Additional Volume Info Row */}
-    <div className="grid grid-cols-2 gap-4 mt-4">
-      <div className="p-4 bg-white/5 rounded-xl">
-        <p className="text-xs text-gray-500 mb-1">VWAP</p>
-        <p className={`text-lg font-bold ${
-          analysis.price > (analysis.volume.vwap ?? 0) 
-            ? 'text-emerald-400' 
-            : 'text-rose-400'
-        }`}>
-          ₹{(analysis.volume.vwap ?? 0).toFixed(2)}
-        </p>
-        <p className="text-[10px] text-gray-600">
-          {analysis.price > (analysis.volume.vwap ?? 0) ? 'Price Above VWAP' : 'Price Below VWAP'}
-        </p>
-      </div>
-      <div className="p-4 bg-white/5 rounded-xl">
-        <p className="text-xs text-gray-500 mb-1">Volume Trend</p>
-        <p className={`text-lg font-bold ${
-          analysis.volume.volumeTrend === 'ACCUMULATION' 
-            ? 'text-emerald-400' 
-            : analysis.volume.volumeTrend === 'DISTRIBUTION' 
-              ? 'text-rose-400' 
-              : 'text-white'
-        }`}>
-          {analysis.volume.volumeTrend ?? 'NEUTRAL'}
-        </p>
-      </div>
-    </div>
-  </div>
-)}
-
+              {/* ============================================================ */}
+              {/* VOLUME ANALYSIS */}
+              {/* ============================================================ */}
+              {analysis.volume && (
+                <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
+                  <SectionHeader icon={Volume2} title="Volume Analysis" color="purple" />
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="p-4 bg-white/5 rounded-xl">
+                      <p className="text-xs text-gray-500 mb-1">Today's Volume</p>
+                      <p className="text-lg font-bold text-white">
+                        {formatLargeNumber(analysis.volume.currentVolume ?? 0)}
+                      </p>
+                    </div>
+                    <div className="p-4 bg-white/5 rounded-xl">
+                      <p className="text-xs text-gray-500 mb-1">Avg Volume (20D)</p>
+                      <p className="text-lg font-bold text-white">
+                        {formatLargeNumber(analysis.volume.avgVolume ?? 0)}
+                      </p>
+                    </div>
+                    <div className="p-4 bg-white/5 rounded-xl">
+                      <p className="text-xs text-gray-500 mb-1">Volume Ratio</p>
+                      <p className={`text-lg font-bold ${
+                        (analysis.volume.volumeRatio ?? 0) > 1.5 
+                          ? 'text-emerald-400' 
+                          : (analysis.volume.volumeRatio ?? 0) < 0.5 
+                            ? 'text-rose-400' 
+                            : 'text-white'
+                      }`}>
+                        {(analysis.volume.volumeRatio ?? 0).toFixed(2)}x
+                      </p>
+                      {analysis.volume.volumeSpike && (
+                        <span className="text-xs text-yellow-400">🔥 Volume Spike!</span>
+                      )}
+                    </div>
+                    <div className="p-4 bg-white/5 rounded-xl">
+                      <p className="text-xs text-gray-500 mb-1">OBV Trend</p>
+                      <p className={`text-lg font-bold ${
+                        analysis.volume.obvTrend === 'BULLISH' 
+                          ? 'text-emerald-400' 
+                          : analysis.volume.obvTrend === 'BEARISH' 
+                            ? 'text-rose-400' 
+                            : 'text-white'
+                      }`}>
+                        {analysis.volume.obvTrend ?? 'N/A'}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  {/* Additional Volume Info */}
+                  <div className="grid grid-cols-2 gap-4 mt-4">
+                    <div className="p-4 bg-white/5 rounded-xl">
+                      <p className="text-xs text-gray-500 mb-1">VWAP</p>
+                      <p className={`text-lg font-bold ${
+                        analysis.price > (analysis.volume.vwap ?? 0) 
+                          ? 'text-emerald-400' 
+                          : 'text-rose-400'
+                      }`}>
+                        ₹{(analysis.volume.vwap ?? 0).toFixed(2)}
+                      </p>
+                      <p className="text-[10px] text-gray-600">
+                        {analysis.price > (analysis.volume.vwap ?? 0) ? 'Price Above VWAP' : 'Price Below VWAP'}
+                      </p>
+                    </div>
+                    <div className="p-4 bg-white/5 rounded-xl">
+                      <p className="text-xs text-gray-500 mb-1">Volume Trend</p>
+                      <p className={`text-lg font-bold ${
+                        analysis.volume.volumeTrend === 'ACCUMULATION' 
+                          ? 'text-emerald-400' 
+                          : analysis.volume.volumeTrend === 'DISTRIBUTION' 
+                            ? 'text-rose-400' 
+                            : 'text-white'
+                      }`}>
+                        {analysis.volume.volumeTrend ?? 'NEUTRAL'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
+            {/* ============================================================ */}
             {/* RIGHT COLUMN (4 cols) */}
+            {/* ============================================================ */}
             <div className="lg:col-span-4 space-y-6">
               
               {/* Score Gauge */}
@@ -1062,7 +1439,7 @@ export default function Home() {
                       stroke={analysis.score >= 60 ? "#10b981" : analysis.score <= 40 ? "#f43f5e" : "#eab308"} 
                       strokeWidth="10" 
                       fill="none" 
-                      strokeDasharray={471} 
+                      strokeDasharray={471}
                       strokeDashoffset={471 - (471 * analysis.score) / 100}
                       className="transition-all duration-1000 ease-out"
                       strokeLinecap="round"
@@ -1075,7 +1452,7 @@ export default function Home() {
                     <span className="text-xs text-gray-500 uppercase mt-1">out of 100</span>
                   </div>
                 </div>
-                <div className="mt-6 flex gap-4 text-xs">
+                <div className="mt-6 flex gap-4 text-xs flex-wrap justify-center">
                   <span className="flex items-center gap-1 text-rose-400">
                     <div className="w-2 h-2 bg-rose-400 rounded-full"></div> 0-40 Sell
                   </span>
@@ -1092,7 +1469,7 @@ export default function Home() {
               {analysis.risk && (
                 <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
                   <SectionHeader icon={Shield} title="Risk Metrics" color="red" />
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-3">
                     <div className="p-3 bg-white/5 rounded-lg">
                       <p className="text-xs text-gray-500 mb-1">Beta (vs Nifty)</p>
                       <p className={`text-lg font-bold ${
@@ -1101,51 +1478,37 @@ export default function Home() {
                       }`}>
                         {analysis.risk.beta.toFixed(2)}
                       </p>
-                      <p className="text-[10px] text-gray-600">
-                        {analysis.risk.beta > 1 ? 'More volatile' : 'Less volatile'}
-                      </p>
                     </div>
                     <div className="p-3 bg-white/5 rounded-lg">
                       <p className="text-xs text-gray-500 mb-1">Alpha (Annual)</p>
                       <p className={`text-lg font-bold ${analysis.risk.alpha >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                         {formatPercent(analysis.risk.alpha)}
                       </p>
-                      <p className="text-[10px] text-gray-600">
-                        {analysis.risk.alpha >= 0 ? 'Outperforming' : 'Underperforming'}
-                      </p>
                     </div>
                     <div className="p-3 bg-white/5 rounded-lg">
-                      <p className="text-xs text-gray-500 mb-1">Correlation</p>
-                      <p className="text-lg font-bold text-white">
-                        {(analysis.risk.correlation * 100).toFixed(0)}%
-                      </p>
-                      <p className="text-[10px] text-gray-600">with Nifty 50</p>
-                    </div>
-                    <div className="p-3 bg-white/5 rounded-lg">
-                      <p className="text-xs text-gray-500 mb-1">Market Context</p>
+                      <p className="text-xs text-gray-500 mb-1">Sharpe Ratio</p>
                       <p className={`text-lg font-bold ${
-                        analysis.risk.marketTrend === 'BULLISH' ? 'text-emerald-400' : 
-                        analysis.risk.marketTrend === 'BEARISH' ? 'text-rose-400' : 'text-yellow-400'
+                        (analysis.risk.sharpeRatio ?? 0) > 1 ? 'text-emerald-400' : 
+                        (analysis.risk.sharpeRatio ?? 0) < 0 ? 'text-rose-400' : 'text-white'
                       }`}>
-                        {analysis.risk.marketTrend}
+                        {(analysis.risk.sharpeRatio ?? 0).toFixed(2)}
                       </p>
                     </div>
-                    {analysis.risk.sharpeRatio !== undefined && (
-                      <div className="p-3 bg-white/5 rounded-lg">
-                        <p className="text-xs text-gray-500 mb-1">Sharpe Ratio</p>
+                    <div className="p-3 bg-white/5 rounded-lg">
+                      <p className="text-xs text-gray-500 mb-1">Max Drawdown</p>
+                      <p className="text-lg font-bold text-rose-400">
+                        {(analysis.risk.maxDrawdownPercent ?? 0).toFixed(1)}%
+                      </p>
+                    </div>
+                    {analysis.risk.riskGrade && (
+                      <div className="col-span-2 p-3 bg-white/5 rounded-lg">
+                        <p className="text-xs text-gray-500 mb-1">Risk Grade</p>
                         <p className={`text-lg font-bold ${
-                          analysis.risk.sharpeRatio > 1 ? 'text-emerald-400' : 
-                          analysis.risk.sharpeRatio < 0 ? 'text-rose-400' : 'text-yellow-400'
+                          analysis.risk.riskGrade === 'LOW' ? 'text-emerald-400' :
+                          analysis.risk.riskGrade === 'MODERATE' ? 'text-yellow-400' :
+                          analysis.risk.riskGrade === 'HIGH' ? 'text-orange-400' : 'text-rose-400'
                         }`}>
-                          {analysis.risk.sharpeRatio.toFixed(2)}
-                        </p>
-                      </div>
-                    )}
-                    {analysis.risk.maxDrawdown !== undefined && (
-                      <div className="p-3 bg-white/5 rounded-lg">
-                        <p className="text-xs text-gray-500 mb-1">Max Drawdown</p>
-                        <p className="text-lg font-bold text-rose-400">
-                          {(analysis.risk.maxDrawdown * 100).toFixed(1)}%
+                          {analysis.risk.riskGrade}
                         </p>
                       </div>
                     )}
@@ -1154,68 +1517,68 @@ export default function Home() {
               )}
 
               {/* AI Forecast */}
-{analysis.prediction && analysis.prediction.length > 0 && (
-  <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
-    <SectionHeader icon={BrainCircuit} title={`AI Forecast (${timeframe})`} color="purple" />
-    
-    <div className="flex items-end justify-between mb-4">
-      <div>
-        <p className="text-xs text-gray-500">Target (Avg)</p>
-        <p className="text-2xl font-bold text-white">
-          ₹{analysis.prediction[analysis.prediction.length - 1].price.toFixed(2)}
-        </p>
-      </div>
-      <div className="text-right">
-        <p className="text-xs text-gray-500">Expected Move</p>
-        <p className={`text-lg font-bold ${
-          analysis.prediction[analysis.prediction.length - 1].price > analysis.price 
-            ? 'text-emerald-400' 
-            : 'text-rose-400'
-        }`}>
-          {((analysis.prediction[analysis.prediction.length - 1].price - analysis.price) / analysis.price * 100).toFixed(1)}%
-        </p>
-      </div>
-    </div>
+              {analysis.prediction && analysis.prediction.length > 0 && (
+                <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
+                  <SectionHeader icon={BrainCircuit} title={`AI Forecast (${timeframe})`} color="purple" />
+                  
+                  <div className="flex items-end justify-between mb-4">
+                    <div>
+                      <p className="text-xs text-gray-500">Target (Avg)</p>
+                      <p className="text-2xl font-bold text-white">
+                        ₹{analysis.prediction[analysis.prediction.length - 1].price.toFixed(2)}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-gray-500">Expected Move</p>
+                      <p className={`text-lg font-bold ${
+                        analysis.prediction[analysis.prediction.length - 1].price > analysis.price 
+                          ? 'text-emerald-400' 
+                          : 'text-rose-400'
+                      }`}>
+                        {((analysis.prediction[analysis.prediction.length - 1].price - analysis.price) / analysis.price * 100).toFixed(1)}%
+                      </p>
+                    </div>
+                  </div>
 
-    <div className="h-30 w-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={analysis.prediction}>
-          <defs>
-            <linearGradient id="colorCone" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3}/>
-              <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
-            </linearGradient>
-          </defs>
-          <XAxis dataKey="date" hide />
-          <YAxis domain={['auto', 'auto']} hide />
-          <Tooltip 
-            contentStyle={{ backgroundColor: '#111', borderColor: '#333', fontSize: '12px' }}
-            itemStyle={{ color: '#fff' }}
-            formatter={(value) => {
-              const numValue = typeof value === 'number' ? value : Number(value) || 0;
-              return [`₹${numValue.toFixed(2)}`, ''];
-            }}
-            labelStyle={{ color: '#888' }}
-          />
-          <Area type="monotone" dataKey="upper" stroke="none" fill="#8b5cf6" fillOpacity={0.1} />
-          <Area type="monotone" dataKey="lower" stroke="none" fill="#8b5cf6" fillOpacity={0.1} />
-          <Area type="monotone" dataKey="price" stroke="#8b5cf6" strokeWidth={2} fill="url(#colorCone)" />
-        </AreaChart>
-      </ResponsiveContainer>
-    </div>
-    <div className="mt-2 flex justify-between text-[10px] text-gray-500">
-      <span>{analysis.prediction[0]?.date}</span>
-      <span>{analysis.prediction[analysis.prediction.length - 1]?.date}</span>
-    </div>
-    
-    <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
-      <p className="text-xs text-yellow-400 flex items-center gap-2">
-        <Info size={12} />
-        AI predictions are based on historical patterns and should not be used as financial advice.
-      </p>
-    </div>
-  </div>
-)}
+                  <div className="h-30 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={analysis.prediction}>
+                        <defs>
+                          <linearGradient id="colorCone" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <XAxis dataKey="date" hide />
+                        <YAxis domain={['auto', 'auto']} hide />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#111', borderColor: '#333', fontSize: '12px' }}
+                          itemStyle={{ color: '#fff' }}
+                          formatter={(value) => {
+                            const numValue = typeof value === 'number' ? value : Number(value) || 0;
+                            return [`₹${numValue.toFixed(2)}`, ''];
+                          }}
+                          labelStyle={{ color: '#888' }}
+                        />
+                        <Area type="monotone" dataKey="upper" stroke="none" fill="#8b5cf6" fillOpacity={0.1} />
+                        <Area type="monotone" dataKey="lower" stroke="none" fill="#8b5cf6" fillOpacity={0.1} />
+                        <Area type="monotone" dataKey="price" stroke="#8b5cf6" strokeWidth={2} fill="url(#colorCone)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="mt-2 flex justify-between text-[10px] text-gray-500">
+                    <span>{analysis.prediction[0]?.date}</span>
+                    <span>{analysis.prediction[analysis.prediction.length - 1]?.date}</span>
+                  </div>
+                  
+                  <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                    <p className="text-xs text-yellow-400 flex items-center gap-2">
+                      <Info size={12} />
+                      AI predictions are for reference only. Not financial advice.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Fundamentals */}
               <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
@@ -1280,7 +1643,7 @@ export default function Home() {
               {/* News Feed */}
               <div className="bg-[#0A0A0A] border border-white/5 p-6 rounded-2xl">
                 <SectionHeader icon={Newspaper} title="Recent News" color="purple" />
-                <div className="space-y-4">
+                <div className="space-y-4 max-h-75 overflow-y-auto custom-scrollbar">
                   {analysis.news.length > 0 ? analysis.news.map((item: NewsItem, index: number) => (
                     <a 
                       key={index} 
@@ -1312,6 +1675,11 @@ export default function Home() {
                                 month: 'short' 
                               })}
                             </span>
+                            {item.recencyWeight && item.recencyWeight > 1 && (
+                              <span className="text-[10px] text-yellow-500">
+                                🔥 Recent
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1321,12 +1689,13 @@ export default function Home() {
                   )}
                 </div>
               </div>
-
             </div>
           </div>
         )}
 
-        {/* Empty State */}
+        {/* ============================================================ */}
+        {/* EMPTY STATE */}
+        {/* ============================================================ */}
         {!analysis && !loading && !error && (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <div className="w-20 h-20 bg-blue-500/10 rounded-2xl flex items-center justify-center mb-6">
@@ -1334,12 +1703,15 @@ export default function Home() {
             </div>
             <h2 className="text-xl font-semibold text-white mb-2">Ready to Analyze</h2>
             <p className="text-gray-500 max-w-md mb-6">
-              Select a stock from the dropdown and click "Analyze" to get comprehensive 
-              technical analysis, AI predictions, and trading signals.
+              Select a stock and click "Analyze" to get comprehensive technical analysis with Phase 2 indicators: 
+              Stochastic RSI, Ichimoku Cloud, and enhanced ML predictions.
             </p>
-            <div className="flex gap-4 text-sm text-gray-400">
+            <div className="flex gap-4 text-sm text-gray-400 flex-wrap justify-center">
               <span className="flex items-center gap-1">
-                <Activity size={14} /> Technical Indicators
+                <Gauge size={14} /> Stoch RSI
+              </span>
+              <span className="flex items-center gap-1">
+                <Cloud size={14} /> Ichimoku
               </span>
               <span className="flex items-center gap-1">
                 <BrainCircuit size={14} /> AI Predictions
@@ -1351,18 +1723,19 @@ export default function Home() {
           </div>
         )}
 
-        {/* Footer */}
+        {/* ============================================================ */}
+        {/* FOOTER */}
+        {/* ============================================================ */}
         <footer className="border-t border-white/5 pt-6 mt-12">
           <div className="flex flex-col md:flex-row justify-between items-center gap-4">
             <p className="text-xs text-gray-600">
-              © 2024 TradeSense AI • Data from Yahoo Finance • Not financial advice
+              © 2024 TradeSense AI • Phase 2 • Data from Yahoo Finance • Not financial advice
             </p>
             <div className="flex gap-4 text-xs text-gray-600">
               <span>Press <kbd className="px-1.5 py-0.5 bg-white/5 rounded">⌘</kbd> + <kbd className="px-1.5 py-0.5 bg-white/5 rounded">Enter</kbd> to analyze</span>
             </div>
           </div>
         </footer>
-
       </div>
 
       {/* Custom Scrollbar Styles */}

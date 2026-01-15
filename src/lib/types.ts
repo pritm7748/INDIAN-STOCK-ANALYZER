@@ -121,6 +121,10 @@ export interface AnalysisResult {
   risk: RiskData;
   volume: VolumeData; // NEW
   volatility: VolatilityData; // NEW
+  stochRsi: StochRSIData;
+  ichimoku: IchimokuData;
+  sector?: SectorData;
+  momentum: { score: number; interpretation: string };
   zigzag: ZigZagPoint[];
   history: { date: string; price: number; volume?: number }[];
   backtest: {
@@ -129,4 +133,50 @@ export interface AnalysisResult {
     totalReturn: number;
   };
   prediction: PredictionPoint[];
+}
+
+export interface StochRSIData {
+  k: number;           // Fast %K line (0-100)
+  d: number;           // Slow %D line (0-100)
+  signal: 'OVERBOUGHT' | 'OVERSOLD' | 'BULLISH_CROSS' | 'BEARISH_CROSS' | 'NEUTRAL';
+  crossover: boolean;  // True if K crossed D recently
+}
+
+// Ichimoku Cloud Data
+export interface IchimokuData {
+  tenkanSen: number;      // Conversion Line (9-period)
+  kijunSen: number;       // Base Line (26-period)
+  senkouSpanA: number;    // Leading Span A (forms cloud)
+  senkouSpanB: number;    // Leading Span B (forms cloud)
+  chikouSpan: number;     // Lagging Span
+  cloudTop: number;       // Max of Span A & B
+  cloudBottom: number;    // Min of Span A & B
+  priceVsCloud: 'ABOVE' | 'BELOW' | 'INSIDE';
+  tkCross: 'BULLISH' | 'BEARISH' | 'NONE';  // Tenkan/Kijun cross
+  cloudColor: 'GREEN' | 'RED';              // Cloud direction
+  signal: 'STRONG_BUY' | 'BUY' | 'NEUTRAL' | 'SELL' | 'STRONG_SELL';
+}
+
+// Sector Performance Data
+export interface SectorData {
+  sectorName: string;
+  sectorChange: number;       // Sector % change (1D)
+  stockVsSector: number;      // Stock performance vs sector
+  sectorRank: number;         // Rank within sector (1 = best)
+  sectorStockCount: number;   // Total stocks in sector
+  isOutperforming: boolean;   // Stock > Sector?
+  topPerformers: string[];    // Top 3 in sector
+  bottomPerformers: string[]; // Bottom 3 in sector
+}
+
+// Enhanced ML Prediction
+export interface MLPrediction {
+  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  confidence: number;          // 0-100
+  predictedReturn: number;     // Expected % return
+  targetPrice: number;
+  stopLoss: number;
+  riskReward: number;          // Risk/Reward ratio
+  trendStrength: 'STRONG' | 'MODERATE' | 'WEAK';
+  signals: string[];           // Contributing factors
 }
