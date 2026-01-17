@@ -8,6 +8,15 @@ interface SocialButtonsProps {
   redirectTo?: string
 }
 
+// Helper to get the base URL
+function getBaseUrl() {
+  if (typeof window !== 'undefined') {
+    return window.location.origin
+  }
+  // Fallback for SSR - use environment variable
+  return process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+}
+
 export function SocialButtons({ redirectTo = '/dashboard' }: SocialButtonsProps) {
   const [isLoading, setIsLoading] = useState<string | null>(null)
   const supabase = createClient()
@@ -15,10 +24,12 @@ export function SocialButtons({ redirectTo = '/dashboard' }: SocialButtonsProps)
   const handleGoogleSignIn = async () => {
     setIsLoading('google')
     try {
+      const baseUrl = getBaseUrl()
+      
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/auth/callback?redirect=${redirectTo}`,
+          redirectTo: `${baseUrl}/auth/callback?redirect=${redirectTo}`,
           queryParams: {
             access_type: 'offline',
             prompt: 'consent',

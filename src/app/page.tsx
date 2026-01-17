@@ -1,5 +1,7 @@
 // src/app/page.tsx
 import Link from 'next/link'
+import { createClient } from '@/lib/supabase/server'
+import { redirect } from 'next/navigation'
 import { 
   TrendingUp, 
   BarChart2, 
@@ -15,7 +17,16 @@ import {
   CheckCircle
 } from 'lucide-react'
 
-export default function LandingPage() {
+export default async function LandingPage() {
+
+   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  // If authenticated, redirect to dashboard
+  if (user) {
+    redirect('/dashboard')
+    
+  }
   return (
     <main className="min-h-screen bg-[#050505] text-gray-100">
       {/* Navigation */}
