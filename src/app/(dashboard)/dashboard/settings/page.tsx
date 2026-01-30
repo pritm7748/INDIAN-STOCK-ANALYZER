@@ -1,10 +1,11 @@
-// src/app/(dashboard)/settings/page.tsx
+// src/app/(dashboard)/dashboard/settings/page.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
 import { useUser } from '@/lib/hooks/useUser'
 import { createClient } from '@/lib/supabase/client'
 import { Json } from '@/lib/supabase/types'
+import { getCacheStats, clearAllCache, formatAge, formatBytes } from '@/lib/cache'
 import { 
   User, 
   Bell, 
@@ -16,7 +17,9 @@ import {
   Mail,
   MessageCircle,
   Globe,
-  AlertTriangle
+  AlertTriangle,
+  Trash2,
+  Database
 } from 'lucide-react'
 
 // ============================================================
@@ -96,6 +99,19 @@ export default function SettingsPage() {
   // Notification Preferences
   const [notifications, setNotifications] = useState<NotificationPreferences>(DEFAULT_PREFERENCES)
 
+  // Cache state
+  const [cacheStats, setCacheStats] = useState<{
+    count: number
+    totalSize: number
+    entries: Array<{ symbol: string; timeframe: string; age: number; isStale: boolean }>
+  } | null>(null)
+  const [clearingCache, setClearingCache] = useState(false)
+
+  // Load cache stats on mount
+  useEffect(() => {
+    setCacheStats(getCacheStats())
+  }, [])
+
   // Initialize form data when profile loads
   useEffect(() => {
     if (profile) {
@@ -123,7 +139,7 @@ export default function SettingsPage() {
       ...prev,
       [key]: value,
     }))
-    setSaved(false) // Reset saved state when changes are made
+    setSaved(false)
   }
 
   // Handle text field change
@@ -136,47 +152,46 @@ export default function SettingsPage() {
   }
 
   // Save all settings
-  // Save all settings
-const handleSave = async () => {
-  if (!profile?.id) return
+  const handleSave = async () => {
+    if (!profile?.id) return
 
-  setIsLoading(true)
-  setSaved(false)
-  setError(null)
+    setIsLoading(true)
+    setSaved(false)
+    setError(null)
 
-  try {
-    // Validate telegram username if telegram notifications are enabled
-    if (notifications.telegram && !formData.telegram_username.trim()) {
-      setError('Please enter your Telegram username to enable Telegram notifications')
+    try {
+      // Validate telegram username if telegram notifications are enabled
+      if (notifications.telegram && !formData.telegram_username.trim()) {
+        setError('Please enter your Telegram username to enable Telegram notifications')
+        setIsLoading(false)
+        return
+      }
+
+      const updateData = {
+        full_name: formData.full_name.trim(),
+        telegram_username: formData.telegram_username.trim(),
+        notification_preferences: notifications as unknown as Json,
+      }
+
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update(updateData)
+        .eq('id', profile.id)
+
+      if (updateError) throw updateError
+
+      await refreshProfile()
+      setSaved(true)
+      
+      // Reset saved message after 3 seconds
+      setTimeout(() => setSaved(false), 3000)
+    } catch (err: any) {
+      console.error('Failed to save settings:', err)
+      setError(err.message || 'Failed to save settings. Please try again.')
+    } finally {
       setIsLoading(false)
-      return
     }
-
-    const updateData = {
-      full_name: formData.full_name.trim(),
-      telegram_username: formData.telegram_username.trim(),
-      notification_preferences: notifications as unknown as Json,  // ✅ Fixed
-    }
-
-    const { error: updateError } = await supabase
-      .from('profiles')
-      .update(updateData)
-      .eq('id', profile.id)
-
-    if (updateError) throw updateError
-
-    await refreshProfile()
-    setSaved(true)
-    
-    // Reset saved message after 3 seconds
-    setTimeout(() => setSaved(false), 3000)
-  } catch (err: any) {
-    console.error('Failed to save settings:', err)
-    setError(err.message || 'Failed to save settings. Please try again.')
-  } finally {
-    setIsLoading(false)
   }
-}
 
   // Request browser push permission
   const requestPushPermission = async () => {
@@ -200,7 +215,6 @@ const handleSave = async () => {
     if (!profile) return false
     
     const prefs = profile.notification_preferences as NotificationPreferences | null
-    
     const profilePrefs = prefs || DEFAULT_PREFERENCES
     const profileName = profile.full_name || fullName || ''
     const profileTelegram = profile.telegram_username || ''
@@ -213,6 +227,16 @@ const handleSave = async () => {
       notifications.telegram !== (profilePrefs.telegram ?? false) ||
       notifications.email !== (profilePrefs.email ?? false)
     )
+  }
+
+  // Handle clear cache
+  const handleClearCache = async () => {
+    setClearingCache(true)
+    await new Promise(r => setTimeout(r, 500))
+    const cleared = clearAllCache()
+    setCacheStats({ count: 0, entries: [], totalSize: 0 })
+    setClearingCache(false)
+    alert(`Cleared ${cleared} cached analyses`)
   }
 
   return (
@@ -404,6 +428,81 @@ const handleSave = async () => {
         </div>
       </div>
 
+      {/* Cache Management */}
+      <div className="bg-[#0A0A0A] border border-white/5 rounded-2xl p-6">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="p-2 bg-purple-500/10 rounded-lg">
+            <Database className="w-5 h-5 text-purple-400" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-white">Analysis Cache</h2>
+            <p className="text-sm text-gray-500">Cached analyses for faster loading</p>
+          </div>
+        </div>
+
+        {cacheStats && cacheStats.count > 0 ? (
+          <div className="space-y-4">
+            {/* Stats */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-4 bg-white/5 rounded-xl">
+                <p className="text-xs text-gray-500 mb-1">Cached Analyses</p>
+                <p className="text-2xl font-bold text-white">{cacheStats.count}</p>
+              </div>
+              <div className="p-4 bg-white/5 rounded-xl">
+                <p className="text-xs text-gray-500 mb-1">Cache Size</p>
+                <p className="text-2xl font-bold text-white">{formatBytes(cacheStats.totalSize)}</p>
+              </div>
+            </div>
+
+            {/* Cached Items List */}
+            <div className="max-h-48 overflow-y-auto space-y-2">
+              {cacheStats.entries.map((entry, i) => (
+                <div 
+                  key={i}
+                  className="flex items-center justify-between p-3 bg-white/5 rounded-lg"
+                >
+                  <div>
+                    <span className="font-medium text-white">
+                      {entry.symbol.replace('.NS', '')}
+                    </span>
+                    <span className="text-gray-500 text-sm ml-2">
+                      ({entry.timeframe})
+                    </span>
+                  </div>
+                  <span className={`text-xs ${
+                    entry.isStale ? 'text-yellow-400' : 'text-gray-500'
+                  }`}>
+                    {formatAge(entry.age)}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Clear Cache Button */}
+            <button
+              onClick={handleClearCache}
+              disabled={clearingCache}
+              className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 font-medium rounded-xl transition-colors disabled:opacity-50"
+            >
+              {clearingCache ? (
+                <Loader2 size={18} className="animate-spin" />
+              ) : (
+                <Trash2 size={18} />
+              )}
+              Clear All Cache
+            </button>
+          </div>
+        ) : (
+          <div className="text-center py-8">
+            <Database size={40} className="mx-auto mb-3 text-gray-600" />
+            <p className="text-gray-500">No cached analyses</p>
+            <p className="text-xs text-gray-600 mt-1">
+              Analyses are cached for 15 minutes to speed up repeat views
+            </p>
+          </div>
+        )}
+      </div>
+
       {/* Save Button */}
       <div className="flex items-center justify-between">
         {/* Unsaved Changes Indicator */}
@@ -438,12 +537,6 @@ const handleSave = async () => {
           {saved ? 'Saved!' : 'Save Changes'}
         </button>
       </div>
-
-      {/* Keyboard Shortcut Hint */}
-      <p className="text-xs text-gray-600 text-center">
-        Press <kbd className="px-1.5 py-0.5 bg-white/5 rounded mx-1">Ctrl</kbd> + 
-        <kbd className="px-1.5 py-0.5 bg-white/5 rounded mx-1">S</kbd> to save
-      </p>
     </div>
   )
 }

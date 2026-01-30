@@ -7,6 +7,13 @@ import { STOCK_LIST, StockSymbol } from "@/lib/stockList"
 import { useUser } from '@/lib/hooks/useUser'
 import { useWatchlists, useStockInWatchlists } from '@/lib/hooks/useWatchlists'
 import { createClient } from '@/lib/supabase/client'
+import { 
+  getFromCache, 
+  saveToCache, 
+  hasValidCache, 
+  clearCacheEntry,
+  formatAge 
+} from '@/lib/cache'
 
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, 
@@ -18,7 +25,7 @@ import {
   Shield, Target, AlertTriangle, Bookmark, BookmarkCheck, RefreshCw,
   ChevronDown, ChevronUp, Info, Gauge, Waves, LineChart, Cloud,
   Crosshair, Layers, CircleDot, Flame, Loader2, ArrowRightLeft,
-  Radio, Snowflake
+  Radio, Snowflake, Database, Clock
 } from 'lucide-react'
 
 // ============================================================
@@ -327,6 +334,46 @@ function ProgressBar({ value, max = 100, color = 'blue', showLabel = true }: {
 }
 
 // ============================================================
+// CACHE STATUS COMPONENT
+// ============================================================
+
+function CacheStatus({ 
+  symbol, 
+  timeframe, 
+  onRefresh 
+}: { 
+  symbol: string
+  timeframe: string
+  onRefresh: () => void 
+}) {
+  const cached = getFromCache<AnalysisData>(symbol, timeframe)
+  
+  if (!cached) return null
+  
+  return (
+    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs ${
+      cached.isStale 
+        ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20' 
+        : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+    }`}>
+      <Database size={12} />
+      <span>
+        {cached.isStale ? 'Stale cache' : 'Cached'} • {formatAge(cached.age)}
+      </span>
+      {cached.isStale && (
+        <button 
+          onClick={onRefresh}
+          className="ml-1 p-0.5 hover:bg-white/10 rounded transition-colors"
+          title="Refresh analysis"
+        >
+          <RefreshCw size={12} />
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ============================================================
 // MAIN DASHBOARD CONTENT
 // ============================================================
 
@@ -342,6 +389,8 @@ function DashboardContent() {
   const [showVolume, setShowVolume] = useState<boolean>(false)
   const [activeTab, setActiveTab] = useState<'chart' | 'technicals' | 'momentum' | 'backtest'>('chart')
   const [watchlistLoading, setWatchlistLoading] = useState(false)
+  const [cacheAge, setCacheAge] = useState<number | null>(null)
+  const [usedCache, setUsedCache] = useState<boolean>(false)
 
   const { userId, isAuthenticated } = useUser()
   const { getOrCreateDefaultWatchlist } = useWatchlists()
@@ -356,11 +405,48 @@ function DashboardContent() {
     }
   }, [initialSymbol])
 
-  // Analyze function
-  const handleAnalyze = useCallback(async () => {
+  // Analyze function with caching
+  const handleAnalyze = useCallback(async (forceRefresh: boolean = false) => {
     setLoading(true)
     setError(null)
-    setAnalysis(null)
+    setUsedCache(false)
+    setCacheAge(null)
+    
+    // Check cache first (unless force refresh)
+    if (!forceRefresh) {
+      const cached = getFromCache<AnalysisData>(selectedStock, timeframe)
+      
+      if (cached && !cached.isStale) {
+        console.log(`📦 Using cached analysis for ${selectedStock} (${timeframe}) - ${formatAge(cached.age)}`)
+        setAnalysis(cached.data)
+        setCacheAge(cached.age)
+        setUsedCache(true)
+        setLoading(false)
+        
+        // Save to analysis history if authenticated (even for cached)
+        if (userId) {
+          await supabase.from('analysis_history').insert({
+            user_id: userId,
+            symbol: selectedStock,
+            stock_name: selectedStockData?.name,
+            timeframe,
+            score: cached.data.score,
+            recommendation: cached.data.recommendation,
+            price: cached.data.price,
+          })
+        }
+        return
+      }
+      
+      // If stale cache exists, show it immediately while fetching fresh data
+      if (cached && cached.isStale) {
+        console.log(`⏳ Showing stale cache for ${selectedStock} while refreshing...`)
+        setAnalysis(cached.data)
+        setCacheAge(cached.age)
+        setUsedCache(true)
+        // Don't return - continue to fetch fresh data
+      }
+    }
     
     try {
       const res = await fetch(`/api/analyze?symbol=${selectedStock}&timeframe=${timeframe}`)
@@ -370,7 +456,13 @@ function DashboardContent() {
         throw new Error(data.error || "Analysis failed")
       }
       
+      // Save to cache
+      saveToCache(selectedStock, timeframe, data)
+      console.log(`💾 Saved fresh analysis to cache for ${selectedStock} (${timeframe})`)
+      
       setAnalysis(data)
+      setCacheAge(null)
+      setUsedCache(false)
 
       // Save to analysis history if authenticated
       if (userId) {
@@ -382,15 +474,25 @@ function DashboardContent() {
           score: data.score,
           recommendation: data.recommendation,
           price: data.price,
-        }).match(console.error)
+        })
       }
     } catch (err: any) {
       console.error(err)
       setError(err.message || "Analysis failed. Please try again.")
+      // If we had stale cache displayed, keep it on error
+      if (!analysis) {
+        setAnalysis(null)
+      }
     } finally {
       setLoading(false)
     }
-  }, [selectedStock, timeframe, userId])
+  }, [selectedStock, timeframe, userId, supabase])
+
+  // Force refresh (bypass cache)
+  const handleForceRefresh = useCallback(() => {
+    clearCacheEntry(selectedStock, timeframe)
+    handleAnalyze(true)
+  }, [selectedStock, timeframe, handleAnalyze])
 
   // Keyboard shortcut
   useEffect(() => {
@@ -398,10 +500,14 @@ function DashboardContent() {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         handleAnalyze()
       }
+      // Shift+Cmd+Enter for force refresh
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && e.shiftKey) {
+        handleForceRefresh()
+      }
     }
     window.addEventListener('keydown', handleKeyPress)
     return () => window.removeEventListener('keydown', handleKeyPress)
-  }, [handleAnalyze])
+  }, [handleAnalyze, handleForceRefresh])
 
   // Handle watchlist toggle
   const handleWatchlistToggle = async () => {
@@ -495,7 +601,7 @@ function DashboardContent() {
 
   const selectedStockData = STOCK_LIST.find(s => s.symbol === selectedStock)
 
-    // ============================================================
+  // ============================================================
   // RENDER
   // ============================================================
 
@@ -560,7 +666,7 @@ function DashboardContent() {
 
           {/* Analyze Button */}
           <button
-            onClick={handleAnalyze}
+            onClick={() => handleAnalyze()}
             disabled={loading}
             className="flex items-center gap-2 px-6 py-2.5 bg-linear-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-all text-sm shadow-lg shadow-blue-500/20"
           >
@@ -576,8 +682,36 @@ function DashboardContent() {
               </>
             )}
           </button>
+
+          {/* Force Refresh Button (only shown when cache exists) */}
+          {hasValidCache(selectedStock, timeframe) && !loading && (
+            <button
+              onClick={handleForceRefresh}
+              className="p-2.5 rounded-xl bg-white/5 text-gray-400 border border-white/10 hover:bg-white/10 hover:text-white transition-all"
+              title="Force refresh (bypass cache)"
+            >
+              <RefreshCw size={20} />
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Cache Status Indicator */}
+      {analysis && usedCache && cacheAge !== null && (
+        <div className="flex items-center gap-3">
+          <CacheStatus 
+            symbol={selectedStock} 
+            timeframe={timeframe} 
+            onRefresh={handleForceRefresh}
+          />
+          {loading && (
+            <span className="flex items-center gap-2 text-xs text-blue-400">
+              <Loader2 size={12} className="animate-spin" />
+              Refreshing...
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Error Display */}
       {error && (
@@ -588,7 +722,7 @@ function DashboardContent() {
       )}
 
       {/* Loading State */}
-      {loading && (
+      {loading && !analysis && (
         <div className="flex flex-col items-center justify-center py-20 space-y-4">
           <div className="relative w-20 h-20">
             <div className="absolute inset-0 border-4 border-blue-500/20 rounded-full"></div>
@@ -599,7 +733,7 @@ function DashboardContent() {
         </div>
       )}
 
-            {/* ============================================================ */}
+      {/* ============================================================ */}
       {/* ANALYSIS RESULTS */}
       {/* ============================================================ */}
       {analysis && !loading && (
@@ -635,6 +769,13 @@ function DashboardContent() {
                     {analysis.confidence !== undefined && (
                       <span className="px-2 py-0.5 bg-purple-500/10 text-purple-400 rounded text-xs">
                         {analysis.confidence}% Confidence
+                      </span>
+                    )}
+                    {/* Cache indicator in price banner */}
+                    {usedCache && cacheAge !== null && (
+                      <span className="px-2 py-0.5 bg-blue-500/10 text-blue-400 rounded text-xs flex items-center gap-1">
+                        <Clock size={10} />
+                        {formatAge(cacheAge)}
                       </span>
                     )}
                   </div>
@@ -711,7 +852,7 @@ function DashboardContent() {
               ))}
             </div>
 
-                        {/* ============================================================ */}
+            {/* ============================================================ */}
             {/* TAB: PRICE CHART */}
             {/* ============================================================ */}
             {activeTab === 'chart' && (
@@ -883,7 +1024,7 @@ function DashboardContent() {
               </div>
             )}
 
-                        {/* ============================================================ */}
+            {/* ============================================================ */}
             {/* TAB: TECHNICAL INDICATORS */}
             {/* ============================================================ */}
             {activeTab === 'technicals' && (
@@ -1024,7 +1165,7 @@ function DashboardContent() {
               </div>
             )}
 
-                        {/* ============================================================ */}
+            {/* ============================================================ */}
             {/* TAB: MOMENTUM (Phase 2 - Stoch RSI, Ichimoku, Williams %R) */}
             {/* ============================================================ */}
             {activeTab === 'momentum' && (
@@ -1305,7 +1446,7 @@ function DashboardContent() {
               </div>
             )}
 
-                        {/* ============================================================ */}
+            {/* ============================================================ */}
             {/* TAB: BACKTEST */}
             {/* ============================================================ */}
             {activeTab === 'backtest' && analysis.backtest && (
@@ -1471,7 +1612,7 @@ function DashboardContent() {
                       {formatLargeNumber(analysis.volume.currentVolume ?? 0)}
                     </p>
                   </div>
-                                    <div className="p-4 bg-white/5 rounded-xl">
+                  <div className="p-4 bg-white/5 rounded-xl">
                     <p className="text-xs text-gray-500 mb-1">Avg Volume (20D)</p>
                     <p className="text-lg font-bold text-white">
                       {formatLargeNumber(analysis.volume.avgVolume ?? 0)}
@@ -1569,7 +1710,7 @@ function DashboardContent() {
             )}
           </div>
 
-                    {/* ============================================================ */}
+          {/* ============================================================ */}
           {/* RIGHT COLUMN (4 cols) */}
           {/* ============================================================ */}
           <div className="lg:col-span-4 space-y-6">
@@ -1624,6 +1765,13 @@ function DashboardContent() {
                       style={{ width: `${analysis.confidence}%` }}
                     />
                   </div>
+                </div>
+              )}
+              {/* Cache indicator */}
+              {usedCache && cacheAge !== null && (
+                <div className="mt-4 flex items-center gap-2 text-xs text-gray-500">
+                  <Database size={12} />
+                  <span>From cache • {formatAge(cacheAge)}</span>
                 </div>
               )}
             </div>
@@ -1938,7 +2086,7 @@ function DashboardContent() {
         </div>
       )}
 
-            {/* ============================================================ */}
+      {/* ============================================================ */}
       {/* EMPTY STATE */}
       {/* ============================================================ */}
       {!analysis && !loading && !error && (
@@ -1970,9 +2118,16 @@ function DashboardContent() {
           </div>
           
           {/* Keyboard Shortcut Hint */}
-          <div className="mt-8 text-xs text-gray-600">
-            Press <kbd className="px-1.5 py-0.5 bg-white/5 rounded mx-1">⌘</kbd> + 
-            <kbd className="px-1.5 py-0.5 bg-white/5 rounded mx-1">Enter</kbd> to analyze
+          <div className="mt-8 text-xs text-gray-600 space-y-1">
+            <p>
+              Press <kbd className="px-1.5 py-0.5 bg-white/5 rounded mx-1">⌘</kbd> + 
+              <kbd className="px-1.5 py-0.5 bg-white/5 rounded mx-1">Enter</kbd> to analyze
+            </p>
+            <p>
+              Press <kbd className="px-1.5 py-0.5 bg-white/5 rounded mx-1">⇧</kbd> + 
+              <kbd className="px-1.5 py-0.5 bg-white/5 rounded mx-1">⌘</kbd> + 
+              <kbd className="px-1.5 py-0.5 bg-white/5 rounded mx-1">Enter</kbd> to force refresh
+            </p>
           </div>
         </div>
       )}
