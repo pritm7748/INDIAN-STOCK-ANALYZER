@@ -4,7 +4,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useUser } from './useUser'
-import { Alert, AlertHistory } from '@/lib/supabase/types'
+import { Alert, AlertHistory, Json } from '@/lib/supabase/types'
 
 export interface AlertCondition {
   indicator: 'price' | 'rsi' | 'score' | 'volume' | 'macd' | 'sma_cross'
@@ -27,6 +27,19 @@ export interface AlertWithMeta extends Alert {
   currentPrice?: number
   currentValue?: number
   distancePercent?: number
+}
+
+// Helper to convert AlertCondition to Json-compatible type
+function conditionToJson(condition: AlertCondition): Json {
+  return condition as unknown as Json
+}
+
+// Helper to parse Json back to AlertCondition
+export function parseCondition(json: Json): AlertCondition | null {
+  if (typeof json === 'object' && json !== null && !Array.isArray(json)) {
+    return json as unknown as AlertCondition
+  }
+  return null
 }
 
 export function useAlerts() {
@@ -107,18 +120,20 @@ export function useAlerts() {
   const createAlert = useCallback(async (input: CreateAlertInput): Promise<Alert> => {
     if (!userId) throw new Error('Not authenticated')
 
+    const insertData = {
+      user_id: userId,
+      symbol: input.symbol,
+      stock_name: input.stockName,
+      alert_type: input.alertType,
+      condition: conditionToJson(input.condition),
+      notification_channels: input.notificationChannels,
+      is_recurring: input.isRecurring || false,
+      expires_at: input.expiresAt || null,
+    }
+
     const { data, error } = await supabase
       .from('alerts')
-      .insert({
-        user_id: userId,
-        symbol: input.symbol,
-        stock_name: input.stockName,
-        alert_type: input.alertType,
-        condition: input.condition,
-        notification_channels: input.notificationChannels,
-        is_recurring: input.isRecurring || false,
-        expires_at: input.expiresAt || null,
-      })
+      .insert(insertData)
       .select()
       .single()
 
@@ -133,12 +148,12 @@ export function useAlerts() {
     alertId: string,
     updates: Partial<CreateAlertInput & { isActive: boolean }>
   ): Promise<Alert> => {
-    const updateData: any = {}
+    const updateData: Record<string, any> = {}
     
     if (updates.symbol !== undefined) updateData.symbol = updates.symbol
     if (updates.stockName !== undefined) updateData.stock_name = updates.stockName
     if (updates.alertType !== undefined) updateData.alert_type = updates.alertType
-    if (updates.condition !== undefined) updateData.condition = updates.condition
+    if (updates.condition !== undefined) updateData.condition = conditionToJson(updates.condition)
     if (updates.notificationChannels !== undefined) updateData.notification_channels = updates.notificationChannels
     if (updates.isRecurring !== undefined) updateData.is_recurring = updates.isRecurring
     if (updates.expiresAt !== undefined) updateData.expires_at = updates.expiresAt
@@ -225,6 +240,7 @@ export function useAlerts() {
     deleteAlerts,
     clearTriggeredAlerts,
     getAlertsForSymbol,
+    parseCondition,
   }
 }
 
