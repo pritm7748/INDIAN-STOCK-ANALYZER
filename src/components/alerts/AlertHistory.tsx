@@ -86,7 +86,7 @@ export function AlertHistory({ history, isLoading }: AlertHistoryProps) {
   return (
     <div className="space-y-3">
       {history.map((item) => {
-        const condition = item.condition as AlertCondition
+        const condition = item.condition as unknown as AlertCondition
         const Icon = getIcon(item.alert_type)
 
         return (

@@ -45,7 +45,7 @@ export function AlertCard({
   const [isDeleting, setIsDeleting] = useState(false)
   const [showMenu, setShowMenu] = useState(false)
 
-  const condition = alert.condition as AlertCondition
+  const condition = alert.condition as unknown as AlertCondition
 
   const handleToggle = async () => {
     setIsToggling(true)

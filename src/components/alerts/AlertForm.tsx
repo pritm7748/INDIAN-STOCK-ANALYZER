@@ -148,7 +148,7 @@ export function AlertForm({
     if (isOpen) {
       if (editingAlert) {
         // Populate form with existing alert data
-        const condition = editingAlert.condition as AlertCondition
+        const condition = editingAlert.condition as unknown as AlertCondition
         const alertType = ALERT_TYPES.find(t => 
           t.indicator === condition.indicator && t.operator === condition.operator
         )
