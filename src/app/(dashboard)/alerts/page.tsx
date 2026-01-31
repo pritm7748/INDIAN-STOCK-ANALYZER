@@ -16,7 +16,6 @@ import {
   CheckCircle,
   BellOff,
   RefreshCw,
-  Loader2
 } from 'lucide-react'
 
 export default function AlertsPage() {
@@ -57,6 +56,21 @@ export default function AlertsPage() {
   const handleCloseForm = () => {
     setShowForm(false)
     setEditingAlert(null)
+  }
+
+  // Handle toggle - wrapper to return void
+  const handleToggle = async (id: string, isActive: boolean): Promise<void> => {
+    await toggleAlert(id, isActive)
+  }
+
+  // Handle delete - wrapper to return void
+  const handleDelete = async (id: string): Promise<void> => {
+    await deleteAlert(id)
+  }
+
+  // Handle delete multiple - wrapper to return void
+  const handleDeleteMultiple = async (ids: string[]): Promise<void> => {
+    await deleteAlerts(ids)
   }
 
   // Refresh data
@@ -168,10 +182,10 @@ export default function AlertsPage() {
           <AlertList
             alerts={alerts}
             isLoading={isLoading}
-            onToggle={toggleAlert}
+            onToggle={handleToggle}
             onEdit={handleEdit}
-            onDelete={deleteAlert}
-            onDeleteMultiple={deleteAlerts}
+            onDelete={handleDelete}
+            onDeleteMultiple={handleDeleteMultiple}
           />
         ) : (
           <AlertHistory history={history} isLoading={isLoading} />
@@ -187,7 +201,7 @@ export default function AlertsPage() {
           </p>
           <p className="text-xs text-blue-300/70">
             Alerts are checked every 5 minutes during market hours (9:15 AM - 3:30 PM IST). 
-            You'll receive notifications through your selected channels when conditions are met.
+            You&apos;ll receive notifications through your selected channels when conditions are met.
             Email and Telegram notifications are coming soon!
           </p>
         </div>
