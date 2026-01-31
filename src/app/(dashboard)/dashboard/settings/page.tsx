@@ -6,6 +6,7 @@ import { useUser } from '@/lib/hooks/useUser'
 import { createClient } from '@/lib/supabase/client'
 import { Json } from '@/lib/supabase/types'
 import { getCacheStats, clearAllCache, formatAge, formatBytes } from '@/lib/cache'
+import { TelegramConnect } from '@/components/settings/TelegramConnect'
 import { 
   User, 
   Bell, 
@@ -348,6 +349,21 @@ export default function SettingsPage() {
               onChange={(checked) => handleNotificationChange('in_app', checked)}
             />
           </div>
+
+          {/* Telegram Integration */}
+<div className="bg-[#0A0A0A] border border-white/5 rounded-2xl p-6">
+  <div className="flex items-center gap-3 mb-6">
+    <div className="p-2 bg-cyan-500/10 rounded-lg">
+      <MessageCircle className="w-5 h-5 text-cyan-400" />
+    </div>
+    <div>
+      <h2 className="text-lg font-semibold text-white">Telegram Bot</h2>
+      <p className="text-sm text-gray-500">Receive alerts via Telegram</p>
+    </div>
+  </div>
+  
+  <TelegramConnect />
+</div>
 
           {/* Browser Push */}
           <div className="flex items-center justify-between p-4 bg-white/5 rounded-xl hover:bg-white/[0.07] transition-colors">

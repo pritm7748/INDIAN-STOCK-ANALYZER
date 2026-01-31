@@ -1,8 +1,10 @@
 // src/app/layout.tsx
+
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/components/auth/AuthProvider";
+import { NotificationProvider } from "@/components/notifications/NotificationProvider";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -20,7 +22,9 @@ export default function RootLayout({
     <html lang="en">
       <body className={inter.className}>
         <AuthProvider>
-          {children}
+          <NotificationProvider>
+            {children}
+          </NotificationProvider>
         </AuthProvider>
       </body>
     </html>

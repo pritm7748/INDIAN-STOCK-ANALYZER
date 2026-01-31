@@ -1,9 +1,7 @@
 // src/app/api/quote/route.ts
+
 import { NextResponse } from 'next/server'
 import yahooFinance from 'yahoo-finance2'
-
-// Initialize yahoo-finance2 (same pattern as data.ts)
-const yf = new (yahooFinance as any)()
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
@@ -14,15 +12,12 @@ export async function GET(request: Request) {
   }
 
   try {
-    const quote = await yf.quote(symbol) as any
-    
+    const quote = await yahooFinance.quote(symbol) as any
+
     if (!quote) {
-      return NextResponse.json(
-        { error: 'No data found for symbol' }, 
-        { status: 404 }
-      )
+      return NextResponse.json({ error: 'No data found' }, { status: 404 })
     }
-    
+
     return NextResponse.json({
       symbol,
       price: quote.regularMarketPrice || 0,
@@ -32,12 +27,10 @@ export async function GET(request: Request) {
       dayHigh: quote.regularMarketDayHigh || 0,
       dayLow: quote.regularMarketDayLow || 0,
       volume: quote.regularMarketVolume || 0,
+      avgVolume: quote.averageDailyVolume10Day || quote.averageVolume || 0,
     })
   } catch (error: any) {
     console.error(`Quote error for ${symbol}:`, error.message)
-    return NextResponse.json(
-      { error: 'Failed to fetch quote' }, 
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Failed to fetch quote' }, { status: 500 })
   }
 }

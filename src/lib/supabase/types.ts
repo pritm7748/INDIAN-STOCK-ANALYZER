@@ -19,6 +19,7 @@ export interface Database {
           avatar_url: string | null
           telegram_chat_id: string | null
           telegram_username: string | null
+          telegram_connection_token: string | null
           notification_preferences: Json
           created_at: string
           updated_at: string
@@ -30,6 +31,7 @@ export interface Database {
           avatar_url?: string | null
           telegram_chat_id?: string | null
           telegram_username?: string | null
+          telegram_connection_token?: string | null
           notification_preferences?: Json
           created_at?: string
           updated_at?: string
@@ -41,6 +43,7 @@ export interface Database {
           avatar_url?: string | null
           telegram_chat_id?: string | null
           telegram_username?: string | null
+          telegram_connection_token?: string | null
           notification_preferences?: Json
           updated_at?: string
         }
