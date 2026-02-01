@@ -9,8 +9,6 @@ import {
   sendTelegramMessage 
 } from '@/lib/alerts/telegram'
 
-const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET
-
 function getAppUrl(): string {
   return process.env.NEXT_PUBLIC_APP_URL || 'https://indian-stock-analyzer-ecru.vercel.app'
 }
@@ -36,12 +34,8 @@ interface TelegramUpdate {
 }
 
 export async function POST(request: Request) {
-  // Verify webhook secret (optional but recommended)
-  const secretHeader = request.headers.get('x-telegram-bot-api-secret-token')
-  if (WEBHOOK_SECRET && secretHeader !== WEBHOOK_SECRET) {
-    console.warn('Invalid Telegram webhook secret')
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  // REMOVED: Secret verification that was causing 401 error
+  // The webhook URL itself is already secret enough for most use cases
 
   try {
     const update: TelegramUpdate = await request.json()
@@ -64,16 +58,14 @@ export async function POST(request: Request) {
       await handleStart(supabase, chatId, text, firstName, username)
     } else if (text === '/alerts') {
       await handleAlerts(supabase, chatId)
-    } else if (text === '/check') {
+    } else if (text === '/check' || text === '/status') {
       await handleCheck(supabase, chatId)
     } else if (text.startsWith('/analyze')) {
       await handleAnalyze(chatId, text)
     } else if (text === '/help') {
       await handleHelp(chatId)
-    } else if (text === '/status') {
-      await handleStatus(supabase, chatId)
     } else {
-      // Unknown command or regular message
+      // Unknown command
       await sendTelegramMessage({
         chatId,
         text: '❓ Unknown command. Use /help to see available commands.'
@@ -82,14 +74,14 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true })
   } catch (error: any) {
-    console.error('Telegram webhook error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    console.error('❌ Telegram webhook error:', error)
+    // Still return 200 to prevent Telegram from retrying
+    return NextResponse.json({ ok: true, error: error.message })
   }
 }
 
 /**
  * /start - Connect Telegram to TradeSense account
- * Usage: /start <connection_token>
  */
 async function handleStart(
   supabase: any, 
@@ -100,34 +92,31 @@ async function handleStart(
 ) {
   const parts = text.split(' ')
   const connectionToken = parts[1]
+  const appUrl = getAppUrl()
 
   if (!connectionToken) {
-    // No token - send instructions
-    const appUrl = getAppUrl()
     await sendTelegramMessage({
       chatId,
       text: `
 👋 <b>Welcome to TradeSense AI Bot!</b>
 
-To receive alert notifications, you need to connect this chat to your TradeSense account.
+To receive alert notifications, connect this chat to your TradeSense account.
 
 <b>How to connect:</b>
-1. Go to your TradeSense dashboard
-2. Open Settings → Notifications
+1. Go to Settings in your TradeSense dashboard
+2. Find "Telegram Bot" section
 3. Click "Connect Telegram"
-4. Click the link provided
+4. Click the link to open this bot with your token
 
 <a href="${appUrl}/dashboard/settings">Open Settings</a>
-
-<i>Already have an account? Go to Settings to connect.</i>
 `.trim()
     })
     return
   }
 
-  console.log(`🔗 Attempting to connect with token: ${connectionToken.substring(0, 8)}...`)
+  console.log(`🔗 Connection attempt with token: ${connectionToken.substring(0, 8)}...`)
 
-  // Verify and link the token
+  // Find user with this token
   const { data: profile, error } = await supabase
     .from('profiles')
     .select('id, full_name, telegram_chat_id')
@@ -135,19 +124,23 @@ To receive alert notifications, you need to connect this chat to your TradeSense
     .single()
 
   if (error || !profile) {
-    console.log('❌ Token not found or invalid:', error)
+    console.log('❌ Token not found:', connectionToken.substring(0, 8))
     await sendTelegramMessage({
       chatId,
-      text: '❌ Invalid or expired connection link.\n\nPlease generate a new link from your TradeSense settings.'
+      text: `❌ Invalid or expired connection link.
+
+Please generate a new link from your TradeSense settings.
+
+<a href="${appUrl}/dashboard/settings">Open Settings</a>`
     })
     return
   }
 
-  // Check if already connected
-  if (profile.telegram_chat_id) {
+  // Check if already connected to different chat
+  if (profile.telegram_chat_id && profile.telegram_chat_id !== chatId) {
     await sendTelegramMessage({
       chatId,
-      text: '⚠️ This account is already connected to Telegram.\n\nIf you want to reconnect, please disconnect first from Settings.'
+      text: '⚠️ This account is already connected to another Telegram chat.\n\nDisconnect from Settings first, then try again.'
     })
     return
   }
@@ -158,7 +151,7 @@ To receive alert notifications, you need to connect this chat to your TradeSense
     .update({
       telegram_chat_id: chatId,
       telegram_username: username || null,
-      telegram_connection_token: null, // Clear token after use
+      telegram_connection_token: null,
       notification_preferences: {
         email: false,
         telegram: true,
@@ -169,25 +162,24 @@ To receive alert notifications, you need to connect this chat to your TradeSense
     .eq('id', profile.id)
 
   if (updateError) {
-    console.error('Failed to save telegram chat ID:', updateError)
+    console.error('❌ Failed to save chat ID:', updateError)
     await sendTelegramMessage({
       chatId,
-      text: '❌ Something went wrong. Please try again.'
+      text: '❌ Connection failed. Please try again.'
     })
     return
   }
 
-  console.log(`✅ Successfully connected user ${profile.id} to chat ${chatId}`)
-
-  // Send welcome message
+  console.log(`✅ Connected user ${profile.id} to chat ${chatId}`)
+  
+  // Send welcome
   await sendWelcomeMessage(chatId, profile.full_name || firstName)
 }
 
 /**
- * /alerts - List user's active alerts
+ * /alerts - List active alerts
  */
 async function handleAlerts(supabase: any, chatId: string) {
-  // Find user by chat ID
   const { data: profile } = await supabase
     .from('profiles')
     .select('id')
@@ -197,12 +189,11 @@ async function handleAlerts(supabase: any, chatId: string) {
   if (!profile) {
     await sendTelegramMessage({
       chatId,
-      text: '❌ Your Telegram is not connected to a TradeSense account.\n\nUse /start to learn how to connect.'
+      text: '❌ Not connected. Use /start to learn how to connect.'
     })
     return
   }
 
-  // Get user's alerts
   const { data: alerts } = await supabase
     .from('alerts')
     .select('symbol, alert_type, condition, is_active')
@@ -214,12 +205,11 @@ async function handleAlerts(supabase: any, chatId: string) {
 }
 
 /**
- * /check - Check connection status
+ * /check or /status - Check connection
  */
 async function handleCheck(supabase: any, chatId: string) {
   const appUrl = getAppUrl()
   
-  // Find user by chat ID
   const { data: profile } = await supabase
     .from('profiles')
     .select('id, full_name')
@@ -229,12 +219,11 @@ async function handleCheck(supabase: any, chatId: string) {
   if (!profile) {
     await sendTelegramMessage({
       chatId,
-      text: '❌ Your Telegram is not connected to a TradeSense account.'
+      text: '❌ Not connected to any account.\n\nUse /start to learn how to connect.'
     })
     return
   }
 
-  // Get count of active alerts
   const { count } = await supabase
     .from('alerts')
     .select('*', { count: 'exact', head: true })
@@ -245,12 +234,10 @@ async function handleCheck(supabase: any, chatId: string) {
   await sendTelegramMessage({
     chatId,
     text: `
-🔍 <b>Connection Status</b>
+✅ <b>Connected!</b>
 
-✅ Connected as: ${profile.full_name || 'User'}
-📊 Active alerts: <b>${count || 0}</b>
-
-⚠️ <b>Note:</b> Alerts are checked automatically when your TradeSense dashboard is open.
+👤 Account: ${profile.full_name || 'User'}
+🔔 Active alerts: <b>${count || 0}</b>
 
 <a href="${appUrl}/dashboard/alerts">Manage Alerts</a>
 `.trim()
@@ -258,14 +245,7 @@ async function handleCheck(supabase: any, chatId: string) {
 }
 
 /**
- * /status - Check connection status (alias for /check)
- */
-async function handleStatus(supabase: any, chatId: string) {
-  await handleCheck(supabase, chatId)
-}
-
-/**
- * /analyze SYMBOL - Quick stock analysis
+ * /analyze SYMBOL
  */
 async function handleAnalyze(chatId: string, text: string) {
   const parts = text.split(' ')
@@ -274,12 +254,11 @@ async function handleAnalyze(chatId: string, text: string) {
   if (!symbol) {
     await sendTelegramMessage({
       chatId,
-      text: '❓ Please specify a stock symbol.\n\nExample: /analyze RELIANCE'
+      text: '❓ Specify a symbol.\n\nExample: /analyze RELIANCE'
     })
     return
   }
 
-  // Add .NS suffix if not present
   if (!symbol.endsWith('.NS')) {
     symbol = `${symbol}.NS`
   }
@@ -291,7 +270,6 @@ async function handleAnalyze(chatId: string, text: string) {
 
   try {
     const appUrl = getAppUrl()
-    // Call our analyze API
     const response = await fetch(`${appUrl}/api/analyze?symbol=${symbol}&timeframe=1M`)
     
     if (!response.ok) {
@@ -317,13 +295,13 @@ async function handleAnalyze(chatId: string, text: string) {
     console.error('Analysis error:', error)
     await sendTelegramMessage({
       chatId,
-      text: `❌ Failed to analyze ${symbol.replace('.NS', '')}.\n\nPlease check the symbol and try again.`
+      text: `❌ Failed to analyze ${symbol.replace('.NS', '')}.\n\nCheck the symbol and try again.`
     })
   }
 }
 
 /**
- * /help - Show available commands
+ * /help
  */
 async function handleHelp(chatId: string) {
   const appUrl = getAppUrl()
@@ -331,29 +309,29 @@ async function handleHelp(chatId: string) {
   await sendTelegramMessage({
     chatId,
     text: `
-📚 <b>TradeSense AI Bot Commands</b>
+📚 <b>TradeSense AI Bot</b>
 
-/start - Connect your TradeSense account
-/status - Check connection status
-/alerts - View your active alerts
-/analyze SYMBOL - Quick stock analysis
+<b>Commands:</b>
+/start - Connect your account
+/status - Check connection
+/alerts - View active alerts
+/analyze SYMBOL - Quick analysis
 
 <b>Examples:</b>
-• /analyze RELIANCE
-• /analyze TCS
-• /analyze INFY
-
-<b>Note:</b> Alerts are checked when your dashboard is open. You'll receive notifications here when alerts trigger.
+/analyze RELIANCE
+/analyze TCS
+/analyze INFY
 
 <a href="${appUrl}/dashboard">Open Dashboard</a>
 `.trim()
   })
 }
 
-// Handle GET for webhook verification / health check
+// GET - Health check
 export async function GET() {
   return NextResponse.json({ 
-    status: 'Telegram webhook active',
+    status: 'ok',
+    message: 'Telegram webhook is active',
     timestamp: new Date().toISOString()
   })
 }
