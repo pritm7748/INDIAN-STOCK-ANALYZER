@@ -75,7 +75,7 @@ ${message}
 
 <i>Current value: ${formatValue(currentValue, alertType)}</i>
 
-<a href="https://your-app.vercel.app/dashboard?symbol=${symbol}">📊 View Analysis</a>
+<a href="https://indian-stock-analyzer-ecru.vercel.app/dashboard?symbol=${symbol}">📊 View Analysis</a>
 `.trim()
 
   return sendTelegramMessage({ chatId, text })
@@ -171,7 +171,7 @@ ${scoreEmoji} <b>AI Score:</b> ${analysis.score}/100
 📍 <b>Signal:</b> ${analysis.recommendation}
 📉 <b>RSI:</b> ${analysis.rsi.toFixed(1)}
 
-<a href="https://your-app.vercel.app/dashboard?symbol=${analysis.symbol}">View Full Analysis →</a>
+<a href="https://indian-stock-analyzer-ecru.vercel.app/dashboard?symbol=${analysis.symbol}">View Full Analysis →</a>
 `.trim()
 
   return sendTelegramMessage({ chatId, text })

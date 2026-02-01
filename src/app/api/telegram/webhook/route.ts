@@ -232,7 +232,7 @@ You have <b>${count || 0}</b> active alerts.
 ⚠️ <b>Note:</b> Alerts are checked automatically when your TradeSense dashboard is open.
 
 To check alerts now, please open your dashboard:
-<a href="https://your-app.vercel.app/dashboard/alerts">Open Dashboard</a>
+<a href="https://indian-stock-analyzer-ecru.vercel.app/dashboard/alerts">Open Dashboard</a>
 
 <i>We're working on background checking - coming soon!</i>
 `.trim()
@@ -312,7 +312,7 @@ async function handleHelp(chatId: string) {
 
 <b>Note:</b> Alerts are checked automatically when your dashboard is open. You'll receive notifications here when alerts trigger.
 
-<a href="https://your-app.vercel.app/dashboard">Open Dashboard</a>
+<a href="https://indian-stock-analyzer-ecru.vercel.app/dashboard">Open Dashboard</a>
 `.trim()
   })
 }

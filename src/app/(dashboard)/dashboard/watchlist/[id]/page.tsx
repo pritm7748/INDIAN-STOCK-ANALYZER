@@ -1,3 +1,5 @@
+//src/app/(dashboard)/dashboard/watchlist/[id]/page.tsx
+
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
