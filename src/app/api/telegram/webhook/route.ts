@@ -11,6 +11,10 @@ import {
 
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET
 
+function getAppUrl(): string {
+  return process.env.NEXT_PUBLIC_APP_URL || 'https://indian-stock-analyzer-ecru.vercel.app'
+}
+
 interface TelegramUpdate {
   update_id: number
   message?: {
@@ -32,7 +36,7 @@ interface TelegramUpdate {
 }
 
 export async function POST(request: Request) {
-  // Verify webhook secret
+  // Verify webhook secret (optional but recommended)
   const secretHeader = request.headers.get('x-telegram-bot-api-secret-token')
   if (WEBHOOK_SECRET && secretHeader !== WEBHOOK_SECRET) {
     console.warn('Invalid Telegram webhook secret')
@@ -41,6 +45,8 @@ export async function POST(request: Request) {
 
   try {
     const update: TelegramUpdate = await request.json()
+    
+    console.log('📩 Telegram update received:', JSON.stringify(update, null, 2))
     
     if (!update.message?.text) {
       return NextResponse.json({ ok: true })
@@ -64,8 +70,10 @@ export async function POST(request: Request) {
       await handleAnalyze(chatId, text)
     } else if (text === '/help') {
       await handleHelp(chatId)
+    } else if (text === '/status') {
+      await handleStatus(supabase, chatId)
     } else {
-      // Unknown command
+      // Unknown command or regular message
       await sendTelegramMessage({
         chatId,
         text: '❓ Unknown command. Use /help to see available commands.'
@@ -95,6 +103,7 @@ async function handleStart(
 
   if (!connectionToken) {
     // No token - send instructions
+    const appUrl = getAppUrl()
     await sendTelegramMessage({
       chatId,
       text: `
@@ -108,23 +117,37 @@ To receive alert notifications, you need to connect this chat to your TradeSense
 3. Click "Connect Telegram"
 4. Click the link provided
 
+<a href="${appUrl}/dashboard/settings">Open Settings</a>
+
 <i>Already have an account? Go to Settings to connect.</i>
 `.trim()
     })
     return
   }
 
+  console.log(`🔗 Attempting to connect with token: ${connectionToken.substring(0, 8)}...`)
+
   // Verify and link the token
   const { data: profile, error } = await supabase
     .from('profiles')
-    .select('id, full_name')
+    .select('id, full_name, telegram_chat_id')
     .eq('telegram_connection_token', connectionToken)
     .single()
 
   if (error || !profile) {
+    console.log('❌ Token not found or invalid:', error)
     await sendTelegramMessage({
       chatId,
-      text: '❌ Invalid or expired connection link. Please try again from your TradeSense settings.'
+      text: '❌ Invalid or expired connection link.\n\nPlease generate a new link from your TradeSense settings.'
+    })
+    return
+  }
+
+  // Check if already connected
+  if (profile.telegram_chat_id) {
+    await sendTelegramMessage({
+      chatId,
+      text: '⚠️ This account is already connected to Telegram.\n\nIf you want to reconnect, please disconnect first from Settings.'
     })
     return
   }
@@ -136,6 +159,12 @@ To receive alert notifications, you need to connect this chat to your TradeSense
       telegram_chat_id: chatId,
       telegram_username: username || null,
       telegram_connection_token: null, // Clear token after use
+      notification_preferences: {
+        email: false,
+        telegram: true,
+        browser_push: true,
+        in_app: true
+      }
     })
     .eq('id', profile.id)
 
@@ -148,18 +177,7 @@ To receive alert notifications, you need to connect this chat to your TradeSense
     return
   }
 
-  // Also update notification preferences to enable telegram
-  await supabase
-    .from('profiles')
-    .update({
-      notification_preferences: {
-        email: false,
-        telegram: true,
-        browser_push: true,
-        in_app: true
-      }
-    })
-    .eq('id', profile.id)
+  console.log(`✅ Successfully connected user ${profile.id} to chat ${chatId}`)
 
   // Send welcome message
   await sendWelcomeMessage(chatId, profile.full_name || firstName)
@@ -196,13 +214,15 @@ async function handleAlerts(supabase: any, chatId: string) {
 }
 
 /**
- * /check - Manually trigger alert check (sends to dashboard)
+ * /check - Check connection status
  */
 async function handleCheck(supabase: any, chatId: string) {
+  const appUrl = getAppUrl()
+  
   // Find user by chat ID
   const { data: profile } = await supabase
     .from('profiles')
-    .select('id')
+    .select('id, full_name')
     .eq('telegram_chat_id', chatId)
     .single()
 
@@ -225,18 +245,23 @@ async function handleCheck(supabase: any, chatId: string) {
   await sendTelegramMessage({
     chatId,
     text: `
-🔍 <b>Alert Check</b>
+🔍 <b>Connection Status</b>
 
-You have <b>${count || 0}</b> active alerts.
+✅ Connected as: ${profile.full_name || 'User'}
+📊 Active alerts: <b>${count || 0}</b>
 
 ⚠️ <b>Note:</b> Alerts are checked automatically when your TradeSense dashboard is open.
 
-To check alerts now, please open your dashboard:
-<a href="https://indian-stock-analyzer-ecru.vercel.app/dashboard/alerts">Open Dashboard</a>
-
-<i>We're working on background checking - coming soon!</i>
+<a href="${appUrl}/dashboard/alerts">Manage Alerts</a>
 `.trim()
   })
+}
+
+/**
+ * /status - Check connection status (alias for /check)
+ */
+async function handleStatus(supabase: any, chatId: string) {
+  await handleCheck(supabase, chatId)
 }
 
 /**
@@ -265,14 +290,19 @@ async function handleAnalyze(chatId: string, text: string) {
   })
 
   try {
+    const appUrl = getAppUrl()
     // Call our analyze API
-    const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/analyze?symbol=${symbol}&timeframe=1M`)
+    const response = await fetch(`${appUrl}/api/analyze?symbol=${symbol}&timeframe=1M`)
     
     if (!response.ok) {
       throw new Error('Analysis failed')
     }
 
     const analysis = await response.json()
+
+    if (analysis.error) {
+      throw new Error(analysis.error)
+    }
 
     await sendAnalysisSummary(chatId, {
       symbol: analysis.symbol,
@@ -284,9 +314,10 @@ async function handleAnalyze(chatId: string, text: string) {
       rsi: analysis.metrics?.rsi || 50,
     })
   } catch (error) {
+    console.error('Analysis error:', error)
     await sendTelegramMessage({
       chatId,
-      text: `❌ Failed to analyze ${symbol.replace('.NS', '')}. Please check the symbol and try again.`
+      text: `❌ Failed to analyze ${symbol.replace('.NS', '')}.\n\nPlease check the symbol and try again.`
     })
   }
 }
@@ -295,14 +326,16 @@ async function handleAnalyze(chatId: string, text: string) {
  * /help - Show available commands
  */
 async function handleHelp(chatId: string) {
+  const appUrl = getAppUrl()
+  
   await sendTelegramMessage({
     chatId,
     text: `
 📚 <b>TradeSense AI Bot Commands</b>
 
 /start - Connect your TradeSense account
+/status - Check connection status
 /alerts - View your active alerts
-/check - Check alert status
 /analyze SYMBOL - Quick stock analysis
 
 <b>Examples:</b>
@@ -310,14 +343,17 @@ async function handleHelp(chatId: string) {
 • /analyze TCS
 • /analyze INFY
 
-<b>Note:</b> Alerts are checked automatically when your dashboard is open. You'll receive notifications here when alerts trigger.
+<b>Note:</b> Alerts are checked when your dashboard is open. You'll receive notifications here when alerts trigger.
 
-<a href="https://indian-stock-analyzer-ecru.vercel.app/dashboard">Open Dashboard</a>
+<a href="${appUrl}/dashboard">Open Dashboard</a>
 `.trim()
   })
 }
 
-// Handle GET for webhook verification
+// Handle GET for webhook verification / health check
 export async function GET() {
-  return NextResponse.json({ status: 'Telegram webhook active' })
+  return NextResponse.json({ 
+    status: 'Telegram webhook active',
+    timestamp: new Date().toISOString()
+  })
 }

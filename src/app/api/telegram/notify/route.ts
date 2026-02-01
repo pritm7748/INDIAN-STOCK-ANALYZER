@@ -15,20 +15,27 @@ export async function POST(request: Request) {
     const supabase = await createClient()
 
     // Get user's telegram chat ID
-    const { data: profile } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('telegram_chat_id, notification_preferences')
       .eq('id', userId)
       .single()
 
+    if (profileError) {
+      console.error('Error fetching profile:', profileError)
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    }
+
     if (!profile?.telegram_chat_id) {
+      console.log('No Telegram connected for user:', userId)
       return NextResponse.json({ error: 'No Telegram connected' }, { status: 404 })
     }
 
     // Check if telegram notifications are enabled
     const prefs = profile.notification_preferences as any
     if (!prefs?.telegram) {
-      return NextResponse.json({ error: 'Telegram notifications disabled' }, { status: 200 })
+      console.log('Telegram notifications disabled for user:', userId)
+      return NextResponse.json({ message: 'Telegram notifications disabled' }, { status: 200 })
     }
 
     // Send notification
@@ -45,6 +52,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: result.error }, { status: 500 })
     }
 
+    console.log(`✅ Telegram notification sent to user ${userId} for ${symbol}`)
     return NextResponse.json({ success: true })
   } catch (error: any) {
     console.error('Telegram notify error:', error)

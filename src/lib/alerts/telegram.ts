@@ -2,6 +2,11 @@
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN
 
+// Get app URL with fallback
+function getAppUrl(): string {
+  return process.env.NEXT_PUBLIC_APP_URL || 'https://indian-stock-analyzer-ecru.vercel.app'
+}
+
 interface TelegramMessage {
   chatId: string
   text: string
@@ -64,6 +69,7 @@ export async function sendAlertNotification(
   alertType: string
 ): Promise<SendResult> {
   const symbolClean = symbol.replace('.NS', '')
+  const appUrl = getAppUrl()
   
   const emoji = alertType.includes('above') || alertType.includes('bullish') ? '📈' : '📉'
   
@@ -75,7 +81,7 @@ ${message}
 
 <i>Current value: ${formatValue(currentValue, alertType)}</i>
 
-<a href="https://indian-stock-analyzer-ecru.vercel.app/dashboard?symbol=${symbol}">📊 View Analysis</a>
+<a href="${appUrl}/dashboard?symbol=${symbol}">📊 View Analysis</a>
 `.trim()
 
   return sendTelegramMessage({ chatId, text })
@@ -85,6 +91,8 @@ ${message}
  * Send welcome message when user connects
  */
 export async function sendWelcomeMessage(chatId: string, userName?: string): Promise<SendResult> {
+  const appUrl = getAppUrl()
+  
   const text = `
 🎉 <b>Welcome to TradeSense AI!</b>
 
@@ -94,11 +102,13 @@ You'll receive notifications here when your price alerts are triggered.
 
 <b>Available Commands:</b>
 /alerts - View your active alerts
-/check - Check all alerts now
+/check - Check alert status
 /analyze RELIANCE - Quick stock analysis
 /help - Show all commands
 
 <i>Tip: Keep your TradeSense dashboard open to ensure alerts are checked regularly.</i>
+
+<a href="${appUrl}/dashboard">Open Dashboard</a>
 `.trim()
 
   return sendTelegramMessage({ chatId, text })
@@ -111,10 +121,12 @@ export async function sendAlertsList(
   chatId: string, 
   alerts: Array<{ symbol: string; alert_type: string; condition: any; is_active: boolean }>
 ): Promise<SendResult> {
+  const appUrl = getAppUrl()
+  
   if (alerts.length === 0) {
     return sendTelegramMessage({
       chatId,
-      text: '📋 You have no active alerts.\n\nCreate alerts at your TradeSense dashboard!'
+      text: `📋 You have no active alerts.\n\nCreate alerts at your TradeSense dashboard!\n\n<a href="${appUrl}/dashboard/alerts">Create Alert</a>`
     })
   }
 
@@ -155,6 +167,7 @@ export async function sendAnalysisSummary(
     rsi: number
   }
 ): Promise<SendResult> {
+  const appUrl = getAppUrl()
   const symbol = analysis.symbol.replace('.NS', '')
   const changeEmoji = analysis.change >= 0 ? '📈' : '📉'
   const changeSign = analysis.change >= 0 ? '+' : ''
@@ -171,7 +184,7 @@ ${scoreEmoji} <b>AI Score:</b> ${analysis.score}/100
 📍 <b>Signal:</b> ${analysis.recommendation}
 📉 <b>RSI:</b> ${analysis.rsi.toFixed(1)}
 
-<a href="https://indian-stock-analyzer-ecru.vercel.app/dashboard?symbol=${analysis.symbol}">View Full Analysis →</a>
+<a href="${appUrl}/dashboard?symbol=${analysis.symbol}">View Full Analysis →</a>
 `.trim()
 
   return sendTelegramMessage({ chatId, text })
@@ -202,4 +215,58 @@ export function escapeHtml(text: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+}
+
+/**
+ * Set webhook URL for the bot (call this once during setup)
+ */
+export async function setTelegramWebhook(): Promise<SendResult> {
+  if (!BOT_TOKEN) {
+    return { success: false, error: 'Bot token not configured' }
+  }
+
+  const appUrl = getAppUrl()
+  const webhookUrl = `${appUrl}/api/telegram/webhook`
+  const secret = process.env.TELEGRAM_WEBHOOK_SECRET || ''
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: webhookUrl,
+        secret_token: secret,
+        allowed_updates: ['message'],
+      }),
+    })
+
+    const data = await response.json()
+    
+    if (!data.ok) {
+      console.error('Failed to set webhook:', data)
+      return { success: false, error: data.description }
+    }
+
+    console.log('✅ Telegram webhook set to:', webhookUrl)
+    return { success: true }
+  } catch (error: any) {
+    console.error('Failed to set webhook:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+/**
+ * Get webhook info (for debugging)
+ */
+export async function getWebhookInfo(): Promise<any> {
+  if (!BOT_TOKEN) {
+    return { error: 'Bot token not configured' }
+  }
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo`)
+    return await response.json()
+  } catch (error: any) {
+    return { error: error.message }
+  }
 }
