@@ -1,13 +1,13 @@
 // src/lib/analyzer.ts
 
 import { fetchMarketData, fetchNewsData, fetchIndexData } from './data';
-import { 
-  calculateIndicators, 
-  detectPatterns, 
-  calculatePivotPoints, 
-  findSupportResistance, 
-  calculateZigZag, 
-  detectChartPatterns, 
+import {
+  calculateIndicators,
+  detectPatterns,
+  calculatePivotPoints,
+  findSupportResistance,
+  calculateZigZag,
+  detectChartPatterns,
   calculateRiskMetrics,
   analyzeVolume,
   analyzeVolatility,
@@ -19,23 +19,25 @@ import {
 } from './technicals';
 import { runBacktest } from './backtest';
 import { predictFutureTrends } from './ml';
-import { 
-  TimeFrame, 
-  AnalysisResult, 
-  VolumeData, 
+import {
+  TimeFrame,
+  AnalysisResult,
+  VolumeData,
   VolatilityData,
   StochRSIData,
-  IchimokuData
+  IchimokuData,
+  AISentimentResult
 } from './types';
 
 export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promise<AnalysisResult> {
-  
+
   // ============================================================
   // 1. FETCH ALL DATA
   // ============================================================
   const { quotes, quote } = await fetchMarketData(symbol);
   const marketQuotes = await fetchIndexData();
-  const { news, score: newsScore } = await fetchNewsData(symbol);
+  // Enhanced news data with AI sentiment
+  const { news, score: legacyNewsScore, aiSentiment } = await fetchNewsData(symbol, quote.shortName);
 
   // ============================================================
   // 2. PREPARE DATA VECTORS
@@ -50,15 +52,15 @@ export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promis
   // ============================================================
   // 3. RUN ALL CALCULATIONS
   // ============================================================
-  
+
   // --- Phase 1 Indicators ---
   const tech = calculateIndicators(closes);
   const candlePatterns = detectPatterns(opens, highs, lows, closes);
   const sr = findSupportResistance(highs, lows, closes);
   const pivots = calculatePivotPoints(
-    quotes[quotes.length-2].high, 
-    quotes[quotes.length-2].low, 
-    quotes[quotes.length-2].close
+    quotes[quotes.length - 2].high,
+    quotes[quotes.length - 2].low,
+    quotes[quotes.length - 2].close
   );
 
   const deviation = (timeframe === '1Y' || timeframe === '6M') ? 5 : 2;
@@ -82,7 +84,7 @@ export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promis
 
   // Backtesting
   const backtestResult = runBacktest(quotes, timeframe);
-  
+
   // ML Predictions
   const historyForML = quotes.map((q: any) => ({
     date: new Date(q.date).toISOString(),
@@ -113,13 +115,32 @@ export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promis
   };
 
   // ============================================================
-  // A. NEWS SENTIMENT
+  // A. NEWS SENTIMENT (AI-Powered)
   // ============================================================
-  score += newsScore;
-  if (newsScore >= 10) addScore(0, `📰 Strong Bullish News Sentiment (+${newsScore})`, 0.8);
-  else if (newsScore >= 5) addScore(0, `📰 Bullish News Sentiment (+${newsScore})`, 0.6);
-  else if (newsScore <= -10) addScore(0, `📰 Strong Bearish News Sentiment (${newsScore})`, 0.8);
-  else if (newsScore <= -5) addScore(0, `📰 Bearish News Sentiment (${newsScore})`, 0.6);
+  // Use AI sentiment score (more accurate) with fallback to legacy
+  const newsScore = aiSentiment.confidence > 0.3
+    ? Math.round(aiSentiment.overallScore * 1.5) // Scale -10 to +10 -> -15 to +15
+    : legacyNewsScore;
+
+  // Cap news impact to prevent domination (max +/- 15 points)
+  const cappedNewsScore = Math.max(-15, Math.min(15, newsScore));
+  score += cappedNewsScore;
+
+  if (aiSentiment.confidence > 0.5) {
+    if (aiSentiment.marketMood === 'BULLISH') {
+      addScore(0, `🤖 AI Sentiment: ${aiSentiment.reasoning}`, aiSentiment.confidence);
+    } else if (aiSentiment.marketMood === 'BEARISH') {
+      addScore(0, `🤖 AI Sentiment: ${aiSentiment.reasoning}`, aiSentiment.confidence);
+    } else if (aiSentiment.marketMood === 'MIXED') {
+      addScore(0, `⚠️ AI detected mixed sentiment: ${aiSentiment.reasoning}`, 0.5);
+    }
+  } else {
+    // Fallback to legacy display
+    if (cappedNewsScore >= 8) addScore(0, `📰 Strong Bullish News Sentiment (+${cappedNewsScore})`, 0.6);
+    else if (cappedNewsScore >= 4) addScore(0, `📰 Bullish News Sentiment (+${cappedNewsScore})`, 0.5);
+    else if (cappedNewsScore <= -8) addScore(0, `📰 Strong Bearish News Sentiment (${cappedNewsScore})`, 0.6);
+    else if (cappedNewsScore <= -4) addScore(0, `📰 Bearish News Sentiment (${cappedNewsScore})`, 0.5);
+  }
 
   // ============================================================
   // B. FUNDAMENTALS
@@ -184,37 +205,37 @@ export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promis
   details.push(`🛡️ Suggested Stop Loss: ₹${suggestedStopLoss.toFixed(2)} (2x ATR)`);
 
   // ============================================================
-  // E. STOCHASTIC RSI (NEW - Phase 2!)
+  // E. STOCHASTIC RSI (Calibrated Weights)
   // ============================================================
   if (stochRsi.signal === 'BULLISH_CROSS') {
     if (stochRsi.k < 30) {
-      addScore(15, `🔥 Stoch RSI: Bullish Cross in Oversold Zone (K: ${stochRsi.k.toFixed(1)})`, 0.9);
+      addScore(10, `🔥 Stoch RSI: Bullish Cross in Oversold Zone (K: ${stochRsi.k.toFixed(1)})`, 0.9);
     } else {
-      addScore(10, `📈 Stoch RSI: Bullish Crossover (K: ${stochRsi.k.toFixed(1)}, D: ${stochRsi.d.toFixed(1)})`, 0.75);
+      addScore(8, `📈 Stoch RSI: Bullish Crossover (K: ${stochRsi.k.toFixed(1)}, D: ${stochRsi.d.toFixed(1)})`, 0.75);
     }
   } else if (stochRsi.signal === 'BEARISH_CROSS') {
     if (stochRsi.k > 70) {
-      addScore(-15, `🔥 Stoch RSI: Bearish Cross in Overbought Zone (K: ${stochRsi.k.toFixed(1)})`, 0.9);
+      addScore(-10, `🔥 Stoch RSI: Bearish Cross in Overbought Zone (K: ${stochRsi.k.toFixed(1)})`, 0.9);
     } else {
-      addScore(-10, `📉 Stoch RSI: Bearish Crossover (K: ${stochRsi.k.toFixed(1)}, D: ${stochRsi.d.toFixed(1)})`, 0.75);
+      addScore(-8, `📉 Stoch RSI: Bearish Crossover (K: ${stochRsi.k.toFixed(1)}, D: ${stochRsi.d.toFixed(1)})`, 0.75);
     }
   } else if (stochRsi.signal === 'OVERSOLD') {
-    addScore(8, `📉 Stoch RSI: Oversold (${stochRsi.k.toFixed(1)}) - Potential Bounce`, 0.65);
+    addScore(5, `📉 Stoch RSI: Oversold (${stochRsi.k.toFixed(1)}) - Potential Bounce`, 0.65);
   } else if (stochRsi.signal === 'OVERBOUGHT') {
-    addScore(-8, `📈 Stoch RSI: Overbought (${stochRsi.k.toFixed(1)}) - Potential Pullback`, 0.65);
+    addScore(-5, `📈 Stoch RSI: Overbought (${stochRsi.k.toFixed(1)}) - Potential Pullback`, 0.65);
   }
 
   // ============================================================
-  // F. ICHIMOKU CLOUD (NEW - Phase 2!)
+  // F. ICHIMOKU CLOUD (Calibrated Weights)
   // ============================================================
   if (ichimoku.signal === 'STRONG_BUY') {
-    addScore(18, `☁️ Ichimoku: Strong BUY - Price above cloud, TK bullish cross`, 0.95);
+    addScore(12, `☁️ Ichimoku: Strong BUY - Price above cloud, TK bullish cross`, 0.95);
   } else if (ichimoku.signal === 'BUY') {
-    addScore(10, `☁️ Ichimoku: BUY Signal`, 0.8);
+    addScore(8, `☁️ Ichimoku: BUY Signal`, 0.8);
   } else if (ichimoku.signal === 'STRONG_SELL') {
-    addScore(-18, `☁️ Ichimoku: Strong SELL - Price below cloud, TK bearish cross`, 0.95);
+    addScore(-12, `☁️ Ichimoku: Strong SELL - Price below cloud, TK bearish cross`, 0.95);
   } else if (ichimoku.signal === 'SELL') {
-    addScore(-10, `☁️ Ichimoku: SELL Signal`, 0.8);
+    addScore(-8, `☁️ Ichimoku: SELL Signal`, 0.8);
   }
 
   // Add cloud position context
@@ -226,11 +247,11 @@ export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promis
     details.push(`☁️ Price Inside Ichimoku Cloud (Consolidation Zone)`);
   }
 
-  // TK Cross is significant
+  // TK Cross (Calibrated Weight)
   if (ichimoku.tkCross === 'BULLISH') {
-    addScore(8, `⚡ Ichimoku TK Cross: Tenkan crossed above Kijun (Bullish)`, 0.8);
+    addScore(5, `⚡ Ichimoku TK Cross: Tenkan crossed above Kijun (Bullish)`, 0.8);
   } else if (ichimoku.tkCross === 'BEARISH') {
-    addScore(-8, `⚡ Ichimoku TK Cross: Tenkan crossed below Kijun (Bearish)`, 0.8);
+    addScore(-5, `⚡ Ichimoku TK Cross: Tenkan crossed below Kijun (Bearish)`, 0.8);
   }
 
   // ============================================================
@@ -243,20 +264,20 @@ export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promis
   }
 
   // ============================================================
-  // H. MOMENTUM SCORE (NEW - Phase 2!)
+  // H. MOMENTUM SCORE (Calibrated Weights)
   // ============================================================
   if (momentumScore.score >= 70) {
-    addScore(8, `🚀 ${momentumScore.interpretation} (Score: ${momentumScore.score})`, 0.75);
+    addScore(6, `🚀 ${momentumScore.interpretation} (Score: ${momentumScore.score})`, 0.75);
   } else if (momentumScore.score <= 30) {
-    addScore(-8, `📉 ${momentumScore.interpretation} (Score: ${momentumScore.score})`, 0.75);
+    addScore(-6, `📉 ${momentumScore.interpretation} (Score: ${momentumScore.score})`, 0.75);
   }
 
   // ============================================================
   // I. MARKET CONTEXT (Risk-Based)
   // ============================================================
   if (risk.marketTrend === 'BULLISH') {
-    if (risk.beta > 1.2) { 
-      addScore(8, "🐂 High Beta Leader in Bull Market", 0.7); 
+    if (risk.beta > 1.2) {
+      addScore(8, "🐂 High Beta Leader in Bull Market", 0.7);
     } else if (risk.beta < 0.5) {
       addScore(-3, "🐢 Defensive Stock in Bull Market (Lagging)", 0.4);
     }
@@ -290,23 +311,23 @@ export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promis
   // ============================================================
   // J. CHART PATTERNS
   // ============================================================
-  if (chartPatterns.includes("Double Bottom (W Pattern)")) { 
-    addScore(20, "📈 Double Bottom Pattern Detected", 0.9); 
+  if (chartPatterns.includes("Double Bottom (W Pattern)")) {
+    addScore(20, "📈 Double Bottom Pattern Detected", 0.9);
   }
-  if (chartPatterns.includes("Double Top (M Pattern)")) { 
-    addScore(-20, "📉 Double Top Pattern Detected", 0.9); 
+  if (chartPatterns.includes("Double Top (M Pattern)")) {
+    addScore(-20, "📉 Double Top Pattern Detected", 0.9);
   }
-  if (chartPatterns.some(p => p.includes("Higher Highs"))) { 
-    addScore(10, "📈 Uptrend Structure (HH/HL)", 0.8); 
+  if (chartPatterns.some(p => p.includes("Higher Highs"))) {
+    addScore(10, "📈 Uptrend Structure (HH/HL)", 0.8);
   }
-  if (chartPatterns.some(p => p.includes("Lower Lows"))) { 
-    addScore(-10, "📉 Downtrend Structure (LH/LL)", 0.8); 
+  if (chartPatterns.some(p => p.includes("Lower Lows"))) {
+    addScore(-10, "📉 Downtrend Structure (LH/LL)", 0.8);
   }
-  
+
   // Support/Resistance Proximity
   const nearSupport = sr.support.some(s => Math.abs(currentPrice - s) / currentPrice < 0.015);
   const nearResistance = sr.resistance.some(r => Math.abs(currentPrice - r) / currentPrice < 0.015);
-  
+
   if (nearSupport) {
     addScore(10, "🟢 Price at Key Support Level", 0.7);
   }
@@ -322,23 +343,23 @@ export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promis
   else if (tech.rsi < 30) { addScore(10, "📉 RSI Oversold (<30)", 0.7); }
   else if (tech.rsi > 75) { addScore(-15, "🔥 RSI Extremely Overbought (>75)", 0.8); }
   else if (tech.rsi > 70) { addScore(-10, "📈 RSI Overbought (>70)", 0.7); }
-  
+
   // MACD
   if (tech.macd && tech.macd.histogram) {
     const prevHistogram = tech.macd.histogram;
-    if (prevHistogram > 0) { 
-      addScore(8, "📊 MACD Histogram Positive", 0.6); 
-    } else { 
-      addScore(-8, "📊 MACD Histogram Negative", 0.6); 
+    if (prevHistogram > 0) {
+      addScore(8, "📊 MACD Histogram Positive", 0.6);
+    } else {
+      addScore(-8, "📊 MACD Histogram Negative", 0.6);
     }
   }
 
   // SMA Cross
-  if (tech.crossSignal === 'GOLDEN') { 
-    addScore(20, "✨ GOLDEN CROSS (SMA50 > SMA200)", 0.95); 
+  if (tech.crossSignal === 'GOLDEN') {
+    addScore(20, "✨ GOLDEN CROSS (SMA50 > SMA200)", 0.95);
   }
-  if (tech.crossSignal === 'DEATH') { 
-    addScore(-20, "💀 DEATH CROSS (SMA50 < SMA200)", 0.95); 
+  if (tech.crossSignal === 'DEATH') {
+    addScore(-20, "💀 DEATH CROSS (SMA50 < SMA200)", 0.95);
   }
 
   // EMA Cross (Short-term)
@@ -368,7 +389,7 @@ export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promis
   // ============================================================
   // Backtest Accuracy Adjustment
   if (backtestResult.accuracy < 45) {
-    const penalty = (50 - backtestResult.accuracy) / 50; 
+    const penalty = (50 - backtestResult.accuracy) / 50;
     const adjustment = (score - 50) * penalty;
     score = score - adjustment;
     details.push(`⚠️ Score adjusted by ${Math.abs(adjustment).toFixed(0)} pts: Low historical accuracy (${backtestResult.accuracy.toFixed(0)}%)`);
@@ -376,7 +397,7 @@ export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promis
 
   // ML Prediction Crosscheck
   if (prediction.length > 0) {
-    const predictedReturn = (prediction[prediction.length-1].price - currentPrice) / currentPrice;
+    const predictedReturn = (prediction[prediction.length - 1].price - currentPrice) / currentPrice;
     if (score > 65 && predictedReturn < -0.03) {
       score -= 12;
       details.push("⚠️ AI Model predicts downtrend - Score reduced");
@@ -421,9 +442,9 @@ export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promis
   // N. FINAL BOUNDS & CONFIDENCE
   // ============================================================
   score = Math.min(100, Math.max(0, Math.round(score)));
-  
-  const confidence = confidenceTotal > 0 
-    ? Math.round((confidenceFactors / confidenceTotal) * 100) 
+
+  const confidence = confidenceTotal > 0
+    ? Math.round((confidenceFactors / confidenceTotal) * 100)
     : 50;
 
   // ============================================================
@@ -496,8 +517,38 @@ export async function analyzeStock(symbol: string, timeframe: TimeFrame): Promis
       volume: q.volume
     })),
     backtest: backtestResult,
-    prediction 
+    prediction,
+    // NEW: AI Sentiment analysis
+    aiSentiment,
+    // Signal alignment tracking
+    signalAlignment: determineSignalAlignment(score, aiSentiment, prediction, currentPrice)
   };
+}
+
+// Helper to determine if signals are aligned or conflicting
+function determineSignalAlignment(
+  technicalScore: number,
+  aiSentiment: AISentimentResult,
+  prediction: any[],
+  currentPrice: number
+): 'ALIGNED' | 'MIXED' | 'CONFLICTING' {
+  const technicalSignal = technicalScore > 60 ? 'BUY' : technicalScore < 40 ? 'SELL' : 'HOLD';
+  const sentimentSignal = aiSentiment.overallScore > 3 ? 'BUY' : aiSentiment.overallScore < -3 ? 'SELL' : 'HOLD';
+
+  let predictionSignal = 'HOLD';
+  if (prediction.length > 0) {
+    const predictedReturn = (prediction[prediction.length - 1].price - currentPrice) / currentPrice;
+    predictionSignal = predictedReturn > 0.02 ? 'BUY' : predictedReturn < -0.02 ? 'SELL' : 'HOLD';
+  }
+
+  const signals = [technicalSignal, sentimentSignal, predictionSignal];
+  const buyCount = signals.filter(s => s === 'BUY').length;
+  const sellCount = signals.filter(s => s === 'SELL').length;
+
+  if (buyCount >= 2 && sellCount === 0) return 'ALIGNED';
+  if (sellCount >= 2 && buyCount === 0) return 'ALIGNED';
+  if (buyCount > 0 && sellCount > 0) return 'CONFLICTING';
+  return 'MIXED';
 }
 
 export type { TimeFrame };

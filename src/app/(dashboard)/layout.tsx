@@ -66,10 +66,10 @@ export default function DashboardLayout({
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-[#050505] flex items-center justify-center">
+      <div className="min-h-screen bg-[var(--background)] flex items-center justify-center transition-colors">
         <div className="flex flex-col items-center gap-4">
-          <Loader2 size={40} className="animate-spin text-blue-500" />
-          <p className="text-gray-400">Loading...</p>
+          <Loader2 size={40} className="animate-spin text-[var(--primary)]" />
+          <p className="text-[var(--foreground-muted)]">Loading...</p>
         </div>
       </div>
     )
@@ -80,41 +80,40 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="min-h-screen bg-[#050505]">
+    <div className="min-h-screen bg-[var(--background)] transition-colors">
       {/* Sidebar */}
       <div className="hidden lg:block">
-        <Sidebar 
-          isCollapsed={sidebarCollapsed} 
+        <Sidebar
+          isCollapsed={sidebarCollapsed}
           setIsCollapsed={setSidebarCollapsed}
         />
       </div>
 
       {/* Mobile Navigation */}
-      <MobileNav 
-        isOpen={mobileNavOpen} 
-        onClose={() => setMobileNavOpen(false)} 
+      <MobileNav
+        isOpen={mobileNavOpen}
+        onClose={() => setMobileNavOpen(false)}
       />
 
       {/* Header */}
-      <Header 
+      <Header
         onMenuClick={() => setMobileNavOpen(true)}
         sidebarCollapsed={sidebarCollapsed}
       />
 
       {/* Main Content */}
-      <main 
-        className={`pt-16 min-h-screen transition-all duration-300 ${
-          sidebarCollapsed ? 'lg:pl-17.5' : 'lg:pl-65'
-        }`}
+      <main
+        className={`pt-16 min-h-screen transition-all duration-300 ${sidebarCollapsed ? 'lg:pl-17.5' : 'lg:pl-65'
+          }`}
       >
         <div className="p-4 md:p-6 lg:p-8">
           {children}
         </div>
       </main>
 
-      {/* Market Status Indicator (optional) */}
+      {/* Market Status Indicator */}
       {!marketOpen && (
-        <div className="fixed bottom-4 right-4 px-3 py-1.5 bg-yellow-500/20 border border-yellow-500/30 rounded-full text-xs text-yellow-400">
+        <div className="fixed bottom-4 right-4 px-3 py-1.5 bg-[var(--warning-light)] border border-[var(--warning)] rounded-full text-xs text-[var(--warning)] font-medium">
           Market Closed
         </div>
       )}

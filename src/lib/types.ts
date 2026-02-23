@@ -133,6 +133,24 @@ export interface AnalysisResult {
     totalReturn: number;
   };
   prediction: PredictionPoint[];
+  // NEW: AI-powered sentiment analysis
+  aiSentiment?: AISentimentResult;
+  // NEW: Signal alignment tracking
+  signalAlignment?: 'ALIGNED' | 'MIXED' | 'CONFLICTING';
+}
+
+// NEW: AI Sentiment Analysis Result
+export interface AISentimentResult {
+  overallScore: number;        // -10 to +10
+  confidence: number;          // 0 to 1
+  reasoning: string;           // Human-readable explanation
+  newsAnalysis: {
+    title: string;
+    sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    relevance: number;         // 0 to 1
+    impact: 'HIGH' | 'MEDIUM' | 'LOW';
+  }[];
+  marketMood: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | 'MIXED';
 }
 
 export interface StochRSIData {

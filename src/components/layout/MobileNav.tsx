@@ -6,19 +6,20 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useUser } from '@/lib/hooks/useUser'
 import { useWatchlists } from '@/lib/hooks/useWatchlists'
-import { 
-  TrendingUp, 
-  LayoutDashboard, 
-  Bell, 
-  Search, 
+import {
+  TrendingUp,
+  LayoutDashboard,
+  Bell,
+  Search,
   Bookmark,
-  Settings, 
-  HelpCircle, 
+  Settings,
   X,
   ExternalLink,
   LogOut,
   Loader2,
-  ChevronRight
+  ChevronRight,
+  Crosshair,
+  FlaskConical
 } from 'lucide-react'
 
 interface MobileNavProps {
@@ -48,16 +49,17 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
     }
   }, [isOpen])
 
-  const navItems = [
+  const navItems: { name: string; href: string; icon: any; badge?: string }[] = [
     { name: 'Analyze', href: '/dashboard', icon: LayoutDashboard },
-    { name: 'Screener', href: '/dashboard/screener', icon: Search, badge: 'Soon' },
-    { name: 'Alerts', href: '/dashboard/alerts', icon: Bell, badge: 'Soon' },
+    { name: 'Backtest', href: '/dashboard/backtest', icon: FlaskConical },
+    { name: 'Screener', href: '/dashboard/screener', icon: Search },
+    { name: 'Alerts', href: '/dashboard/alerts', icon: Bell },
+    { name: 'Signals', href: '/dashboard/signals', icon: Crosshair },
   ]
 
   const bottomItems = [
     { name: 'Portfolio', href: 'https://your-portfolio-app.vercel.app', icon: ExternalLink, external: true },
     { name: 'Settings', href: '/dashboard/settings', icon: Settings },
-    { name: 'Help', href: '/dashboard/help', icon: HelpCircle },
   ]
 
   const isActive = (href: string) => {
@@ -70,24 +72,24 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
   return (
     <>
       {/* Backdrop */}
-      <div 
+      <div
         className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm lg:hidden"
         onClick={onClose}
       />
-      
+
       {/* Drawer */}
-      <div className="fixed inset-y-0 left-0 z-50 w-[280px] bg-[#0A0A0A] border-r border-white/5 lg:hidden animate-in slide-in-from-left duration-300">
+      <div className="fixed inset-y-0 left-0 z-50 w-[280px] bg-[var(--background)] border-r border-[var(--border)] lg:hidden animate-in slide-in-from-left duration-300">
         {/* Header */}
-        <div className="h-16 flex items-center justify-between px-4 border-b border-white/5">
+        <div className="h-16 flex items-center justify-between px-4 border-b border-[var(--border)]">
           <Link href="/dashboard" className="flex items-center gap-2" onClick={onClose}>
             <div className="bg-gradient-to-br from-blue-600 to-blue-700 p-2 rounded-xl">
               <TrendingUp size={20} className="text-white" />
             </div>
-            <span className="text-lg font-bold text-white">TradeSense</span>
+            <span className="text-lg font-bold text-[var(--foreground)]">TradeSense</span>
           </Link>
           <button
             onClick={onClose}
-            className="p-2 rounded-lg hover:bg-white/5 text-gray-400 hover:text-white transition-colors"
+            className="p-2 rounded-lg hover:bg-[var(--card-hover)] text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-colors"
           >
             <X size={20} />
           </button>
@@ -102,16 +104,15 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
                 key={item.name}
                 href={item.href}
                 onClick={onClose}
-                className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all ${
-                  isActive(item.href)
-                    ? 'bg-blue-600/10 text-blue-400'
-                    : 'text-gray-400 hover:bg-white/5 hover:text-white'
-                }`}
+                className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all ${isActive(item.href)
+                  ? 'bg-blue-600/10 text-blue-400'
+                  : 'text-[var(--foreground-muted)] hover:bg-[var(--card-hover)] hover:text-[var(--foreground)]'
+                  }`}
               >
                 <item.icon size={20} />
                 <span className="font-medium">{item.name}</span>
                 {item.badge && (
-                  <span className="ml-auto text-[10px] px-1.5 py-0.5 bg-white/10 text-gray-400 rounded">
+                  <span className="ml-auto text-[10px] px-1.5 py-0.5 bg-[var(--card)] text-[var(--foreground-muted)] rounded">
                     {item.badge}
                   </span>
                 )}
@@ -123,11 +124,11 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
           {isAuthenticated && (
             <div className="mt-6">
               <div className="flex items-center justify-between px-3 mb-2">
-                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                <span className="text-xs font-semibold text-[var(--foreground-muted)] uppercase tracking-wider">
                   Watchlists
                 </span>
               </div>
-              
+
               {watchlistsLoading ? (
                 <div className="flex items-center justify-center py-4">
                   <Loader2 size={16} className="animate-spin text-gray-500" />
@@ -139,13 +140,12 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
                       key={watchlist.id}
                       href={`/dashboard/watchlist/${watchlist.id}`}
                       onClick={onClose}
-                      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
-                        pathname === `/dashboard/watchlist/${watchlist.id}`
-                          ? 'bg-blue-600/10 text-blue-400'
-                          : 'text-gray-400 hover:bg-white/5 hover:text-white'
-                      }`}
+                      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${pathname === `/dashboard/watchlist/${watchlist.id}`
+                        ? 'bg-blue-600/10 text-blue-400'
+                        : 'text-[var(--foreground-muted)] hover:bg-[var(--card-hover)] hover:text-[var(--foreground)]'
+                        }`}
                     >
-                      <div 
+                      <div
                         className="w-2 h-2 rounded-full"
                         style={{ backgroundColor: watchlist.color }}
                       />
@@ -155,13 +155,13 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
                   ))}
                 </div>
               ) : (
-                <p className="px-3 py-2 text-sm text-gray-500 italic">No watchlists yet</p>
+                <p className="px-3 py-2 text-sm text-[var(--foreground-muted)] italic">No watchlists yet</p>
               )}
             </div>
           )}
 
           {/* Divider */}
-          <div className="my-4 border-t border-white/5" />
+          <div className="my-4 border-t border-[var(--border)]" />
 
           {/* Bottom Nav */}
           <div className="space-y-1">
@@ -172,7 +172,7 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
                 target={item.external ? '_blank' : undefined}
                 rel={item.external ? 'noopener noreferrer' : undefined}
                 onClick={!item.external ? onClose : undefined}
-                className="flex items-center gap-3 px-3 py-3 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white transition-all"
+                className="flex items-center gap-3 px-3 py-3 rounded-xl text-[var(--foreground-muted)] hover:bg-[var(--card-hover)] hover:text-[var(--foreground)] transition-all"
               >
                 <item.icon size={20} />
                 <span className="font-medium">{item.name}</span>
@@ -186,7 +186,7 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
 
         {/* User Section */}
         {isAuthenticated && (
-          <div className="border-t border-white/5 p-4">
+          <div className="border-t border-[var(--border)] p-4">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-medium overflow-hidden">
                 {avatarUrl ? (
@@ -196,8 +196,8 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
                 )}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-white truncate">{fullName || 'User'}</p>
-                <p className="text-sm text-gray-500 truncate">{email}</p>
+                <p className="font-medium text-[var(--foreground)] truncate">{fullName || 'User'}</p>
+                <p className="text-sm text-[var(--foreground-muted)] truncate">{email}</p>
               </div>
             </div>
             <button
@@ -205,7 +205,7 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
                 signOut()
                 onClose()
               }}
-              className="flex items-center gap-2 w-full px-3 py-2.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-xl transition-colors"
+              className="flex items-center gap-2 w-full px-3 py-2.5 text-[var(--foreground-muted)] hover:text-[var(--foreground)] hover:bg-[var(--card-hover)] rounded-xl transition-colors"
             >
               <LogOut size={18} />
               <span>Sign out</span>
@@ -215,7 +215,7 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
 
         {/* Login Button for non-authenticated users */}
         {!isAuthenticated && (
-          <div className="border-t border-white/5 p-4">
+          <div className="border-t border-[var(--border)] p-4">
             <Link
               href="/login"
               onClick={onClose}

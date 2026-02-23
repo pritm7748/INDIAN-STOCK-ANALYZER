@@ -34,12 +34,12 @@ interface AlertCardProps {
   currentPrice?: number
 }
 
-export function AlertCard({ 
-  alert, 
-  onToggle, 
-  onEdit, 
+export function AlertCard({
+  alert,
+  onToggle,
+  onEdit,
   onDelete,
-  currentPrice 
+  currentPrice
 }: AlertCardProps) {
   const [isToggling, setIsToggling] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -94,7 +94,7 @@ export function AlertCard({
 
   // Get condition description
   const getConditionText = () => {
-    const value = condition.indicator === 'price' 
+    const value = condition.indicator === 'price'
       ? `₹${condition.value.toLocaleString('en-IN')}`
       : condition.value
 
@@ -110,7 +110,7 @@ export function AlertCard({
   // Calculate distance from trigger
   const getDistance = () => {
     if (!currentPrice || condition.indicator !== 'price') return null
-    
+
     const distance = ((condition.value - currentPrice) / currentPrice) * 100
     return {
       percent: Math.abs(distance).toFixed(2),
@@ -129,7 +129,7 @@ export function AlertCard({
     if (isExpired) return 'border-gray-500/30 bg-gray-500/5 opacity-60'
     if (!alert.is_active) return 'border-gray-500/30 bg-gray-500/5'
     if (distance?.isClose) return 'border-yellow-500/30 bg-yellow-500/5'
-    return 'border-white/10 bg-white/5'
+    return 'border-[var(--border)] bg-[var(--card)]'
   }
 
   return (
@@ -165,40 +165,39 @@ export function AlertCard({
       {/* Main Content */}
       <div className="flex items-start gap-4">
         {/* Icon */}
-        <div className={`p-2.5 rounded-xl ${
-          alert.is_triggered ? 'bg-emerald-500/20' :
-          alert.is_active ? 'bg-blue-500/20' : 'bg-gray-500/20'
-        }`}>
+        <div className={`p-2.5 rounded-xl ${alert.is_triggered ? 'bg-emerald-500/20' :
+            alert.is_active ? 'bg-blue-500/20' : 'bg-gray-500/20'
+          }`}>
           <IndicatorIcon size={20} className={
             alert.is_triggered ? 'text-emerald-400' :
-            alert.is_active ? 'text-blue-400' : 'text-gray-400'
+              alert.is_active ? 'text-blue-400' : 'text-gray-400'
           } />
         </div>
 
         {/* Details */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <Link 
+            <Link
               href={`/dashboard?symbol=${alert.symbol}`}
-              className="font-semibold text-white hover:text-blue-400 transition-colors"
+              className="font-semibold text-[var(--foreground)] hover:text-blue-400 transition-colors"
             >
               {alert.symbol.replace('.NS', '')}
             </Link>
-            <span className="text-xs text-gray-500">
+            <span className="text-xs text-[var(--foreground-muted)]">
               {alert.stock_name || alert.symbol}
             </span>
           </div>
 
-          <p className="text-sm text-gray-300 mb-2">
-            <span className="text-gray-500">{getIndicatorLabel()}</span>{' '}
+          <p className="text-sm text-[var(--foreground-secondary)] mb-2">
+            <span className="text-[var(--foreground-muted)]">{getIndicatorLabel()}</span>{' '}
             {getConditionText()}
           </p>
 
           {/* Distance indicator */}
           {distance && alert.is_active && !alert.is_triggered && (
             <div className="flex items-center gap-2 text-xs">
-              <span className="text-gray-500">Current: ₹{currentPrice?.toLocaleString('en-IN')}</span>
-              <span className={distance.isClose ? 'text-yellow-400' : 'text-gray-400'}>
+              <span className="text-[var(--foreground-muted)]">Current: ₹{currentPrice?.toLocaleString('en-IN')}</span>
+              <span className={distance.isClose ? 'text-yellow-400' : 'text-[var(--foreground-muted)]'}>
                 ({distance.percent}% {distance.direction})
               </span>
             </div>
@@ -206,7 +205,7 @@ export function AlertCard({
 
           {/* Triggered info */}
           {alert.is_triggered && alert.triggered_at && (
-            <div className="text-xs text-gray-500 mt-1">
+            <div className="text-xs text-[var(--foreground-muted)] mt-1">
               Triggered on {new Date(alert.triggered_at).toLocaleDateString('en-IN', {
                 day: 'numeric',
                 month: 'short',
@@ -223,9 +222,9 @@ export function AlertCard({
           {/* Notification channels */}
           <div className="flex items-center gap-2 mt-2">
             {alert.notification_channels?.map((channel) => (
-              <span 
+              <span
                 key={channel}
-                className="px-2 py-0.5 bg-white/5 text-gray-400 text-[10px] rounded uppercase"
+                className="px-2 py-0.5 bg-[var(--card)] text-[var(--foreground-muted)] text-[10px] rounded uppercase"
               >
                 {channel.replace('_', ' ')}
               </span>
@@ -239,11 +238,10 @@ export function AlertCard({
           <button
             onClick={handleToggle}
             disabled={isToggling || alert.is_triggered}
-            className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${
-              alert.is_active 
-                ? 'hover:bg-yellow-500/10 text-yellow-400' 
-                : 'hover:bg-white/10 text-gray-400'
-            }`}
+            className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${alert.is_active
+                ? 'hover:bg-yellow-500/10 text-yellow-400'
+                : 'hover:bg-[var(--card-hover)] text-[var(--foreground-muted)]'
+              }`}
             title={alert.is_active ? 'Disable alert' : 'Enable alert'}
           >
             {isToggling ? (
@@ -259,31 +257,31 @@ export function AlertCard({
           <div className="relative">
             <button
               onClick={() => setShowMenu(!showMenu)}
-              className="p-2 rounded-lg hover:bg-white/10 text-gray-400 transition-colors"
+              className="p-2 rounded-lg hover:bg-[var(--card-hover)] text-[var(--foreground-muted)] transition-colors"
             >
               <MoreHorizontal size={18} />
             </button>
 
             {showMenu && (
               <>
-                <div 
+                <div
                   className="fixed inset-0 z-10"
                   onClick={() => setShowMenu(false)}
                 />
-                <div className="absolute right-0 top-full mt-1 w-40 bg-[#0A0A0A] border border-white/10 rounded-xl shadow-xl z-20 overflow-hidden">
+                <div className="absolute right-0 top-full mt-1 w-40 bg-[var(--background)] border border-[var(--border)] rounded-xl shadow-xl z-20 overflow-hidden">
                   <button
                     onClick={() => {
                       onEdit(alert)
                       setShowMenu(false)
                     }}
-                    className="flex items-center gap-2 w-full px-4 py-2.5 text-sm text-gray-300 hover:bg-white/5 transition-colors"
+                    className="flex items-center gap-2 w-full px-4 py-2.5 text-sm text-[var(--foreground-secondary)] hover:bg-[var(--card-hover)] transition-colors"
                   >
                     <Edit3 size={14} />
                     Edit
                   </button>
                   <Link
                     href={`/dashboard?symbol=${alert.symbol}`}
-                    className="flex items-center gap-2 w-full px-4 py-2.5 text-sm text-gray-300 hover:bg-white/5 transition-colors"
+                    className="flex items-center gap-2 w-full px-4 py-2.5 text-sm text-[var(--foreground-secondary)] hover:bg-[var(--card-hover)] transition-colors"
                     onClick={() => setShowMenu(false)}
                   >
                     <ExternalLink size={14} />

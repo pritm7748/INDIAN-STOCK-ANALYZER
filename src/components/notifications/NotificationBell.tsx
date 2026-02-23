@@ -5,11 +5,11 @@
 import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import { useNotifications } from './NotificationProvider'
-import { 
-  Bell, 
-  X, 
-  Trash2, 
-  TrendingUp, 
+import {
+  Bell,
+  X,
+  Trash2,
+  TrendingUp,
   AlertTriangle,
   CheckCircle,
   ExternalLink,
@@ -45,7 +45,7 @@ export function NotificationBell() {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="relative p-2 rounded-lg hover:bg-white/5 text-gray-400 hover:text-white transition-colors"
+        className="relative p-2 rounded-lg hover:bg-[var(--card-hover)] text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-colors"
       >
         <Bell size={20} />
         {unreadCount > 0 && (
@@ -56,12 +56,12 @@ export function NotificationBell() {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-80 max-h-[70vh] bg-[#0A0A0A] border border-white/10 rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+        <div className="absolute right-0 mt-2 w-80 max-h-[70vh] bg-[var(--background)] border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
           {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b border-white/5">
+          <div className="flex items-center justify-between p-4 border-b border-[var(--border)]">
             <div className="flex items-center gap-2">
               <Bell size={16} className="text-blue-400" />
-              <span className="font-medium text-white">Notifications</span>
+              <span className="font-medium text-[var(--foreground)]">Notifications</span>
               {unreadCount > 0 && (
                 <span className="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded">
                   {unreadCount}
@@ -71,7 +71,7 @@ export function NotificationBell() {
             {notifications.length > 0 && (
               <button
                 onClick={clearAll}
-                className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                className="text-xs text-[var(--foreground-muted)] hover:text-[var(--foreground-secondary)] transition-colors"
               >
                 Clear all
               </button>
@@ -81,28 +81,27 @@ export function NotificationBell() {
           {/* Notifications List */}
           <div className="max-h-96 overflow-y-auto">
             {notifications.length > 0 ? (
-              <div className="divide-y divide-white/5">
+              <div className="divide-y divide-[var(--border)]">
                 {notifications.map((notification) => (
                   <div
                     key={notification.id}
-                    className="p-4 hover:bg-white/5 transition-colors group"
+                    className="p-4 hover:bg-[var(--card-hover)] transition-colors group"
                   >
                     <div className="flex items-start gap-3">
-                      <div className={`p-1.5 rounded-lg shrink-0 ${
-                        notification.type === 'alert' ? 'bg-purple-500/20 text-purple-400' :
-                        notification.type === 'success' ? 'bg-emerald-500/20 text-emerald-400' :
-                        notification.type === 'error' ? 'bg-rose-500/20 text-rose-400' :
-                        'bg-blue-500/20 text-blue-400'
-                      }`}>
+                      <div className={`p-1.5 rounded-lg shrink-0 ${notification.type === 'alert' ? 'bg-purple-500/20 text-purple-400' :
+                          notification.type === 'success' ? 'bg-emerald-500/20 text-emerald-400' :
+                            notification.type === 'error' ? 'bg-rose-500/20 text-rose-400' :
+                              'bg-blue-500/20 text-blue-400'
+                        }`}>
                         {notification.type === 'alert' ? <TrendingUp size={14} /> :
-                         notification.type === 'success' ? <CheckCircle size={14} /> :
-                         notification.type === 'error' ? <AlertTriangle size={14} /> :
-                         <Bell size={14} />}
+                          notification.type === 'success' ? <CheckCircle size={14} /> :
+                            notification.type === 'error' ? <AlertTriangle size={14} /> :
+                              <Bell size={14} />}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-white">{notification.title}</p>
+                        <p className="text-sm font-medium text-[var(--foreground)]">{notification.title}</p>
                         {notification.message && (
-                          <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">
+                          <p className="text-xs text-[var(--foreground-muted)] mt-0.5 line-clamp-2">
                             {notification.message}
                           </p>
                         )}
@@ -119,7 +118,7 @@ export function NotificationBell() {
                       </div>
                       <button
                         onClick={() => removeNotification(notification.id)}
-                        className="opacity-0 group-hover:opacity-100 p-1 text-gray-500 hover:text-white transition-all"
+                        className="opacity-0 group-hover:opacity-100 p-1 text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-all"
                       >
                         <X size={14} />
                       </button>
@@ -130,8 +129,8 @@ export function NotificationBell() {
             ) : (
               <div className="py-12 text-center">
                 <Bell size={32} className="mx-auto mb-3 text-gray-600" />
-                <p className="text-gray-400 text-sm">No notifications</p>
-                <p className="text-gray-600 text-xs mt-1">
+                <p className="text-[var(--foreground-muted)] text-sm">No notifications</p>
+                <p className="text-[var(--foreground-muted)] opacity-60 text-xs mt-1">
                   You'll see triggered alerts here
                 </p>
               </div>
@@ -139,11 +138,11 @@ export function NotificationBell() {
           </div>
 
           {/* Footer */}
-          <div className="p-3 border-t border-white/5">
+          <div className="p-3 border-t border-[var(--border)]">
             <Link
               href="/dashboard/alerts"
               onClick={() => setIsOpen(false)}
-              className="flex items-center justify-center gap-2 w-full py-2 text-sm text-gray-400 hover:text-white transition-colors"
+              className="flex items-center justify-center gap-2 w-full py-2 text-sm text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-colors"
             >
               View all alerts
               <ExternalLink size={14} />

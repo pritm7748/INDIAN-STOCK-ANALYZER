@@ -1,26 +1,991 @@
 @import "tailwindcss";
 
+/* ============================================================
+   DESIGN SYSTEM - CSS VARIABLES
+   ============================================================ */
+
 :root {
+  /* Base colors */
   --background: #ffffff;
-  --foreground: #171717;
+  --background-secondary: #f8fafc;
+  --background-tertiary: #f1f5f9;
+  --foreground: #0f172a;
+  --foreground-secondary: #475569;
+  --foreground-muted: #94a3b8;
+
+  /* Card & Surface */
+  --card: #ffffff;
+  --card-hover: #f8fafc;
+  --card-border: #e2e8f0;
+
+  /* Primary (Blue) */
+  --primary: #3b82f6;
+  --primary-hover: #2563eb;
+  --primary-light: #dbeafe;
+  --primary-muted: #93c5fd;
+
+  /* Success (Green) */
+  --success: #10b981;
+  --success-light: #d1fae5;
+  --success-muted: #6ee7b7;
+
+  /* Danger (Red) */
+  --danger: #ef4444;
+  --danger-light: #fee2e2;
+  --danger-muted: #fca5a5;
+
+  /* Warning (Amber) */
+  --warning: #f59e0b;
+  --warning-light: #fef3c7;
+  --warning-muted: #fcd34d;
+
+  /* Info (Cyan) */
+  --info: #06b6d4;
+  --info-light: #cffafe;
+  --info-muted: #67e8f9;
+
+  /* Purple accent */
+  --purple: #8b5cf6;
+  --purple-light: #ede9fe;
+  --purple-muted: #c4b5fd;
+
+  /* Borders & Dividers */
+  --border: #e2e8f0;
+  --border-light: #f1f5f9;
+  --ring: #3b82f6;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+
+  /* Gradient overlays */
+  --gradient-primary: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+  --gradient-success: linear-gradient(135deg, #10b981 0%, #06b6d4 100%);
+  --gradient-danger: linear-gradient(135deg, #ef4444 0%, #f97316 100%);
+  --gradient-premium: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --gradient-gold: linear-gradient(135deg, #f5af19 0%, #f12711 100%);
+
+  /* Glassmorphism */
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.3);
+  --glass-blur: 20px;
+
+  /* Glow effects */
+  --glow-blue: 0 0 40px rgba(59, 130, 246, 0.3);
+  --glow-green: 0 0 40px rgba(16, 185, 129, 0.3);
+  --glow-red: 0 0 40px rgba(239, 68, 68, 0.3);
+  --glow-purple: 0 0 40px rgba(139, 92, 246, 0.3);
 }
+
+/* Dark Mode */
+.dark {
+  --background: #030712;
+  --background-secondary: #0f172a;
+  --background-tertiary: #1e293b;
+  --foreground: #f8fafc;
+  --foreground-secondary: #cbd5e1;
+  --foreground-muted: #64748b;
+
+  --card: #0f172a;
+  --card-hover: #1e293b;
+  --card-border: #1e293b;
+
+  --primary: #60a5fa;
+  --primary-hover: #3b82f6;
+  --primary-light: #1e3a5f;
+  --primary-muted: #3b82f6;
+
+  --success: #34d399;
+  --success-light: #064e3b;
+  --success-muted: #10b981;
+
+  --danger: #f87171;
+  --danger-light: #450a0a;
+  --danger-muted: #ef4444;
+
+  --warning: #fbbf24;
+  --warning-light: #451a03;
+  --warning-muted: #f59e0b;
+
+  --info: #22d3ee;
+  --info-light: #083344;
+  --info-muted: #06b6d4;
+
+  --purple: #a78bfa;
+  --purple-light: #2e1065;
+  --purple-muted: #8b5cf6;
+
+  --border: #1e293b;
+  --border-light: #334155;
+  --ring: #60a5fa;
+
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+  --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.4), 0 4px 6px -4px rgb(0 0 0 / 0.4);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.4), 0 8px 10px -6px rgb(0 0 0 / 0.4);
+
+  /* Glassmorphism - Dark */
+  --glass-bg: rgba(15, 23, 42, 0.8);
+  --glass-border: rgba(255, 255, 255, 0.1);
+
+  /* Glow effects - Dark (stronger) */
+  --glow-blue: 0 0 60px rgba(59, 130, 246, 0.4);
+  --glow-green: 0 0 60px rgba(16, 185, 129, 0.4);
+  --glow-red: 0 0 60px rgba(239, 68, 68, 0.4);
+  --glow-purple: 0 0 60px rgba(139, 92, 246, 0.4);
+}
+
+/* ============================================================
+   TAILWIND THEME INTEGRATION
+   ============================================================ */
 
 @theme inline {
   --color-background: var(--background);
+  --color-background-secondary: var(--background-secondary);
+  --color-background-tertiary: var(--background-tertiary);
   --color-foreground: var(--foreground);
+  --color-foreground-secondary: var(--foreground-secondary);
+  --color-foreground-muted: var(--foreground-muted);
+
+  --color-card: var(--card);
+  --color-card-hover: var(--card-hover);
+  --color-card-border: var(--card-border);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-light: var(--primary-light);
+
+  --color-success: var(--success);
+  --color-success-light: var(--success-light);
+
+  --color-danger: var(--danger);
+  --color-danger-light: var(--danger-light);
+
+  --color-warning: var(--warning);
+  --color-warning-light: var(--warning-light);
+
+  --color-info: var(--info);
+  --color-info-light: var(--info-light);
+
+  --color-purple: var(--purple);
+  --color-purple-light: var(--purple-light);
+
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ============================================================
+   BASE STYLES
+   ============================================================ */
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  transition: background-color 0.3s ease, color 0.3s ease;
+  overflow-x: hidden;
+}
+
+/* ============================================================
+   GLASSMORPHISM COMPONENTS
+   ============================================================ */
+
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+}
+
+.glass-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  border-radius: 1.5rem;
+  box-shadow: var(--shadow-lg);
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-xl), var(--glow-blue);
+}
+
+/* ============================================================
+   PREMIUM CARD STYLES
+   ============================================================ */
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 1rem;
+  box-shadow: var(--shadow);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+.card-premium {
+  background: linear-gradient(135deg, var(--card) 0%, var(--background-secondary) 100%);
+  border: 1px solid var(--card-border);
+  border-radius: 1.5rem;
+  box-shadow: var(--shadow-md);
+  position: relative;
+  overflow: hidden;
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-premium::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+  transition: left 0.5s ease;
+}
+
+.card-premium:hover::before {
+  left: 100%;
+}
+
+.card-premium:hover {
+  transform: translateY(-4px) scale(1.01);
+  box-shadow: var(--shadow-xl);
+}
+
+/* Glow variants */
+.card-glow-blue:hover {
+  box-shadow: var(--shadow-xl), var(--glow-blue);
+}
+
+.card-glow-green:hover {
+  box-shadow: var(--shadow-xl), var(--glow-green);
+}
+
+.card-glow-red:hover {
+  box-shadow: var(--shadow-xl), var(--glow-red);
+}
+
+.card-glow-purple:hover {
+  box-shadow: var(--shadow-xl), var(--glow-purple);
+}
+
+/* ============================================================
+   GRADIENT BACKGROUNDS
+   ============================================================ */
+
+.bg-gradient-mesh {
+  background:
+    radial-gradient(at 40% 20%, rgba(59, 130, 246, 0.15) 0px, transparent 50%),
+    radial-gradient(at 80% 0%, rgba(139, 92, 246, 0.15) 0px, transparent 50%),
+    radial-gradient(at 0% 50%, rgba(16, 185, 129, 0.1) 0px, transparent 50%),
+    radial-gradient(at 80% 50%, rgba(236, 72, 153, 0.1) 0px, transparent 50%),
+    radial-gradient(at 0% 100%, rgba(59, 130, 246, 0.1) 0px, transparent 50%),
+    var(--background);
+}
+
+.bg-gradient-premium {
+  background: linear-gradient(135deg, var(--background) 0%, var(--background-secondary) 50%, var(--background) 100%);
+}
+
+.bg-noise {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  opacity: 0.03;
+}
+
+/* ============================================================
+   PREMIUM BUTTONS
+   ============================================================ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-weight: 500;
+  border-radius: 0.75rem;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.btn::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  transition: width 0.4s ease, height 0.4s ease;
+}
+
+.btn:active::before {
+  width: 300px;
+  height: 300px;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+.btn-primary {
+  background: var(--gradient-primary);
+  color: white;
+  box-shadow: 0 4px 14px 0 rgba(59, 130, 246, 0.3);
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px 0 rgba(59, 130, 246, 0.4);
+}
+
+.btn-secondary {
+  background: var(--background-tertiary);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--card-hover);
+  transform: translateY(-1px);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--foreground-secondary);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--background-secondary);
+  color: var(--foreground);
+}
+
+.btn-glow {
+  background: var(--gradient-primary);
+  color: white;
+  box-shadow: var(--glow-blue);
+  animation: pulse-glow 2s infinite;
+}
+
+@keyframes pulse-glow {
+
+  0%,
+  100% {
+    box-shadow: var(--glow-blue);
+  }
+
+  50% {
+    box-shadow: 0 0 60px rgba(59, 130, 246, 0.6);
+  }
+}
+
+/* ============================================================
+   INPUT STYLES
+   ============================================================ */
+
+.input {
+  background: var(--background-secondary);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  color: var(--foreground);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-light), var(--glow-blue);
+}
+
+.input::placeholder {
+  color: var(--foreground-muted);
+}
+
+.input-premium {
+  background: var(--glass-bg);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-border);
+  border-radius: 1rem;
+}
+
+/* ============================================================
+   PREMIUM ANIMATIONS
+   ============================================================ */
+
+/* Fade In Up */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Fade In Down */
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Fade In Left */
+@keyframes fadeInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Fade In Right */
+@keyframes fadeInRight {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Scale In */
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Slide In */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Float */
+@keyframes float {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+/* Pulse */
+@keyframes pulse {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Shimmer */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* Spin slow */
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Gradient shift */
+@keyframes gradient-shift {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Bounce subtle */
+@keyframes bounce-subtle {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+/* Glow pulse */
+@keyframes glow-pulse {
+
+  0%,
+  100% {
+    box-shadow: var(--glow-blue);
+  }
+
+  50% {
+    box-shadow: 0 0 80px rgba(59, 130, 246, 0.6);
+  }
+}
+
+/* Animation utilities */
+.animate-fade-in {
+  animation: fadeInUp 0.3s ease-out forwards;
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.5s ease-out forwards;
+}
+
+.animate-fade-in-down {
+  animation: fadeInDown 0.5s ease-out forwards;
+}
+
+.animate-fade-in-left {
+  animation: fadeInLeft 0.5s ease-out forwards;
+}
+
+.animate-fade-in-right {
+  animation: fadeInRight 0.5s ease-out forwards;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.4s ease-out forwards;
+}
+
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 8s linear infinite;
+}
+
+.animate-gradient {
+  animation: gradient-shift 3s ease infinite;
+  background-size: 200% 200%;
+}
+
+.animate-bounce-subtle {
+  animation: bounce-subtle 2s ease-in-out infinite;
+}
+
+.animate-glow {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+/* Shimmer for progress bars */
+@keyframes shimmer-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(200%);
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer-bar 2s infinite;
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg,
+      var(--background-secondary) 0%,
+      var(--background-tertiary) 50%,
+      var(--background-secondary) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* Stagger delays for children */
+.stagger-children>*:nth-child(1) {
+  animation-delay: 0.05s;
+}
+
+.stagger-children>*:nth-child(2) {
+  animation-delay: 0.1s;
+}
+
+.stagger-children>*:nth-child(3) {
+  animation-delay: 0.15s;
+}
+
+.stagger-children>*:nth-child(4) {
+  animation-delay: 0.2s;
+}
+
+.stagger-children>*:nth-child(5) {
+  animation-delay: 0.25s;
+}
+
+.stagger-children>*:nth-child(6) {
+  animation-delay: 0.3s;
+}
+
+.stagger-children>*:nth-child(7) {
+  animation-delay: 0.35s;
+}
+
+.stagger-children>*:nth-child(8) {
+  animation-delay: 0.4s;
+}
+
+.stagger-children>* {
+  opacity: 0;
+  animation-fill-mode: forwards;
+}
+
+/* ============================================================
+   GRADIENT TEXT
+   ============================================================ */
+
+.text-gradient {
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.text-gradient-gold {
+  background: var(--gradient-gold);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.text-gradient-success {
+  background: var(--gradient-success);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ============================================================
+   BADGE STYLES
+   ============================================================ */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 0.5rem;
+  transition: all 0.2s ease;
+}
+
+.badge-success {
+  background: var(--success-light);
+  color: var(--success);
+}
+
+.badge-danger {
+  background: var(--danger-light);
+  color: var(--danger);
+}
+
+.badge-warning {
+  background: var(--warning-light);
+  color: var(--warning);
+}
+
+.badge-info {
+  background: var(--info-light);
+  color: var(--info);
+}
+
+.badge-purple {
+  background: var(--purple-light);
+  color: var(--purple);
+}
+
+.badge-glow {
+  box-shadow: 0 0 20px currentColor;
+}
+
+/* ============================================================
+   SCROLLBAR STYLING
+   ============================================================ */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--foreground-muted);
+}
+
+/* ============================================================
+   FOCUS & SELECTION STYLES
+   ============================================================ */
+
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--primary);
+  color: white;
+}
+
+/* ============================================================
+   LOADING SKELETON
+   ============================================================ */
+
+.skeleton {
+  background: linear-gradient(90deg,
+      var(--background-secondary) 0%,
+      var(--background-tertiary) 50%,
+      var(--background-secondary) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 0.5rem;
+}
+
+.skeleton-text {
+  height: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.skeleton-title {
+  height: 1.5rem;
+  width: 60%;
+  margin-bottom: 0.75rem;
+}
+
+.skeleton-avatar {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+}
+
+.skeleton-card {
+  height: 8rem;
+  border-radius: 1rem;
+}
+
+/* ============================================================
+   TABLE STYLES
+   ============================================================ */
+
+.table-header {
+  background: var(--background-secondary);
+  color: var(--foreground-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.table-row {
+  border-bottom: 1px solid var(--border);
+  transition: all 0.2s ease;
+}
+
+.table-row:hover {
+  background: var(--card-hover);
+  transform: scale(1.005);
+}
+
+/* ============================================================
+   HOVER EFFECTS
+   ============================================================ */
+
+.hover-lift {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+}
+
+.hover-scale {
+  transition: transform 0.2s ease;
+}
+
+.hover-scale:hover {
+  transform: scale(1.02);
+}
+
+.hover-glow {
+  transition: box-shadow 0.3s ease;
+}
+
+.hover-glow:hover {
+  box-shadow: var(--glow-blue);
+}
+
+/* ============================================================
+   DECORATIVE ELEMENTS
+   ============================================================ */
+
+.gradient-border {
+  position: relative;
+  background: var(--card);
+  border-radius: 1rem;
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  background: var(--gradient-primary);
+  border-radius: inherit;
+  z-index: -1;
+  opacity: 0.5;
+  transition: opacity 0.3s ease;
+}
+
+.gradient-border:hover::before {
+  opacity: 1;
+}
+
+/* Animated border */
+.animated-border {
+  position: relative;
+  overflow: hidden;
+}
+
+.animated-border::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: conic-gradient(from 0deg,
+      transparent,
+      var(--primary),
+      transparent 30%);
+  animation: spin-slow 4s linear infinite;
+  z-index: -1;
+}
+
+.animated-border::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  background: var(--card);
+  border-radius: inherit;
+  z-index: -1;
+}
+
+/* ============================================================
+   PAGE TRANSITION
+   ============================================================ */
+
+.page-enter {
+  opacity: 0;
+  transform: translateY(20px);
+}
+
+.page-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: all 0.4s ease-out;
+}
+
+.page-exit {
+  opacity: 1;
+}
+
+.page-exit-active {
+  opacity: 0;
+  transition: opacity 0.2s ease-in;
 }

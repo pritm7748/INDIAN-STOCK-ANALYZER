@@ -5,6 +5,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/components/auth/AuthProvider";
 import { NotificationProvider } from "@/components/notifications/NotificationProvider";
+import { ThemeProvider } from "@/components/theme/ThemeProvider";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -19,13 +20,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className="dark" suppressHydrationWarning>
       <body className={inter.className}>
-        <AuthProvider>
-          <NotificationProvider>
-            {children}
-          </NotificationProvider>
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <NotificationProvider>
+              {children}
+            </NotificationProvider>
+          </AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

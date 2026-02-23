@@ -32,83 +32,83 @@ interface AlertFormProps {
 }
 
 const ALERT_TYPES = [
-  { 
-    id: 'price_above', 
-    indicator: 'price', 
+  {
+    id: 'price_above',
+    indicator: 'price',
     operator: 'above',
-    label: 'Price Above', 
+    label: 'Price Above',
     description: 'Trigger when price goes above a value',
     icon: TrendingUp,
     color: 'emerald'
   },
-  { 
-    id: 'price_below', 
-    indicator: 'price', 
+  {
+    id: 'price_below',
+    indicator: 'price',
     operator: 'below',
-    label: 'Price Below', 
+    label: 'Price Below',
     description: 'Trigger when price goes below a value',
     icon: TrendingDown,
     color: 'rose'
   },
-  { 
-    id: 'rsi_above', 
-    indicator: 'rsi', 
+  {
+    id: 'rsi_above',
+    indicator: 'rsi',
     operator: 'above',
-    label: 'RSI Overbought', 
+    label: 'RSI Overbought',
     description: 'Trigger when RSI goes above a level (e.g., 70)',
     icon: Activity,
     color: 'orange'
   },
-  { 
-    id: 'rsi_below', 
-    indicator: 'rsi', 
+  {
+    id: 'rsi_below',
+    indicator: 'rsi',
     operator: 'below',
-    label: 'RSI Oversold', 
+    label: 'RSI Oversold',
     description: 'Trigger when RSI goes below a level (e.g., 30)',
     icon: Activity,
     color: 'cyan'
   },
-  { 
-    id: 'score_above', 
-    indicator: 'score', 
+  {
+    id: 'score_above',
+    indicator: 'score',
     operator: 'above',
-    label: 'AI Score Above', 
+    label: 'AI Score Above',
     description: 'Trigger when AI score goes above a value',
     icon: BarChart2,
     color: 'purple'
   },
-  { 
-    id: 'score_below', 
-    indicator: 'score', 
+  {
+    id: 'score_below',
+    indicator: 'score',
     operator: 'below',
-    label: 'AI Score Below', 
+    label: 'AI Score Below',
     description: 'Trigger when AI score goes below a value',
     icon: BarChart2,
     color: 'yellow'
   },
-  { 
-    id: 'volume_spike', 
-    indicator: 'volume', 
+  {
+    id: 'volume_spike',
+    indicator: 'volume',
     operator: 'above',
-    label: 'Volume Spike', 
+    label: 'Volume Spike',
     description: 'Trigger when volume is X times above average',
     icon: Volume2,
     color: 'blue'
   },
-  { 
-    id: 'golden_cross', 
-    indicator: 'sma_cross', 
+  {
+    id: 'golden_cross',
+    indicator: 'sma_cross',
     operator: 'crosses_above',
-    label: 'Golden Cross', 
+    label: 'Golden Cross',
     description: 'Trigger when SMA50 crosses above SMA200',
     icon: ArrowUpCircle,
     color: 'emerald'
   },
-  { 
-    id: 'death_cross', 
-    indicator: 'sma_cross', 
+  {
+    id: 'death_cross',
+    indicator: 'sma_cross',
     operator: 'crosses_below',
-    label: 'Death Cross', 
+    label: 'Death Cross',
     description: 'Trigger when SMA50 crosses below SMA200',
     icon: ArrowUpCircle,
     color: 'rose'
@@ -122,12 +122,12 @@ const NOTIFICATION_CHANNELS = [
   { id: 'telegram', label: 'Telegram', icon: MessageCircle, available: false, comingSoon: true },
 ]
 
-export function AlertForm({ 
-  isOpen, 
-  onClose, 
-  onSubmit, 
+export function AlertForm({
+  isOpen,
+  onClose,
+  onSubmit,
   editingAlert,
-  defaultSymbol 
+  defaultSymbol
 }: AlertFormProps) {
   const [step, setStep] = useState<'type' | 'details'>('type')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -149,7 +149,7 @@ export function AlertForm({
       if (editingAlert) {
         // Populate form with existing alert data
         const condition = editingAlert.condition as unknown as AlertCondition
-        const alertType = ALERT_TYPES.find(t => 
+        const alertType = ALERT_TYPES.find(t =>
           t.indicator === condition.indicator && t.operator === condition.operator
         )
         setSelectedType(alertType || null)
@@ -218,7 +218,7 @@ export function AlertForm({
 
     try {
       const stockData = STOCK_LIST.find(s => s.symbol === symbol)
-      
+
       // Calculate expiry date
       let expiresAt: string | undefined
       if (expiresIn !== 'never') {
@@ -273,31 +273,31 @@ export function AlertForm({
   return (
     <>
       {/* Backdrop */}
-      <div 
+      <div
         className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
         onClick={onClose}
       />
-      
+
       {/* Modal */}
-      <div className="fixed inset-x-4 top-[5%] z-50 mx-auto max-w-lg max-h-[90vh] overflow-y-auto bg-[#0A0A0A] border border-white/10 rounded-2xl shadow-2xl">
+      <div className="fixed inset-x-4 top-[5%] z-50 mx-auto max-w-lg max-h-[90vh] overflow-y-auto bg-[var(--background)] border border-[var(--border)] rounded-2xl shadow-2xl">
         {/* Header */}
-        <div className="sticky top-0 z-10 flex items-center justify-between p-4 border-b border-white/5 bg-[#0A0A0A]">
+        <div className="sticky top-0 z-10 flex items-center justify-between p-4 border-b border-[var(--border)] bg-[var(--background)]">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-blue-500/20 rounded-xl">
               <Bell size={20} className="text-blue-400" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-white">
+              <h2 className="text-lg font-semibold text-[var(--foreground)]">
                 {editingAlert ? 'Edit Alert' : 'Create Alert'}
               </h2>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-[var(--foreground-muted)]">
                 {step === 'type' ? 'Choose alert type' : 'Configure alert'}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-lg hover:bg-white/5 text-gray-400 hover:text-white transition-colors"
+            className="p-2 rounded-lg hover:bg-[var(--card-hover)] text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-colors"
           >
             <X size={20} />
           </button>
@@ -319,14 +319,14 @@ export function AlertForm({
                 <button
                   key={type.id}
                   onClick={() => handleTypeSelect(type)}
-                  className="flex items-center gap-4 w-full p-4 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 rounded-xl transition-all text-left"
+                  className="flex items-center gap-4 w-full p-4 bg-[var(--card)] hover:bg-[var(--card-hover)] border border-[var(--card-border)] hover:border-[var(--border-light)] rounded-xl transition-all text-left"
                 >
                   <div className={`p-2.5 rounded-xl bg-${type.color}-500/20`}>
                     <Icon size={20} className={`text-${type.color}-400`} />
                   </div>
                   <div className="flex-1">
-                    <p className="font-medium text-white">{type.label}</p>
-                    <p className="text-xs text-gray-500">{type.description}</p>
+                    <p className="font-medium text-[var(--foreground)]">{type.label}</p>
+                    <p className="text-xs text-[var(--foreground-muted)]">{type.description}</p>
                   </div>
                 </button>
               )
@@ -342,21 +342,21 @@ export function AlertForm({
               <button
                 type="button"
                 onClick={() => setStep('type')}
-                className="text-sm text-gray-400 hover:text-white transition-colors"
+                className="text-sm text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-colors"
               >
                 ← Back to alert types
               </button>
             )}
 
             {/* Selected type badge */}
-            <div className="flex items-center gap-2 p-3 bg-white/5 rounded-xl">
+            <div className="flex items-center gap-2 p-3 bg-[var(--card)] rounded-xl">
               <selectedType.icon size={18} className={`text-${selectedType.color}-400`} />
-              <span className="text-sm font-medium text-white">{selectedType.label}</span>
+              <span className="text-sm font-medium text-[var(--foreground)]">{selectedType.label}</span>
             </div>
 
             {/* Symbol Selection */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
+              <label className="block text-sm font-medium text-[var(--foreground-secondary)] mb-2">
                 Stock Symbol *
               </label>
               <div className="relative">
@@ -370,33 +370,33 @@ export function AlertForm({
                   }}
                   onFocus={() => setShowSymbolDropdown(true)}
                   placeholder="Search for a stock..."
-                  className="w-full pl-10 pr-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full pl-10 pr-4 py-3 bg-[var(--card)] border border-[var(--border)] rounded-xl text-[var(--foreground)] placeholder-[var(--foreground-muted)] focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
 
                 {/* Dropdown */}
                 {showSymbolDropdown && symbolSearch && (
-                  <div className="absolute z-20 w-full mt-1 max-h-60 overflow-y-auto bg-[#0A0A0A] border border-white/10 rounded-xl shadow-xl">
+                  <div className="absolute z-20 w-full mt-1 max-h-60 overflow-y-auto bg-[var(--background)] border border-[var(--border)] rounded-xl shadow-xl">
                     {filteredStocks.length > 0 ? (
                       filteredStocks.map((stock) => (
                         <button
                           key={stock.symbol}
                           type="button"
                           onClick={() => handleSymbolSelect(stock.symbol, stock.name)}
-                          className="flex items-center justify-between w-full px-4 py-3 hover:bg-white/5 transition-colors"
+                          className="flex items-center justify-between w-full px-4 py-3 hover:bg-[var(--card-hover)] transition-colors"
                         >
                           <div>
-                            <p className="font-medium text-white">{stock.symbol.replace('.NS', '')}</p>
-                            <p className="text-xs text-gray-500">{stock.name}</p>
+                            <p className="font-medium text-[var(--foreground)]">{stock.symbol.replace('.NS', '')}</p>
+                            <p className="text-xs text-[var(--foreground-muted)]">{stock.name}</p>
                           </div>
                           {stock.sector && (
-                            <span className="text-[10px] px-2 py-0.5 bg-white/5 text-gray-400 rounded">
+                            <span className="text-[10px] px-2 py-0.5 bg-[var(--card)] text-[var(--foreground-muted)] rounded">
                               {stock.sector}
                             </span>
                           )}
                         </button>
                       ))
                     ) : (
-                      <p className="px-4 py-3 text-sm text-gray-500">No stocks found</p>
+                      <p className="px-4 py-3 text-sm text-[var(--foreground-muted)]">No stocks found</p>
                     )}
                   </div>
                 )}
@@ -406,7 +406,7 @@ export function AlertForm({
             {/* Value Input */}
             {selectedType.indicator !== 'sma_cross' && (
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
+                <label className="block text-sm font-medium text-[var(--foreground-secondary)] mb-2">
                   {getValueLabel()} *
                 </label>
                 <input
@@ -417,11 +417,11 @@ export function AlertForm({
                   min={0}
                   max={selectedType.indicator === 'rsi' || selectedType.indicator === 'score' ? 100 : undefined}
                   placeholder={`Enter ${selectedType.indicator} value`}
-                  className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-3 bg-[var(--card)] border border-[var(--border)] rounded-xl text-[var(--foreground)] placeholder-[var(--foreground-muted)] focus:outline-none focus:ring-2 focus:ring-blue-500"
                   required
                 />
                 {selectedType.indicator === 'rsi' && (
-                  <p className="mt-1 text-xs text-gray-500">
+                  <p className="mt-1 text-xs text-[var(--foreground-muted)]">
                     Typical: Overbought &gt; 70, Oversold &lt; 30
                   </p>
                 )}
@@ -430,7 +430,7 @@ export function AlertForm({
 
             {/* Notification Channels */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
+              <label className="block text-sm font-medium text-[var(--foreground-secondary)] mb-2">
                 Notification Channels
               </label>
               <div className="grid grid-cols-2 gap-2">
@@ -440,25 +440,24 @@ export function AlertForm({
                     type="button"
                     onClick={() => {
                       if (!channel.available) return
-                      setChannels(prev => 
+                      setChannels(prev =>
                         prev.includes(channel.id)
                           ? prev.filter(c => c !== channel.id)
                           : [...prev, channel.id]
                       )
                     }}
                     disabled={!channel.available}
-                    className={`flex items-center gap-2 p-3 rounded-xl border transition-all ${
-                      channels.includes(channel.id)
+                    className={`flex items-center gap-2 p-3 rounded-xl border transition-all ${channels.includes(channel.id)
                         ? 'bg-blue-500/20 border-blue-500/30 text-blue-400'
                         : channel.available
-                        ? 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
-                        : 'bg-white/5 border-white/5 text-gray-600 cursor-not-allowed'
-                    }`}
+                          ? 'bg-[var(--card)] border-[var(--border)] text-[var(--foreground-muted)] hover:bg-[var(--card-hover)]'
+                          : 'bg-[var(--card)] border-[var(--card-border)] text-[var(--foreground-muted)] opacity-50 cursor-not-allowed'
+                      }`}
                   >
                     <channel.icon size={16} />
                     <span className="text-sm">{channel.label}</span>
                     {channel.comingSoon && (
-                      <span className="text-[10px] px-1.5 py-0.5 bg-white/10 rounded">Soon</span>
+                      <span className="text-[10px] px-1.5 py-0.5 bg-[var(--card-hover)] rounded">Soon</span>
                     )}
                   </button>
                 ))}
@@ -469,29 +468,27 @@ export function AlertForm({
             <div className="grid grid-cols-2 gap-4">
               {/* Recurring */}
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
+                <label className="block text-sm font-medium text-[var(--foreground-secondary)] mb-2">
                   Alert Type
                 </label>
                 <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={() => setIsRecurring(false)}
-                    className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-all ${
-                      !isRecurring
+                    className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-all ${!isRecurring
                         ? 'bg-blue-500/20 border-blue-500/30 text-blue-400'
-                        : 'bg-white/5 border-white/10 text-gray-400'
-                    }`}
+                        : 'bg-[var(--card)] border-[var(--border)] text-[var(--foreground-muted)]'
+                      }`}
                   >
                     One-time
                   </button>
                   <button
                     type="button"
                     onClick={() => setIsRecurring(true)}
-                    className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-all ${
-                      isRecurring
+                    className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-all ${isRecurring
                         ? 'bg-blue-500/20 border-blue-500/30 text-blue-400'
-                        : 'bg-white/5 border-white/10 text-gray-400'
-                    }`}
+                        : 'bg-[var(--card)] border-[var(--border)] text-[var(--foreground-muted)]'
+                      }`}
                   >
                     Recurring
                   </button>
@@ -500,13 +497,13 @@ export function AlertForm({
 
               {/* Expiry */}
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
+                <label className="block text-sm font-medium text-[var(--foreground-secondary)] mb-2">
                   Expires In
                 </label>
                 <select
                   value={expiresIn}
                   onChange={(e) => setExpiresIn(e.target.value)}
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 [&>option]:bg-slate-900"
+                  className="w-full px-3 py-2 bg-[var(--card)] border border-[var(--border)] rounded-lg text-[var(--foreground)] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 [&>option]:bg-[var(--background)]"
                 >
                   <option value="never">Never</option>
                   <option value="1d">1 Day</option>
@@ -521,7 +518,7 @@ export function AlertForm({
             <div className="flex items-start gap-2 p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl">
               <Info size={16} className="text-blue-400 shrink-0 mt-0.5" />
               <p className="text-xs text-blue-300">
-                {isRecurring 
+                {isRecurring
                   ? 'Recurring alerts will re-arm automatically after being triggered.'
                   : 'One-time alerts will be disabled after being triggered once.'}
               </p>
@@ -531,7 +528,7 @@ export function AlertForm({
             <button
               type="submit"
               disabled={isSubmitting || !symbol || (!value && selectedType.indicator !== 'sma_cross')}
-              className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-colors"
+              className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-[var(--primary)] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-colors"
             >
               {isSubmitting ? (
                 <>

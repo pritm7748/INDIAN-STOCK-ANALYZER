@@ -4,15 +4,14 @@
 import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import { useUser } from '@/lib/hooks/useUser'
-import { 
-  User, 
-  Settings, 
-  LogOut, 
+import {
+  User,
+  Settings,
+  LogOut,
   ChevronDown,
   CreditCard,
   Bell,
-  Moon,
-  HelpCircle
+  Moon
 } from 'lucide-react'
 
 export function UserMenu() {
@@ -46,7 +45,7 @@ export function UserMenu() {
       <div className="flex items-center gap-2">
         <Link
           href="/login"
-          className="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white transition-colors"
+          className="px-4 py-2 text-sm font-medium text-[var(--foreground-secondary)] hover:text-[var(--foreground)] transition-colors"
         >
           Sign in
         </Link>
@@ -65,14 +64,13 @@ export function UserMenu() {
     { name: 'Notifications', href: '/dashboard/settings/notifications', icon: Bell },
     { name: 'Appearance', href: '/dashboard/settings/appearance', icon: Moon },
     { name: 'Settings', href: '/dashboard/settings', icon: Settings },
-    { name: 'Help', href: '/dashboard/help', icon: HelpCircle },
   ]
 
   return (
     <div className="relative" ref={menuRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 p-1.5 rounded-xl hover:bg-white/5 transition-colors"
+        className="flex items-center gap-2 p-1.5 rounded-xl hover:bg-[var(--card-hover)] transition-colors"
       >
         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-medium text-sm overflow-hidden">
           {avatarUrl ? (
@@ -81,14 +79,14 @@ export function UserMenu() {
             fullName?.charAt(0)?.toUpperCase() || email?.charAt(0)?.toUpperCase() || 'U'
           )}
         </div>
-        <ChevronDown size={16} className={`text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown size={16} className={`text-[var(--foreground-muted)] transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-64 bg-[#0A0A0A] border border-white/10 rounded-xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+        <div className="absolute right-0 mt-2 w-64 bg-[var(--background)] border border-[var(--border)] rounded-xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
           {/* User Info */}
-          <div className="p-4 border-b border-white/5">
+          <div className="p-4 border-b border-[var(--border)]">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-medium overflow-hidden">
                 {avatarUrl ? (
@@ -98,8 +96,8 @@ export function UserMenu() {
                 )}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-white truncate">{fullName || 'User'}</p>
-                <p className="text-sm text-gray-500 truncate">{email}</p>
+                <p className="font-medium text-[var(--foreground)] truncate">{fullName || 'User'}</p>
+                <p className="text-sm text-[var(--foreground-muted)] truncate">{email}</p>
               </div>
             </div>
           </div>
@@ -111,7 +109,7 @@ export function UserMenu() {
                 key={item.name}
                 href={item.href}
                 onClick={() => setIsOpen(false)}
-                className="flex items-center gap-3 px-4 py-2.5 text-gray-400 hover:bg-white/5 hover:text-white transition-colors"
+                className="flex items-center gap-3 px-4 py-2.5 text-[var(--foreground-muted)] hover:bg-[var(--card-hover)] hover:text-[var(--foreground)] transition-colors"
               >
                 <item.icon size={18} />
                 <span>{item.name}</span>
@@ -120,13 +118,13 @@ export function UserMenu() {
           </div>
 
           {/* Sign Out */}
-          <div className="border-t border-white/5 py-2">
+          <div className="border-t border-[var(--border)] py-2">
             <button
               onClick={() => {
                 signOut()
                 setIsOpen(false)
               }}
-              className="flex items-center gap-3 w-full px-4 py-2.5 text-gray-400 hover:bg-white/5 hover:text-white transition-colors"
+              className="flex items-center gap-3 w-full px-4 py-2.5 text-[var(--foreground-muted)] hover:bg-[var(--card-hover)] hover:text-[var(--foreground)] transition-colors"
             >
               <LogOut size={18} />
               <span>Sign out</span>

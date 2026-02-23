@@ -9,13 +9,13 @@ import { createClient } from '@/lib/supabase/client'
 import { useUser } from '@/lib/hooks/useUser'
 import { useWatchlist } from '@/lib/hooks/useWatchlists'
 import { STOCK_LIST } from '@/lib/stockList'
-import { 
-  ArrowLeft, 
-  ArrowUp, 
+import {
+  ArrowLeft,
+  ArrowUp,
   ArrowDown,
-  Trash2, 
-  Edit3, 
-  Plus, 
+  Trash2,
+  Edit3,
+  Plus,
   Search,
   TrendingUp,
   BarChart2,
@@ -63,12 +63,12 @@ const COLORS = [
   '#6366F1', // Indigo
 ]
 
-function ColorPicker({ 
-  selected, 
-  onChange 
-}: { 
+function ColorPicker({
+  selected,
+  onChange
+}: {
   selected: string
-  onChange: (color: string) => void 
+  onChange: (color: string) => void
 }) {
   return (
     <div className="flex flex-wrap gap-2">
@@ -76,11 +76,10 @@ function ColorPicker({
         <button
           key={color}
           onClick={() => onChange(color)}
-          className={`w-8 h-8 rounded-full transition-all ${
-            selected === color 
-              ? 'ring-2 ring-offset-2 ring-offset-[#0A0A0A] ring-white scale-110' 
+          className={`w-8 h-8 rounded-full transition-all ${selected === color
+              ? 'ring-2 ring-offset-2 ring-offset-[#0A0A0A] ring-white scale-110'
               : 'hover:scale-110'
-          }`}
+            }`}
           style={{ backgroundColor: color }}
         />
       ))}
@@ -108,7 +107,7 @@ function AddStockModal({
 
   const filteredStocks = STOCK_LIST.filter(stock => {
     const query = search.toLowerCase()
-    const matchesSearch = 
+    const matchesSearch =
       stock.symbol.toLowerCase().includes(query) ||
       stock.name.toLowerCase().includes(query) ||
       stock.sector?.toLowerCase().includes(query)
@@ -130,26 +129,26 @@ function AddStockModal({
   return (
     <>
       {/* Backdrop */}
-      <div 
+      <div
         className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
         onClick={onClose}
       />
-      
+
       {/* Modal */}
-      <div className="fixed inset-x-4 top-[10%] z-50 mx-auto max-w-lg bg-[#0A0A0A] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+      <div className="fixed inset-x-4 top-[10%] z-50 mx-auto max-w-lg bg-[var(--background)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-white/5">
-          <h2 className="text-lg font-semibold text-white">Add Stock</h2>
+        <div className="flex items-center justify-between p-4 border-b border-[var(--border)]">
+          <h2 className="text-lg font-semibold text-[var(--foreground)]">Add Stock</h2>
           <button
             onClick={onClose}
-            className="p-2 rounded-lg hover:bg-white/5 text-gray-400 hover:text-white transition-colors"
+            className="p-2 rounded-lg hover:bg-[var(--card-hover)] text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-colors"
           >
             <X size={20} />
           </button>
         </div>
 
         {/* Search */}
-        <div className="p-4 border-b border-white/5">
+        <div className="p-4 border-b border-[var(--border)]">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
             <input
@@ -251,19 +250,19 @@ function NotesModal({
 
   return (
     <>
-      <div 
+      <div
         className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
         onClick={onClose}
       />
-      
-      <div className="fixed inset-x-4 top-[20%] z-50 mx-auto max-w-md bg-[#0A0A0A] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
-        <div className="flex items-center justify-between p-4 border-b border-white/5">
-          <h2 className="text-lg font-semibold text-white">
+
+      <div className="fixed inset-x-4 top-[20%] z-50 mx-auto max-w-md bg-[var(--background)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between p-4 border-b border-[var(--border)]">
+          <h2 className="text-lg font-semibold text-[var(--foreground)]">
             Notes for {stockSymbol.replace('.NS', '')}
           </h2>
           <button
             onClick={onClose}
-            className="p-2 rounded-lg hover:bg-white/5 text-gray-400 hover:text-white transition-colors"
+            className="p-2 rounded-lg hover:bg-[var(--card-hover)] text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-colors"
           >
             <X size={20} />
           </button>
@@ -275,7 +274,7 @@ function NotesModal({
             onChange={(e) => setNotes(e.target.value)}
             placeholder="Add your notes about this stock..."
             rows={5}
-            className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+            className="w-full px-4 py-3 bg-[var(--card)] border border-[var(--border)] rounded-xl text-[var(--foreground)] placeholder-[var(--foreground-muted)] focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
           />
         </div>
 
@@ -312,18 +311,18 @@ export default function WatchlistPage() {
   const params = useParams()
   const router = useRouter()
   const watchlistId = params.id as string
-  
+
   const { userId } = useUser()
-  const { 
-    watchlist, 
-    isLoading, 
-    error, 
-    addStock, 
-    removeStock, 
+  const {
+    watchlist,
+    isLoading,
+    error,
+    addStock,
+    removeStock,
     updateStockNotes,
-    fetchWatchlist 
+    fetchWatchlist
   } = useWatchlist(watchlistId)
-  
+
   const supabase = createClient()
 
   // UI State
@@ -335,7 +334,7 @@ export default function WatchlistPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
   const [notesModal, setNotesModal] = useState<{ itemId: string; symbol: string; notes: string } | null>(null)
-  
+
   // Price State
   const [prices, setPrices] = useState<Record<string, StockPrice>>({})
   const [loadingPrices, setLoadingPrices] = useState(false)
@@ -348,70 +347,70 @@ export default function WatchlistPage() {
     }
   }, [watchlist])
 
-// ============================================================
-// PRICE FETCHING
-// ============================================================
+  // ============================================================
+  // PRICE FETCHING
+  // ============================================================
 
-const fetchPrices = useCallback(async () => {
-  if (!watchlist?.items.length) return
+  const fetchPrices = useCallback(async () => {
+    if (!watchlist?.items.length) return
 
-  setLoadingPrices(true)
-  
-  // Initialize loading state for all symbols
-  const initialPrices: Record<string, StockPrice> = {}
-  watchlist.items.forEach(item => {
-    initialPrices[item.symbol] = {
-      symbol: item.symbol,
-      price: 0,
-      change: 0,
-      changePercent: 0,
-      loading: true,
-      error: false,
-    }
-  })
-  setPrices(initialPrices)
+    setLoadingPrices(true)
 
-  // Fetch prices one by one (to avoid rate limiting)
-  for (const item of watchlist.items) {
-    try {
-      const res = await fetch(`/api/quote?symbol=${item.symbol}`)
-      if (res.ok) {
-        const data = await res.json()
+    // Initialize loading state for all symbols
+    const initialPrices: Record<string, StockPrice> = {}
+    watchlist.items.forEach(item => {
+      initialPrices[item.symbol] = {
+        symbol: item.symbol,
+        price: 0,
+        change: 0,
+        changePercent: 0,
+        loading: true,
+        error: false,
+      }
+    })
+    setPrices(initialPrices)
+
+    // Fetch prices one by one (to avoid rate limiting)
+    for (const item of watchlist.items) {
+      try {
+        const res = await fetch(`/api/quote?symbol=${item.symbol}`)
+        if (res.ok) {
+          const data = await res.json()
+          setPrices(prev => ({
+            ...prev,
+            [item.symbol]: {
+              symbol: item.symbol,
+              price: data.price || 0,
+              change: data.change || 0,
+              changePercent: data.changePercent || 0,
+              loading: false,
+              error: false,
+            }
+          }))
+        } else {
+          throw new Error('Failed to fetch')
+        }
+      } catch {
         setPrices(prev => ({
           ...prev,
           [item.symbol]: {
-            symbol: item.symbol,
-            price: data.price || 0,
-            change: data.change || 0,
-            changePercent: data.changePercent || 0,
+            ...prev[item.symbol],
             loading: false,
-            error: false,
+            error: true,
           }
         }))
-      } else {
-        throw new Error('Failed to fetch')
       }
-    } catch {
-      setPrices(prev => ({
-        ...prev,
-        [item.symbol]: {
-          ...prev[item.symbol],
-          loading: false,
-          error: true,
-        }
-      }))
     }
-  }
 
-  setLoadingPrices(false)
-}, [watchlist?.items])
+    setLoadingPrices(false)
+  }, [watchlist?.items])
 
-// ✅ Auto-fetch prices when watchlist loads
-useEffect(() => {
-  if (watchlist?.items.length) {
-    fetchPrices()
-  }
-}, [watchlist?.items.length])
+  // ✅ Auto-fetch prices when watchlist loads
+  useEffect(() => {
+    if (watchlist?.items.length) {
+      fetchPrices()
+    }
+  }, [watchlist?.items.length])
 
   // ============================================================
   // HANDLERS
@@ -419,19 +418,19 @@ useEffect(() => {
 
   const handleSaveEdit = async () => {
     if (!editName.trim()) return
-    
+
     setIsSaving(true)
     try {
       const { error } = await supabase
         .from('watchlists')
-        .update({ 
+        .update({
           name: editName.trim(),
           color: editColor,
         })
         .eq('id', watchlistId)
 
       if (error) throw error
-      
+
       await fetchWatchlist()
       setIsEditing(false)
     } catch (err) {
@@ -458,7 +457,7 @@ useEffect(() => {
         .eq('id', watchlistId)
 
       if (error) throw error
-      
+
       router.push('/dashboard')
     } catch (err) {
       console.error('Failed to delete watchlist:', err)
@@ -482,7 +481,7 @@ useEffect(() => {
 
   const handleRemoveStock = async (itemId: string) => {
     if (!confirm('Remove this stock from your watchlist?')) return
-    
+
     try {
       await removeStock(itemId)
     } catch (err) {
@@ -493,7 +492,7 @@ useEffect(() => {
 
   const handleSaveNotes = async (notes: string) => {
     if (!notesModal) return
-    
+
     try {
       await updateStockNotes(notesModal.itemId, notes)
     } catch (err) {
@@ -580,7 +579,7 @@ useEffect(() => {
           >
             <ArrowLeft size={20} />
           </Link>
-          
+
           {isEditing ? (
             <div className="flex items-center gap-3">
               <div
@@ -675,7 +674,7 @@ useEffect(() => {
 
       {/* Color Picker (when editing) */}
       {isEditing && (
-        <div className="bg-[#0A0A0A] border border-white/5 rounded-xl p-4">
+        <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-4">
           <p className="text-sm text-gray-400 mb-3">Watchlist Color</p>
           <ColorPicker selected={editColor} onChange={setEditColor} />
         </div>
@@ -683,21 +682,21 @@ useEffect(() => {
 
       {/* Stats Bar */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="bg-[#0A0A0A] border border-white/5 rounded-xl p-4">
-          <p className="text-xs text-gray-500 mb-1">Total Stocks</p>
-          <p className="text-2xl font-bold text-white">{watchlist.items.length}</p>
+        <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-4">
+          <p className="text-xs text-[var(--foreground-muted)] mb-1">Total Stocks</p>
+          <p className="text-2xl font-bold text-[var(--foreground)]">{watchlist.items.length}</p>
         </div>
-        <div className="bg-[#0A0A0A] border border-white/5 rounded-xl p-4">
-          <p className="text-xs text-gray-500 mb-1">Created</p>
-          <p className="text-sm font-medium text-white">{formatDate(watchlist.created_at)}</p>
+        <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-4">
+          <p className="text-xs text-[var(--foreground-muted)] mb-1">Created</p>
+          <p className="text-sm font-medium text-[var(--foreground)]">{formatDate(watchlist.created_at)}</p>
         </div>
-        <div className="bg-[#0A0A0A] border border-white/5 rounded-xl p-4">
-          <p className="text-xs text-gray-500 mb-1">Last Updated</p>
-          <p className="text-sm font-medium text-white">{formatDate(watchlist.updated_at)}</p>
+        <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-4">
+          <p className="text-xs text-[var(--foreground-muted)] mb-1">Last Updated</p>
+          <p className="text-sm font-medium text-[var(--foreground)]">{formatDate(watchlist.updated_at)}</p>
         </div>
-        <div className="bg-[#0A0A0A] border border-white/5 rounded-xl p-4">
-          <p className="text-xs text-gray-500 mb-1">With Notes</p>
-          <p className="text-2xl font-bold text-white">
+        <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-4">
+          <p className="text-xs text-[var(--foreground-muted)] mb-1">With Notes</p>
+          <p className="text-2xl font-bold text-[var(--foreground)]">
             {watchlist.items.filter(i => i.notes).length}
           </p>
         </div>
@@ -724,11 +723,11 @@ useEffect(() => {
         </div>
       ) : (
         /* Stock Table */
-        <div className="bg-[#0A0A0A] border border-white/5 rounded-2xl overflow-hidden">
+        <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-white/5">
+                <tr className="border-b border-[var(--border)]">
                   <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-6 py-4">
                     Stock
                   </th>
@@ -758,7 +757,7 @@ useEffect(() => {
                     : null
 
                   return (
-                    <tr 
+                    <tr
                       key={item.id}
                       className="hover:bg-white/5 transition-colors"
                     >
@@ -801,9 +800,8 @@ useEffect(() => {
                               <p className="font-medium text-white">
                                 {formatCurrency(priceData.price)}
                               </p>
-                              <p className={`text-sm flex items-center justify-end gap-1 ${
-                                priceData.change >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                              }`}>
+                              <p className={`text-sm flex items-center justify-end gap-1 ${priceData.change >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                                }`}>
                                 {priceData.change >= 0 ? (
                                   <ArrowUp size={12} />
                                 ) : (
@@ -826,9 +824,8 @@ useEffect(() => {
                               {formatCurrency(item.added_price)}
                             </p>
                             {gainFromAdded !== null && (
-                              <p className={`text-sm ${
-                                gainFromAdded >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                              }`}>
+                              <p className={`text-sm ${gainFromAdded >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                                }`}>
                                 {gainFromAdded >= 0 ? '+' : ''}{gainFromAdded.toFixed(2)}%
                               </p>
                             )}
@@ -841,11 +838,10 @@ useEffect(() => {
                       {/* Today's Change */}
                       <td className="px-6 py-4 text-right hidden md:table-cell">
                         {priceData && !priceData.loading && !priceData.error ? (
-                          <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-sm font-medium ${
-                            priceData.change >= 0 
-                              ? 'bg-emerald-500/10 text-emerald-400' 
+                          <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-sm font-medium ${priceData.change >= 0
+                              ? 'bg-emerald-500/10 text-emerald-400'
                               : 'bg-rose-500/10 text-rose-400'
-                          }`}>
+                            }`}>
                             {priceData.change >= 0 ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
                             {Math.abs(priceData.change).toFixed(2)}
                           </span>
@@ -877,11 +873,10 @@ useEffect(() => {
                               symbol: item.symbol,
                               notes: item.notes || '',
                             })}
-                            className={`p-2 rounded-lg transition-colors ${
-                              item.notes 
+                            className={`p-2 rounded-lg transition-colors ${item.notes
                                 ? 'hover:bg-yellow-500/10 text-yellow-500 hover:text-yellow-400'
                                 : 'hover:bg-white/5 text-gray-400 hover:text-white'
-                            }`}
+                              }`}
                             title="Notes"
                           >
                             <StickyNote size={16} />
@@ -907,22 +902,22 @@ useEffect(() => {
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
         <>
-          <div 
+          <div
             className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
             onClick={() => setShowDeleteConfirm(false)}
           />
-          <div className="fixed inset-x-4 top-[30%] z-50 mx-auto max-w-sm bg-[#0A0A0A] border border-white/10 rounded-2xl shadow-2xl p-6 text-center">
+          <div className="fixed inset-x-4 top-[30%] z-50 mx-auto max-w-sm bg-[var(--background)] border border-[var(--border)] rounded-2xl shadow-2xl p-6 text-center">
             <div className="w-16 h-16 bg-rose-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
               <Trash2 size={32} className="text-rose-400" />
             </div>
-            <h3 className="text-xl font-semibold text-white mb-2">Delete Watchlist?</h3>
-            <p className="text-gray-400 mb-6">
+            <h3 className="text-xl font-semibold text-[var(--foreground)] mb-2">Delete Watchlist?</h3>
+            <p className="text-[var(--foreground-muted)] mb-6">
               This will permanently delete "{watchlist.name}" and all {watchlist.items.length} stocks in it.
             </p>
             <div className="flex gap-3">
               <button
                 onClick={() => setShowDeleteConfirm(false)}
-                className="flex-1 px-4 py-2 bg-white/5 hover:bg-white/10 text-gray-300 font-medium rounded-xl transition-colors"
+                className="flex-1 px-4 py-2 bg-[var(--card)] hover:bg-[var(--card-hover)] text-[var(--foreground-secondary)] font-medium rounded-xl transition-colors"
               >
                 Cancel
               </button>

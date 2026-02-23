@@ -1,7 +1,10 @@
 // src/app/api/quote/route.ts
 
 import { NextResponse } from 'next/server'
-import yahooFinance from 'yahoo-finance2'
+import YahooFinance from 'yahoo-finance2'
+
+// Initialize the yahoo-finance2 client (required in v3+)
+const yahooFinance = new YahooFinance()
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
