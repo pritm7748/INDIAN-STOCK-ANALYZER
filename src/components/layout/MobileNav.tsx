@@ -1,7 +1,7 @@
 // src/components/layout/MobileNav.tsx
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useUser } from '@/lib/hooks/useUser'
@@ -32,10 +32,19 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
   const { isAuthenticated, fullName, email, signOut, avatarUrl } = useUser()
   const { watchlists, isLoading: watchlistsLoading } = useWatchlists()
 
-  // Close on route change
+  // Store onClose in a ref so the route-change effect doesn't re-fire
+  // when onClose gets a new function reference on every parent render
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
+  // Close on route change only (not on onClose reference change)
+  const prevPathname = useRef(pathname)
   useEffect(() => {
-    onClose()
-  }, [pathname, onClose])
+    if (prevPathname.current !== pathname) {
+      prevPathname.current = pathname
+      onCloseRef.current()
+    }
+  }, [pathname])
 
   // Prevent scroll when open
   useEffect(() => {
