@@ -3,6 +3,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { useUser } from '@/lib/hooks/useUser'
 import { UserMenu } from './UserMenu'
 import { ThemeToggle } from '@/components/theme/ThemeToggle'
@@ -92,13 +93,11 @@ export function Header({ onMenuClick, sidebarCollapsed }: HeaderProps) {
           {/* Theme Toggle */}
           <ThemeToggle />
 
-          {/* Notifications */}
+          {/* Alerts */}
           {isAuthenticated && (
-            <button className="relative p-2 rounded-lg hover:bg-[var(--background-secondary)] text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-colors">
+            <Link href="/dashboard/alerts" className="relative p-2 rounded-lg hover:bg-[var(--background-secondary)] text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-colors">
               <Bell size={20} />
-              {/* Notification badge */}
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-[var(--primary)] rounded-full" />
-            </button>
+            </Link>
           )}
 
           {/* User Menu */}

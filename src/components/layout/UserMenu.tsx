@@ -5,13 +5,9 @@ import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import { useUser } from '@/lib/hooks/useUser'
 import {
-  User,
   Settings,
   LogOut,
   ChevronDown,
-  CreditCard,
-  Bell,
-  Moon
 } from 'lucide-react'
 
 export function UserMenu() {
@@ -60,9 +56,6 @@ export function UserMenu() {
   }
 
   const menuItems = [
-    { name: 'Profile', href: '/dashboard/settings/account', icon: User },
-    { name: 'Notifications', href: '/dashboard/settings/notifications', icon: Bell },
-    { name: 'Appearance', href: '/dashboard/settings/appearance', icon: Moon },
     { name: 'Settings', href: '/dashboard/settings', icon: Settings },
   ]
 
