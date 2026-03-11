@@ -10,15 +10,15 @@ export async function GET(request: Request) {
 
   if (code) {
     const supabase = await createClient()
-    
+
     const { error } = await supabase.auth.exchangeCodeForSession(code)
-    
+
     if (!error) {
       // Handle password recovery
       if (type === 'recovery') {
         return NextResponse.redirect(`${origin}/settings/account?reset=true`)
       }
-      
+
       // Normal login/signup - redirect to intended page
       return NextResponse.redirect(`${origin}${redirect}`)
     }

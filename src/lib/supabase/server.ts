@@ -39,7 +39,7 @@ export function createAdminClient() {
         getAll() {
           return []
         },
-        setAll() {},
+        setAll() { },
       },
     }
   )

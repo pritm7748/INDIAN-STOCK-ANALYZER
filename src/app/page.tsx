@@ -2,12 +2,12 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
-import { 
-  TrendingUp, 
-  BarChart2, 
-  Brain, 
-  Shield, 
-  Zap, 
+import {
+  TrendingUp,
+  BarChart2,
+  Brain,
+  Shield,
+  Zap,
   ArrowRight,
   Activity,
   Target,
@@ -19,13 +19,13 @@ import {
 
 export default async function LandingPage() {
 
-   const supabase = await createClient()
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  
+
   // If authenticated, redirect to dashboard
   if (user) {
     redirect('/dashboard')
-    
+
   }
   return (
     <main className="min-h-screen bg-[#050505] text-gray-100">
@@ -39,15 +39,15 @@ export default async function LandingPage() {
               </div>
               <span className="text-xl font-bold text-white">TradeSense AI</span>
             </div>
-            
+
             <div className="flex items-center gap-4">
-              <Link 
+              <Link
                 href="/login"
                 className="text-gray-400 hover:text-white transition-colors text-sm font-medium"
               >
                 Sign in
               </Link>
-              <Link 
+              <Link
                 href="/signup"
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
               >
@@ -65,7 +65,7 @@ export default async function LandingPage() {
             <Zap size={14} />
             <span>Phase 2 - Advanced Technical Analysis</span>
           </div>
-          
+
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white mb-6 leading-tight">
             AI-Powered Stock Analysis
             <br />
@@ -73,21 +73,21 @@ export default async function LandingPage() {
               for Indian Markets
             </span>
           </h1>
-          
+
           <p className="text-lg text-gray-400 max-w-2xl mx-auto mb-10">
-            Get comprehensive technical analysis with 15+ indicators, ML predictions, 
+            Get comprehensive technical analysis with 15+ indicators, ML predictions,
             backtesting, and real-time news sentiment for NSE stocks.
           </p>
-          
+
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link 
+            <Link
               href="/signup"
               className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-linear-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white font-medium rounded-xl transition-all text-lg shadow-lg shadow-blue-500/25"
             >
               Start Analyzing Free
               <ArrowRight size={20} />
             </Link>
-            <Link 
+            <Link
               href="/login"
               className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-medium rounded-xl transition-all text-lg"
             >
@@ -124,7 +124,7 @@ export default async function LandingPage() {
               Everything you need to make informed trading decisions
             </p>
           </div>
-          
+
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[
               {
@@ -164,18 +164,17 @@ export default async function LandingPage() {
                 color: "cyan"
               }
             ].map((feature, i) => (
-              <div 
+              <div
                 key={i}
                 className="p-6 bg-[#0A0A0A] border border-white/5 rounded-2xl hover:border-white/10 transition-colors"
               >
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-4 ${
-                  feature.color === 'blue' ? 'bg-blue-500/10 text-blue-400' :
-                  feature.color === 'purple' ? 'bg-purple-500/10 text-purple-400' :
-                  feature.color === 'orange' ? 'bg-orange-500/10 text-orange-400' :
-                  feature.color === 'red' ? 'bg-red-500/10 text-red-400' :
-                  feature.color === 'green' ? 'bg-emerald-500/10 text-emerald-400' :
-                  'bg-cyan-500/10 text-cyan-400'
-                }`}>
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-4 ${feature.color === 'blue' ? 'bg-blue-500/10 text-blue-400' :
+                    feature.color === 'purple' ? 'bg-purple-500/10 text-purple-400' :
+                      feature.color === 'orange' ? 'bg-orange-500/10 text-orange-400' :
+                        feature.color === 'red' ? 'bg-red-500/10 text-red-400' :
+                          feature.color === 'green' ? 'bg-emerald-500/10 text-emerald-400' :
+                            'bg-cyan-500/10 text-cyan-400'
+                  }`}>
                   <feature.icon size={24} />
                 </div>
                 <h3 className="text-lg font-semibold text-white mb-2">{feature.title}</h3>
@@ -197,7 +196,7 @@ export default async function LandingPage() {
               Professional-grade tools trusted by serious traders
             </p>
           </div>
-          
+
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {[
               { icon: Gauge, name: "Stochastic RSI", desc: "K/D crossovers" },
@@ -224,7 +223,7 @@ export default async function LandingPage() {
           <p className="text-gray-400 mb-8">
             Join thousands of traders using AI-powered analysis for Indian markets.
           </p>
-          <Link 
+          <Link
             href="/signup"
             className="inline-flex items-center gap-2 px-8 py-4 bg-linear-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white font-medium rounded-xl transition-all text-lg shadow-lg shadow-blue-500/25"
           >

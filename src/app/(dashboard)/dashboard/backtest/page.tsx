@@ -109,7 +109,7 @@ export default function BacktestPage() {
     const v = result?.verdict
 
     return (
-        <div className="p-4 md:p-6 max-w-[1400px] mx-auto space-y-5">
+        <div className="max-w-[1400px] mx-auto space-y-5 overflow-x-hidden">
             {/* Header */}
             <div className="flex items-center gap-3">
                 <div className="w-11 h-11 bg-gradient-to-br from-violet-500/20 to-fuchsia-500/20 rounded-xl flex items-center justify-center">
@@ -171,15 +171,15 @@ export default function BacktestPage() {
                         : v.direction === 'BEARISH' ? 'border-red-500/40 bg-gradient-to-br from-red-500/5 via-red-900/5 to-transparent'
                             : 'border-amber-500/40 bg-gradient-to-br from-amber-500/5 via-amber-900/5 to-transparent'
                         }`}>
-                        <div className="p-5 sm:p-6">
-                            <div className="flex flex-col lg:flex-row gap-5">
+                        <div className="p-4 sm:p-5 lg:p-6">
+                            <div className="flex flex-col lg:flex-row gap-4 lg:gap-5">
                                 {/* Left: Verdict */}
                                 <div className="flex-1 space-y-4">
                                     <div className="flex items-center gap-3">
-                                        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg ${v.direction === 'BULLISH' ? 'bg-emerald-500/20 shadow-emerald-500/10' :
+                                        <div className={`w-11 h-11 sm:w-14 sm:h-14 rounded-xl sm:rounded-2xl flex items-center justify-center shadow-lg shrink-0 ${v.direction === 'BULLISH' ? 'bg-emerald-500/20 shadow-emerald-500/10' :
                                             v.direction === 'BEARISH' ? 'bg-red-500/20 shadow-red-500/10' : 'bg-amber-500/20 shadow-amber-500/10'
                                             }`}>
-                                            {v.direction === 'BULLISH' ? <TrendingUp size={28} className="text-emerald-400" /> :
+                                            {v.direction === 'BULLISH' ? <TrendingUp size={24} className="text-emerald-400" /> :
                                                 v.direction === 'BEARISH' ? <TrendingDown size={28} className="text-red-400" /> :
                                                     <Minus size={28} className="text-amber-400" />}
                                         </div>
@@ -200,26 +200,26 @@ export default function BacktestPage() {
                                         const isSell = ua.action === 'SELL'
                                         return (
                                             <div className={`rounded-xl p-4 border ${isBuy ? 'bg-emerald-500/5 border-emerald-500/20' : isSell ? 'bg-red-500/5 border-red-500/20' : 'bg-amber-500/5 border-amber-500/20'}`}>
-                                                <div className="flex items-center gap-3 mb-3">
-                                                    <span className={`px-3 py-1.5 rounded-lg text-sm font-bold ${isBuy ? 'bg-emerald-500/20 text-emerald-400' : isSell ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                                                <div className="flex flex-wrap items-center gap-2 mb-3">
+                                                    <span className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg text-xs sm:text-sm font-bold ${isBuy ? 'bg-emerald-500/20 text-emerald-400' : isSell ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/20 text-amber-400'}`}>
                                                         {isBuy ? '🟢 BUY' : isSell ? '🔴 SELL' : '⚖️ HOLD'}
                                                     </span>
                                                     <span className="text-[10px] font-semibold text-[var(--foreground-muted)] uppercase tracking-wider">Unified Verdict</span>
                                                     <span className="text-[10px] text-[var(--foreground-muted)] ml-auto">{ua.confidence}% conf</span>
                                                 </div>
                                                 {ua.action !== 'HOLD' ? (
-                                                    <div className="grid grid-cols-3 gap-3 mb-3">
-                                                        <div className={`rounded-lg p-2.5 text-center border ${isBuy ? 'border-emerald-500/20' : 'border-red-500/20'}`}>
-                                                            <p className={`text-lg font-bold ${isBuy ? 'text-emerald-400' : 'text-red-400'}`}>₹{ua.target.toFixed(0)}</p>
-                                                            <p className="text-[9px] text-[var(--foreground-muted)]">{isBuy ? 'Buy Target' : 'Sell Target'}</p>
+                                                    <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-3">
+                                                        <div className={`rounded-lg p-2 sm:p-2.5 text-center border ${isBuy ? 'border-emerald-500/20' : 'border-red-500/20'}`}>
+                                                            <p className={`text-sm sm:text-lg font-bold ${isBuy ? 'text-emerald-400' : 'text-red-400'}`}>₹{ua.target.toFixed(0)}</p>
+                                                            <p className="text-[8px] sm:text-[9px] text-[var(--foreground-muted)]">{isBuy ? 'Buy Target' : 'Sell Target'}</p>
                                                         </div>
-                                                        <div className="rounded-lg p-2.5 text-center border border-[var(--border)]">
-                                                            <p className="text-lg font-bold text-[var(--foreground)]">₹{ua.currentPrice.toFixed(0)}</p>
-                                                            <p className="text-[9px] text-[var(--foreground-muted)]">Current Price</p>
+                                                        <div className="rounded-lg p-2 sm:p-2.5 text-center border border-[var(--border)]">
+                                                            <p className="text-sm sm:text-lg font-bold text-[var(--foreground)]">₹{ua.currentPrice.toFixed(0)}</p>
+                                                            <p className="text-[8px] sm:text-[9px] text-[var(--foreground-muted)]">Current Price</p>
                                                         </div>
-                                                        <div className="rounded-lg p-2.5 text-center border border-red-500/20">
-                                                            <p className={`text-lg font-bold ${isBuy ? 'text-red-400' : 'text-amber-400'}`}>₹{ua.stopLoss.toFixed(0)}</p>
-                                                            <p className="text-[9px] text-[var(--foreground-muted)]">Stop Loss</p>
+                                                        <div className="rounded-lg p-2 sm:p-2.5 text-center border border-red-500/20">
+                                                            <p className={`text-sm sm:text-lg font-bold ${isBuy ? 'text-red-400' : 'text-amber-400'}`}>₹{ua.stopLoss.toFixed(0)}</p>
+                                                            <p className="text-[8px] sm:text-[9px] text-[var(--foreground-muted)]">Stop Loss</p>
                                                         </div>
                                                     </div>
                                                 ) : null}
@@ -472,26 +472,26 @@ export default function BacktestPage() {
                                             {s.currentSignal !== 'WAIT' && (
                                                 <div className="mt-3 space-y-2">
                                                     {s.signalReasons.length > 0 && (
-                                                        <div className={`px-3 py-2 rounded-lg text-xs flex items-center gap-2 ${s.currentSignal === 'BUY' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                                                        <div className={`px-3 py-2 rounded-lg text-xs flex items-start gap-2 ${s.currentSignal === 'BUY' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
                                                             }`}>
-                                                            <Zap size={12} /> <strong>Signal:</strong> {s.signalReasons.join(' · ')}
+                                                            <Zap size={12} className="shrink-0 mt-0.5" /> <span><strong>Signal:</strong> {s.signalReasons.join(' · ')}</span>
                                                         </div>
                                                     )}
-                                                    {/* Per-strategy backtest-derived targets — direction aware */}
-                                                    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs ${s.currentSignal === 'SELL' ? 'bg-red-500/5 border border-red-500/20' : 'bg-violet-500/5 border border-violet-500/20'
-                                                        }`}>
-                                                        <Target size={12} className={s.currentSignal === 'SELL' ? 'text-red-400' : 'text-violet-400'} />
+                                                    <div className={`flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 rounded-lg text-[11px] sm:text-xs ${
+                                                        s.currentSignal === 'SELL' ? 'bg-red-500/5 border border-red-500/20' : 'bg-violet-500/5 border border-violet-500/20'
+                                                    }`}>
+                                                        <Target size={12} className={`shrink-0 ${s.currentSignal === 'SELL' ? 'text-red-400' : 'text-violet-400'}`} />
                                                         <span className="text-[var(--foreground-muted)]">{s.currentSignal === 'SELL' ? 'Sell Target:' : 'Buy Target:'}</span>
                                                         <span className={`font-bold ${s.currentSignal === 'SELL' ? 'text-red-400' : 'text-emerald-400'}`}>
                                                             ₹{s.backtestTarget.target.toFixed(0)} ({s.currentSignal === 'SELL' ? '-' : '+'}{s.backtestTarget.avgWinPct}%)
                                                         </span>
-                                                        <span className="text-[var(--foreground-muted)]">|</span>
+                                                        <span className="text-[var(--foreground-muted)] hidden sm:inline">|</span>
                                                         <span className="text-[var(--foreground-muted)]">SL:</span>
                                                         <span className={`font-bold ${s.currentSignal === 'SELL' ? 'text-emerald-400' : 'text-red-400'}`}>
                                                             ₹{s.backtestTarget.stopLoss.toFixed(0)} ({s.currentSignal === 'SELL' ? '+' : '-'}{s.backtestTarget.avgLossPct}%)
                                                         </span>
-                                                        <span className="text-[var(--foreground-muted)]">|</span>
-                                                        <span className="text-[var(--foreground-muted)]">Avg Hold:</span>
+                                                        <span className="text-[var(--foreground-muted)] hidden sm:inline">|</span>
+                                                        <span className="text-[var(--foreground-muted)]">Hold:</span>
                                                         <span className="font-medium text-[var(--foreground)]">{s.backtestTarget.avgHoldingDays}d</span>
                                                     </div>
                                                 </div>
