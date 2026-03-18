@@ -4,7 +4,8 @@ import { useState, useRef, useCallback } from 'react'
 import {
     Brain, Loader2, TrendingUp, TrendingDown, Shield,
     Zap, Target, BarChart3, AlertTriangle, ChevronDown,
-    ChevronRight, Activity, Clock, Filter, Info, StopCircle
+    ChevronRight, Activity, Clock, Filter, Info, StopCircle,
+    CalendarDays, ArrowRightLeft, ShieldCheck, Play
 } from 'lucide-react'
 
 interface Holding {
@@ -22,6 +23,12 @@ interface Holding {
     weightEqual: number
     stopLoss: number
     avgDailyTurnoverCr: number
+    trailingStopLevel: number | null
+    trailingStopActive: boolean
+    entrySignal: string
+    daysSinceRecentHigh: number
+    priceVs52wHigh: number | null
+    beta: number | null
 }
 
 interface StrategyResult {
@@ -50,6 +57,21 @@ interface StrategyResult {
         totalSymbols: number
         successfulFetches: number
         failedFetches: number
+    }
+    rebalance?: {
+        scanDate: string
+        entryDate: string
+        exitDate: string
+        holdingDays: number
+        nextScanDate: string
+    }
+    entryGuidance?: {
+        action: string
+        timing: string
+        sizing: string
+        stopLossRule: string
+        trailingStopRule: string
+        exitRule: string
     }
 }
 
@@ -365,6 +387,68 @@ export default function StrategyAnalysisPage() {
                                     </div>
                                 )}
 
+                                {/* ENTRY GUIDANCE & REBALANCE SCHEDULE */}
+                                {result.signal === 'INVEST' && (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        {/* Entry Guidance */}
+                                        {result.entryGuidance && (
+                                            <div className="bg-[var(--background)] rounded-xl p-4 border border-[var(--border)]">
+                                                <div className="flex items-center gap-2 mb-3">
+                                                    <Play size={14} className="text-emerald-400" />
+                                                    <span className="text-xs font-semibold text-[var(--foreground)]">Entry & Exit Rules</span>
+                                                </div>
+                                                <div className="space-y-2 text-[11px]">
+                                                    {[
+                                                        { icon: '🟢', label: 'Entry', value: result.entryGuidance.action },
+                                                        { icon: '⏰', label: 'Timing', value: result.entryGuidance.timing },
+                                                        { icon: '⚖️', label: 'Sizing', value: result.entryGuidance.sizing },
+                                                        { icon: '🛑', label: 'Stop Loss', value: result.entryGuidance.stopLossRule },
+                                                        { icon: '📉', label: 'Trailing Stop', value: result.entryGuidance.trailingStopRule },
+                                                        { icon: '🔄', label: 'Exit', value: result.entryGuidance.exitRule },
+                                                    ].map(r => (
+                                                        <div key={r.label} className="flex gap-2">
+                                                            <span className="shrink-0">{r.icon}</span>
+                                                            <div>
+                                                                <span className="font-semibold text-[var(--foreground)]">{r.label}: </span>
+                                                                <span className="text-[var(--foreground-muted)]">{r.value}</span>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Rebalance Schedule */}
+                                        {result.rebalance && (
+                                            <div className="bg-[var(--background)] rounded-xl p-4 border border-[var(--border)]">
+                                                <div className="flex items-center gap-2 mb-3">
+                                                    <CalendarDays size={14} className="text-blue-400" />
+                                                    <span className="text-xs font-semibold text-[var(--foreground)]">Rebalance Schedule</span>
+                                                </div>
+                                                <div className="space-y-3">
+                                                    {[
+                                                        { label: 'Scan Date', value: result.rebalance.scanDate, icon: '📅', color: 'text-[var(--foreground)]' },
+                                                        { label: 'Entry Date', value: result.rebalance.entryDate, icon: '🟢', color: 'text-emerald-400' },
+                                                        { label: 'Exit Date', value: result.rebalance.exitDate, icon: '🔴', color: 'text-red-400' },
+                                                        { label: 'Next Scan', value: result.rebalance.nextScanDate, icon: '🔄', color: 'text-blue-400' },
+                                                    ].map(d => (
+                                                        <div key={d.label} className="flex items-center justify-between text-[11px]">
+                                                            <span className="text-[var(--foreground-muted)] flex items-center gap-1.5">
+                                                                {d.icon} {d.label}
+                                                            </span>
+                                                            <span className={`font-bold ${d.color}`}>{d.value}</span>
+                                                        </div>
+                                                    ))}
+                                                    <div className="flex items-center justify-between text-[11px] pt-2 border-t border-[var(--border)]">
+                                                        <span className="text-[var(--foreground-muted)]">⏱️ Holding Period</span>
+                                                        <span className="font-bold text-[var(--foreground)]">{result.rebalance.holdingDays} trading days</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
                                 {/* PORTFOLIO HOLDINGS TABLE */}
                                 {result.holdings && result.holdings.length > 0 && (
                                     <div className="space-y-2">
@@ -412,10 +496,15 @@ export default function StrategyAnalysisPage() {
                                                             ))}
                                                         </div>
 
-                                                        {/* Price + SL */}
+                                                        {/* Price + Stop Levels */}
                                                         <div className="text-right shrink-0">
                                                             <p className="text-sm font-bold text-[var(--foreground)]">₹{h.currentPrice.toFixed(0)}</p>
-                                                            <p className="text-[10px] text-red-400">SL: ₹{h.stopLoss.toFixed(0)}</p>
+                                                            <p className="text-[10px] text-red-400">Hard SL: ₹{h.stopLoss.toFixed(0)}</p>
+                                                            {h.trailingStopLevel && (
+                                                                <p className={`text-[10px] ${h.trailingStopActive ? 'text-amber-400' : 'text-[var(--foreground-muted)]'}`}>
+                                                                    Trail: ₹{h.trailingStopLevel.toFixed(0)} {h.trailingStopActive ? '⚡' : ''}
+                                                                </p>
+                                                            )}
                                                         </div>
                                                     </div>
 
@@ -540,10 +629,12 @@ export default function StrategyAnalysisPage() {
                                             {[
                                                 { l: 'Weights', v: `${(result.config.WEIGHT_1M * 100).toFixed(0)}% / ${(result.config.WEIGHT_3M * 100).toFixed(0)}% / ${(result.config.WEIGHT_6M * 100).toFixed(0)}% (1M/3M/6M)` },
                                                 { l: 'Top N', v: result.config.TOP_N_STOCKS },
-                                                { l: 'Stop Loss', v: `${(result.config.STOP_LOSS_PCT * 100).toFixed(0)}%` },
+                                                { l: 'Stop Loss', v: `${(result.config.STOP_LOSS_PCT * 100).toFixed(0)}% hard` },
+                                                { l: 'Trailing Stop', v: `After +${(result.config.TRAILING_STOP_ACTIVATION * 100).toFixed(0)}%, trail at ${result.config.TRAILING_STOP_LOOKBACK}d low` },
                                                 { l: 'Min Turnover', v: `₹${result.config.MIN_AVG_TURNOVER_CR}cr` },
                                                 { l: 'Vol Cap', v: `${(result.config.MAX_ANNUALIZED_VOLATILITY * 100).toFixed(0)}%` },
                                                 { l: 'Regime Filter', v: `Nifty > ${result.config.NIFTY_SMA_PERIOD}d SMA` },
+                                                { l: 'Earnings Blackout', v: `±${result.config.EARNINGS_BLACKOUT_DAYS}d from earnings` },
                                             ].map(c => (
                                                 <span key={c.l} className="px-2 py-1 bg-[var(--card)] rounded-lg border border-[var(--border)] text-[var(--foreground-muted)]">
                                                     <span className="text-[var(--foreground)] font-medium">{c.l}:</span> {c.v}

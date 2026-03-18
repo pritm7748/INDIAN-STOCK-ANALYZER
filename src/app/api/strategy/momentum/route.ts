@@ -70,6 +70,23 @@ export async function GET() {
                 ? last20.reduce((s: number, q: any) => s + (q.close * q.volume), 0) / last20.length / 1e7
                 : 0
 
+              // Fetch earnings date and beta from quote
+              let earningsDate: string | null = null
+              let beta: number | null = null
+              try {
+                const quote = await yf.quote(symbol) as any
+                if (quote) {
+                  // earningsTimestamp or earningsTimestampStart
+                  const ets = quote.earningsTimestamp || quote.earningsTimestampStart
+                  if (ets) {
+                    earningsDate = new Date(ets instanceof Date ? ets : ets * 1000).toISOString().split('T')[0]
+                  }
+                  if (typeof quote.beta === 'number') {
+                    beta = quote.beta
+                  }
+                }
+              } catch { /* quote data optional */ }
+
               const stockInfo = STOCK_LIST.find(s => s.symbol === symbol)
 
               return {
@@ -79,6 +96,8 @@ export async function GET() {
                 prices,
                 volumes,
                 avgDailyTurnoverCr: avgTurnover,
+                earningsDate,
+                beta,
               } as StockData
             })
           )
