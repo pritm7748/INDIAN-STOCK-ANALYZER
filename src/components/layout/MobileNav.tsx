@@ -19,7 +19,8 @@ import {
   Loader2,
   ChevronRight,
   Crosshair,
-  FlaskConical
+  FlaskConical,
+  Brain
 } from 'lucide-react'
 
 interface MobileNavProps {
@@ -64,6 +65,7 @@ export function MobileNav({ isOpen, onClose }: MobileNavProps) {
     { name: 'Screener', href: '/dashboard/screener', icon: Search },
     { name: 'Alerts', href: '/dashboard/alerts', icon: Bell },
     { name: 'Signals', href: '/dashboard/signals', icon: Crosshair },
+    { name: 'Strategy', href: '/dashboard/strategy', icon: Brain },
   ]
 
   const bottomItems = [

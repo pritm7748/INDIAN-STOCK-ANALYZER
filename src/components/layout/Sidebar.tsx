@@ -22,7 +22,8 @@ import {
   ChevronDown,
   Loader2,
   Sparkles,
-  FlaskConical
+  FlaskConical,
+  Brain
 } from 'lucide-react'
 
 interface SidebarProps {
@@ -81,6 +82,14 @@ export function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
       description: 'Trade signals',
       gradient: 'from-emerald-500 to-teal-500',
       activeGlow: 'shadow-emerald-500/30'
+    },
+    {
+      name: 'Strategy',
+      href: '/dashboard/strategy',
+      icon: Brain,
+      description: 'Strategy analysis',
+      gradient: 'from-cyan-500 to-blue-500',
+      activeGlow: 'shadow-cyan-500/30'
     },
   ]
 
