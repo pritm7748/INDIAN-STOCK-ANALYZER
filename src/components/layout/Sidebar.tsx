@@ -32,7 +32,7 @@ interface SidebarProps {
 
 export function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
   const pathname = usePathname()
-  const { isAuthenticated, fullName, email, signOut, avatarUrl } = useUser()
+  const { isAuthenticated, signOut } = useUser()
   const { watchlists, isLoading: watchlistsLoading, createWatchlist } = useWatchlists()
 
   const [watchlistsExpanded, setWatchlistsExpanded] = useState(true)
@@ -306,15 +306,15 @@ export function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
         )}
       </nav>
 
-      {/* Bottom Navigation */}
-      <div className="border-t border-[var(--border)] py-4 px-3 space-y-1.5">
+      {/* Bottom Navigation — Portfolio, Settings, Logout in one compact block */}
+      <div className="border-t border-[var(--border)] py-3 px-3 space-y-1">
         {bottomNavItems.map((item) => (
           <Link
             key={item.name}
             href={item.href}
             target={item.external ? '_blank' : undefined}
             rel={item.external ? 'noopener noreferrer' : undefined}
-            className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group relative ${isActive(item.href)
+            className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-200 group relative ${isActive(item.href)
               ? 'bg-[var(--background-secondary)] text-[var(--foreground)]'
               : 'text-[var(--foreground-muted)] hover:bg-[var(--background-secondary)] hover:text-[var(--foreground)]'
               }`}
@@ -331,43 +331,26 @@ export function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
             )}
           </Link>
         ))}
-      </div>
 
-      {/* User Section */}
-      {isAuthenticated && (
-        <div className="border-t border-[var(--border)] p-3">
-          <div className={`flex items-center gap-3 p-2.5 rounded-xl hover:bg-[var(--background-secondary)] transition-all duration-200 group ${isCollapsed ? 'justify-center' : ''}`}>
-            <div className="relative">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-white font-medium text-sm shrink-0 overflow-hidden shadow-lg group-hover:shadow-blue-500/30 transition-shadow">
-                {avatarUrl ? (
-                  <img src={avatarUrl} alt={fullName || 'User'} className="w-full h-full object-cover" />
-                ) : (
-                  fullName?.charAt(0)?.toUpperCase() || email?.charAt(0)?.toUpperCase() || 'U'
-                )}
-              </div>
-              {/* Online indicator */}
-              <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-[var(--card)]" />
-            </div>
+        {/* Logout */}
+        {isAuthenticated && (
+          <button
+            onClick={signOut}
+            className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-200 group relative w-full text-[var(--foreground-muted)] hover:bg-rose-500/10 hover:text-rose-500 dark:hover:text-rose-400 ${isCollapsed ? 'justify-center' : ''}`}
+          >
+            <LogOut size={18} className="shrink-0" />
             {!isCollapsed && (
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-[var(--foreground)] truncate">
-                  {fullName || 'User'}
-                </p>
-                <p className="text-xs text-[var(--foreground-muted)] truncate">{email}</p>
+              <span className="font-medium text-sm">Sign out</span>
+            )}
+            {isCollapsed && (
+              <div className="absolute left-full ml-3 px-3 py-1.5 bg-[var(--card)] border border-[var(--border)] text-[var(--foreground)] text-sm rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 shadow-xl translate-x-2 group-hover:translate-x-0 transition-all duration-200">
+                Sign out
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 w-2 h-2 bg-[var(--card)] border-l border-b border-[var(--border)] rotate-45" />
               </div>
             )}
-            {!isCollapsed && (
-              <button
-                onClick={signOut}
-                className="p-2 rounded-lg hover:bg-[var(--background-secondary)] text-[var(--foreground-muted)] hover:text-rose-500 dark:hover:text-rose-400 transition-all duration-200"
-                title="Sign out"
-              >
-                <LogOut size={16} />
-              </button>
-            )}
-          </div>
-        </div>
-      )}
+          </button>
+        )}
+      </div>
     </aside>
   )
 }
