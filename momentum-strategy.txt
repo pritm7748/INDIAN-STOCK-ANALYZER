@@ -1,0 +1,1071 @@
+// momentum-strategy.js
+// Complete Momentum Trading Strategy Implementation for Indian Markets
+// Based on Jegadeesh & Titman methodology, adapted for NSE
+
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+const CONFIG = {
+  // Lookback periods (trading days)
+  LOOKBACK_1M: 22,
+  LOOKBACK_3M: 66,
+  LOOKBACK_6M: 132,
+
+  // Composite score weights
+  WEIGHT_1M: 0.35,
+  WEIGHT_3M: 0.40,
+  WEIGHT_6M: 0.25,
+
+  // Portfolio
+  TOP_N_STOCKS: 15,
+  HOLDING_PERIOD: 22, // trading days
+
+  // Filters
+  MIN_AVG_TURNOVER_CR: 5, // ₹5 crore minimum daily turnover
+  VOLUME_DECLINE_THRESHOLD: 0.5, // 20d avg vol must be > 50% of 50d avg vol
+  MAX_ANNUALIZED_VOLATILITY: 0.50, // 50% cap
+  EARNINGS_BLACKOUT_DAYS: 5,
+
+  // Risk management
+  STOP_LOSS_PCT: 0.08, // 8% hard stop
+  TRAILING_STOP_ACTIVATION: 0.10, // activate trailing stop after 10% gain
+  TRAILING_STOP_LOOKBACK: 10, // trail at 10-day low
+
+  // Market regime
+  NIFTY_SMA_PERIOD: 50,
+
+  // Annualization
+  TRADING_DAYS_PER_YEAR: 252,
+  RISK_FREE_RATE: 0.065, // 6.5% (Indian T-bill approx)
+};
+
+
+// ============================================================================
+// CORE CALCULATIONS
+// ============================================================================
+
+/**
+ * Calculate simple return over N days
+ * @param {number[]} prices - array of closing prices (oldest first)
+ * @param {number} lookback - number of days to look back
+ * @returns {number|null} return as decimal (0.10 = 10%)
+ */
+function calcReturn(prices, lookback) {
+  if (!prices || prices.length < lookback + 1) return null;
+  const current = prices[prices.length - 1];
+  const past = prices[prices.length - 1 - lookback];
+  if (!past || past === 0) return null;
+  return (current / past) - 1;
+}
+
+/**
+ * Calculate composite momentum score using weighted multi-period returns
+ */
+function calcMomentumScore(prices) {
+  const ret1m = calcReturn(prices, CONFIG.LOOKBACK_1M);
+  const ret3m = calcReturn(prices, CONFIG.LOOKBACK_3M);
+  const ret6m = calcReturn(prices, CONFIG.LOOKBACK_6M);
+
+  if (ret1m === null || ret3m === null || ret6m === null) return null;
+
+  const composite =
+    CONFIG.WEIGHT_1M * ret1m +
+    CONFIG.WEIGHT_3M * ret3m +
+    CONFIG.WEIGHT_6M * ret6m;
+
+  return {
+    composite,
+    ret1m,
+    ret3m,
+    ret6m,
+  };
+}
+
+/**
+ * Calculate realized volatility (annualized) over a window
+ * @param {number[]} prices - closing prices
+ * @param {number} window - lookback window (default 20)
+ */
+function calcRealizedVolatility(prices, window = 20) {
+  if (!prices || prices.length < window + 1) return null;
+
+  const returns = [];
+  for (let i = prices.length - window; i < prices.length; i++) {
+    if (prices[i - 1] === 0) return null;
+    returns.push(Math.log(prices[i] / prices[i - 1]));
+  }
+
+  const mean = returns.reduce((s, r) => s + r, 0) / returns.length;
+  const variance = returns.reduce((s, r) => s + (r - mean) ** 2, 0) / (returns.length - 1);
+  const dailyVol = Math.sqrt(variance);
+
+  return dailyVol * Math.sqrt(CONFIG.TRADING_DAYS_PER_YEAR);
+}
+
+/**
+ * Calculate average volume over N days
+ */
+function calcAvgVolume(volumes, period) {
+  if (!volumes || volumes.length < period) return null;
+  const slice = volumes.slice(-period);
+  return slice.reduce((s, v) => s + v, 0) / slice.length;
+}
+
+/**
+ * Check if Nifty 50 is above its 50-day SMA (bull market regime)
+ */
+function isBullRegime(niftyPrices) {
+  if (!niftyPrices || niftyPrices.length < CONFIG.NIFTY_SMA_PERIOD) return false;
+
+  const smaSlice = niftyPrices.slice(-CONFIG.NIFTY_SMA_PERIOD);
+  const sma = smaSlice.reduce((s, p) => s + p, 0) / CONFIG.NIFTY_SMA_PERIOD;
+  const currentPrice = niftyPrices[niftyPrices.length - 1];
+
+  return currentPrice > sma;
+}
+
+/**
+ * Calculate the 10-day trailing low for trailing stop
+ */
+function calcTrailingStopLevel(pricesFromEntry) {
+  if (!pricesFromEntry || pricesFromEntry.length < CONFIG.TRAILING_STOP_LOOKBACK) {
+    return Math.min(...pricesFromEntry);
+  }
+  return Math.min(...pricesFromEntry.slice(-CONFIG.TRAILING_STOP_LOOKBACK));
+}
+
+
+// ============================================================================
+// FILTERS
+// ============================================================================
+
+/**
+ * Apply all pre-selection filters to a stock
+ * @param {Object} stock - { symbol, prices, volumes, avgDailyTurnoverCr, earningsDate? }
+ * @returns {{ pass: boolean, reason?: string }}
+ */
+function applyFilters(stock, currentDate = null) {
+  // 1. Liquidity: minimum turnover
+  if (stock.avgDailyTurnoverCr < CONFIG.MIN_AVG_TURNOVER_CR) {
+    return { pass: false, reason: 'Turnover below ₹5cr threshold' };
+  }
+
+  // 2. Volume participation decline
+  const avg20vol = calcAvgVolume(stock.volumes, 20);
+  const avg50vol = calcAvgVolume(stock.volumes, 50);
+  if (avg20vol !== null && avg50vol !== null && avg50vol > 0) {
+    if (avg20vol / avg50vol < CONFIG.VOLUME_DECLINE_THRESHOLD) {
+      return { pass: false, reason: 'Volume declining (20d avg < 50% of 50d avg)' };
+    }
+  }
+
+  // 3. Volatility cap
+  const vol = calcRealizedVolatility(stock.prices);
+  if (vol !== null && vol > CONFIG.MAX_ANNUALIZED_VOLATILITY) {
+    return { pass: false, reason: `Volatility ${(vol * 100).toFixed(1)}% exceeds 50% cap` };
+  }
+
+  // 4. Earnings blackout
+  if (stock.earningsDate && currentDate) {
+    const diffDays = Math.abs(
+      (new Date(stock.earningsDate) - new Date(currentDate)) / (1000 * 60 * 60 * 24)
+    );
+    if (diffDays <= CONFIG.EARNINGS_BLACKOUT_DAYS) {
+      return { pass: false, reason: 'Within earnings blackout window' };
+    }
+  }
+
+  return { pass: true };
+}
+
+
+// ============================================================================
+// PORTFOLIO CONSTRUCTION
+// ============================================================================
+
+/**
+ * Generate momentum portfolio from a universe of stocks
+ * @param {Object[]} universe - array of stock objects
+ * @param {number[]} niftyPrices - Nifty 50 daily closing prices
+ * @param {string} currentDate - current date string
+ * @returns {Object} portfolio object with selected stocks and metadata
+ */
+function generatePortfolio(universe, niftyPrices, currentDate = null) {
+  // Step 0: Market regime check
+  const bullRegime = isBullRegime(niftyPrices);
+  if (!bullRegime) {
+    return {
+      date: currentDate,
+      regime: 'BEAR',
+      signal: 'CASH',
+      message: 'Nifty below 50-day SMA — stay in cash',
+      holdings: [],
+    };
+  }
+
+  // Step 1: Score all stocks
+  const scored = [];
+  const filtered_out = [];
+
+  for (const stock of universe) {
+    // Apply filters first
+    const filterResult = applyFilters(stock, currentDate);
+    if (!filterResult.pass) {
+      filtered_out.push({ symbol: stock.symbol, reason: filterResult.reason });
+      continue;
+    }
+
+    // Calculate momentum score
+    const momentum = calcMomentumScore(stock.prices);
+    if (momentum === null) {
+      filtered_out.push({ symbol: stock.symbol, reason: 'Insufficient price history' });
+      continue;
+    }
+
+    const volatility = calcRealizedVolatility(stock.prices) || 0;
+
+    scored.push({
+      symbol: stock.symbol,
+      ...momentum,
+      volatility,
+      currentPrice: stock.prices[stock.prices.length - 1],
+      avgDailyTurnoverCr: stock.avgDailyTurnoverCr,
+    });
+  }
+
+  // Step 2: Rank by composite score, pick top N
+  scored.sort((a, b) => b.composite - a.composite);
+  const topStocks = scored.slice(0, CONFIG.TOP_N_STOCKS);
+
+  // Step 3: Calculate weights (inverse-volatility weighting)
+  const totalInvVol = topStocks.reduce((sum, s) => {
+    return sum + (s.volatility > 0 ? 1 / s.volatility : 1);
+  }, 0);
+
+  const holdings = topStocks.map((s) => {
+    const invVol = s.volatility > 0 ? 1 / s.volatility : 1;
+    const weight = invVol / totalInvVol;
+    return {
+      ...s,
+      weight_invVol: weight,
+      weight_equal: 1 / topStocks.length,
+      stopLoss: s.currentPrice * (1 - CONFIG.STOP_LOSS_PCT),
+    };
+  });
+
+  return {
+    date: currentDate,
+    regime: 'BULL',
+    signal: 'INVEST',
+    totalCandidates: universe.length,
+    passedFilters: scored.length,
+    filteredOut: filtered_out.length,
+    holdings,
+    holdingPeriod: `${CONFIG.HOLDING_PERIOD} trading days`,
+    nextRebalance: `After ${CONFIG.HOLDING_PERIOD} trading days`,
+  };
+}
+
+
+// ============================================================================
+// POSITION MANAGEMENT (intra-holding-period monitoring)
+// ============================================================================
+
+/**
+ * Check exit conditions for a single position
+ * @param {Object} position - { symbol, entryPrice, entryDate, pricesSinceEntry[] }
+ * @param {number} currentPrice
+ * @param {number} daysSinceEntry - trading days since entry
+ * @returns {Object} { action: 'HOLD'|'EXIT', reason? }
+ */
+function checkExitConditions(position, currentPrice, daysSinceEntry) {
+  const { entryPrice, pricesSinceEntry } = position;
+  const pnlPct = (currentPrice / entryPrice) - 1;
+
+  // 1. Time-based exit
+  if (daysSinceEntry >= CONFIG.HOLDING_PERIOD) {
+    return { action: 'EXIT', reason: 'HOLDING_PERIOD_COMPLETE', pnlPct };
+  }
+
+  // 2. Hard stop-loss
+  if (pnlPct <= -CONFIG.STOP_LOSS_PCT) {
+    return { action: 'EXIT', reason: 'STOP_LOSS_HIT', pnlPct };
+  }
+
+  // 3. Trailing stop (only if stock is up enough)
+  if (pnlPct >= CONFIG.TRAILING_STOP_ACTIVATION && pricesSinceEntry) {
+    const trailingStop = calcTrailingStopLevel(pricesSinceEntry);
+    if (currentPrice <= trailingStop) {
+      return { action: 'EXIT', reason: 'TRAILING_STOP_HIT', pnlPct, trailingStop };
+    }
+  }
+
+  return { action: 'HOLD', pnlPct };
+}
+
+
+// ============================================================================
+// BACKTEST ENGINE
+// ============================================================================
+
+/**
+ * Run a full backtest of the momentum strategy
+ *
+ * @param {Object[]} universeHistory - For each rebalance date, the full stock universe with prices
+ *   Format: [{ date, stocks: [{ symbol, prices[], volumes[], avgDailyTurnoverCr }], niftyPrices[] }]
+ * @param {number} capitalBase - starting capital in ₹
+ * @returns {Object} backtest results
+ */
+function runBacktest(universeHistory, capitalBase = 10000000) {
+  const trades = [];
+  const equityCurve = [];
+  let currentCapital = capitalBase;
+  let totalTrades = 0;
+  let winners = 0;
+  let losers = 0;
+  let totalWinPct = 0;
+  let totalLossPct = 0;
+  let maxCapital = capitalBase;
+  let maxDrawdown = 0;
+  let cashPeriods = 0;
+
+  for (let i = 0; i < universeHistory.length; i++) {
+    const { date, stocks, niftyPrices } = universeHistory[i];
+
+    // Generate portfolio for this period
+    const portfolio = generatePortfolio(stocks, niftyPrices, date);
+
+    if (portfolio.signal === 'CASH') {
+      cashPeriods++;
+      equityCurve.push({ date, capital: currentCapital, regime: 'BEAR', action: 'CASH' });
+      continue;
+    }
+
+    // Simulate trades for this holding period
+    for (const holding of portfolio.holdings) {
+      const weight = holding.weight_invVol;
+      const allocated = currentCapital * weight;
+      const shares = Math.floor(allocated / holding.currentPrice);
+      if (shares <= 0) continue;
+
+      const entryPrice = holding.currentPrice;
+
+      // We need exit price — look at the NEXT period's data or use holding period return
+      // In a real backtest, you'd have daily prices during the holding period
+      // Here we simulate with available data
+      let exitPrice = entryPrice;
+      let exitReason = 'HOLDING_PERIOD_COMPLETE';
+
+      // If we have the next period's stock data, use the stock's price at that point
+      if (i + 1 < universeHistory.length) {
+        const nextPeriodStocks = universeHistory[i + 1].stocks;
+        const nextStock = nextPeriodStocks.find(s => s.symbol === holding.symbol);
+        if (nextStock && nextStock.prices && nextStock.prices.length > 0) {
+          exitPrice = nextStock.prices[nextStock.prices.length - 1];
+        }
+      }
+
+      // Check if stop-loss would have been hit (simplified — check min price during period)
+      const stopLossPrice = entryPrice * (1 - CONFIG.STOP_LOSS_PCT);
+      // In practice you'd check daily prices; here we just compare exit
+      if (exitPrice < stopLossPrice) {
+        exitPrice = stopLossPrice; // assume stopped out at stop level
+        exitReason = 'STOP_LOSS';
+      }
+
+      const pnl = (exitPrice - entryPrice) * shares;
+      const pnlPct = (exitPrice / entryPrice) - 1;
+
+      currentCapital += pnl;
+      totalTrades++;
+
+      if (pnl > 0) {
+        winners++;
+        totalWinPct += pnlPct;
+      } else {
+        losers++;
+        totalLossPct += Math.abs(pnlPct);
+      }
+
+      trades.push({
+        entryDate: date,
+        symbol: holding.symbol,
+        entryPrice,
+        exitPrice,
+        shares,
+        pnl,
+        pnlPct: (pnlPct * 100).toFixed(2) + '%',
+        exitReason,
+        weight: (weight * 100).toFixed(1) + '%',
+        momentumScore: holding.composite.toFixed(4),
+      });
+    }
+
+    // Track equity curve & drawdown
+    if (currentCapital > maxCapital) maxCapital = currentCapital;
+    const drawdown = (maxCapital - currentCapital) / maxCapital;
+    if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+
+    equityCurve.push({
+      date,
+      capital: Math.round(currentCapital),
+      regime: 'BULL',
+      drawdown: (drawdown * 100).toFixed(2) + '%',
+    });
+  }
+
+  // Calculate summary statistics
+  const totalReturn = (currentCapital / capitalBase) - 1;
+  const periods = universeHistory.length;
+  const yearsApprox = (periods * CONFIG.HOLDING_PERIOD) / CONFIG.TRADING_DAYS_PER_YEAR;
+  const cagr = yearsApprox > 0 ? (Math.pow(currentCapital / capitalBase, 1 / yearsApprox) - 1) : 0;
+  const winRate = totalTrades > 0 ? winners / totalTrades : 0;
+  const avgWin = winners > 0 ? totalWinPct / winners : 0;
+  const avgLoss = losers > 0 ? totalLossPct / losers : 0;
+  const winLossRatio = avgLoss > 0 ? avgWin / avgLoss : Infinity;
+
+  return {
+    summary: {
+      startingCapital: capitalBase,
+      endingCapital: Math.round(currentCapital),
+      totalReturn: (totalReturn * 100).toFixed(2) + '%',
+      cagr: (cagr * 100).toFixed(2) + '%',
+      totalTrades,
+      winRate: (winRate * 100).toFixed(1) + '%',
+      avgWinnerPct: (avgWin * 100).toFixed(2) + '%',
+      avgLoserPct: (avgLoss * 100).toFixed(2) + '%',
+      winLossRatio: winLossRatio.toFixed(2),
+      maxDrawdown: (maxDrawdown * 100).toFixed(2) + '%',
+      cashPeriods,
+      periodsTraded: periods - cashPeriods,
+    },
+    trades,
+    equityCurve,
+  };
+}
+
+
+// ============================================================================
+// ADVANCED ANALYTICS
+// ============================================================================
+
+/**
+ * Calculate Sharpe Ratio from periodic returns
+ */
+function calcSharpeRatio(periodicReturns, periodsPerYear) {
+  if (!periodicReturns || periodicReturns.length < 2) return null;
+
+  const mean = periodicReturns.reduce((s, r) => s + r, 0) / periodicReturns.length;
+  const variance = periodicReturns.reduce((s, r) => s + (r - mean) ** 2, 0) / (periodicReturns.length - 1);
+  const stddev = Math.sqrt(variance);
+
+  const annualizedReturn = mean * periodsPerYear;
+  const annualizedStddev = stddev * Math.sqrt(periodsPerYear);
+
+  if (annualizedStddev === 0) return null;
+  return (annualizedReturn - CONFIG.RISK_FREE_RATE) / annualizedStddev;
+}
+
+/**
+ * Calculate Sortino Ratio (only penalizes downside volatility)
+ */
+function calcSortinoRatio(periodicReturns, periodsPerYear) {
+  if (!periodicReturns || periodicReturns.length < 2) return null;
+
+  const mean = periodicReturns.reduce((s, r) => s + r, 0) / periodicReturns.length;
+  const downsideReturns = periodicReturns.filter(r => r < 0);
+
+  if (downsideReturns.length === 0) return Infinity;
+
+  const downsideVariance = downsideReturns.reduce((s, r) => s + r ** 2, 0) / downsideReturns.length;
+  const downsideDeviation = Math.sqrt(downsideVariance) * Math.sqrt(periodsPerYear);
+
+  const annualizedReturn = mean * periodsPerYear;
+
+  if (downsideDeviation === 0) return Infinity;
+  return (annualizedReturn - CONFIG.RISK_FREE_RATE) / downsideDeviation;
+}
+
+/**
+ * Calculate Calmar Ratio (return / max drawdown)
+ */
+function calcCalmarRatio(cagr, maxDrawdown) {
+  if (!maxDrawdown || maxDrawdown === 0) return Infinity;
+  return cagr / maxDrawdown;
+}
+
+/**
+ * Maximum consecutive losses
+ */
+function maxConsecutiveLosses(trades) {
+  let maxStreak = 0;
+  let currentStreak = 0;
+
+  for (const trade of trades) {
+    if (trade.pnl < 0) {
+      currentStreak++;
+      maxStreak = Math.max(maxStreak, currentStreak);
+    } else {
+      currentStreak = 0;
+    }
+  }
+
+  return maxStreak;
+}
+
+/**
+ * Monthly return breakdown from equity curve
+ */
+function monthlyReturns(equityCurve) {
+  if (!equityCurve || equityCurve.length < 2) return [];
+
+  const monthly = {};
+  for (const point of equityCurve) {
+    const monthKey = point.date.substring(0, 7); // "YYYY-MM"
+    monthly[monthKey] = point.capital;
+  }
+
+  const months = Object.keys(monthly).sort();
+  const returns = [];
+  for (let i = 1; i < months.length; i++) {
+    returns.push({
+      month: months[i],
+      return: ((monthly[months[i]] / monthly[months[i - 1]]) - 1),
+    });
+  }
+
+  return returns;
+}
+
+/**
+ * Full analysis report combining backtest results with advanced metrics
+ */
+function generateAnalysisReport(backtestResults) {
+  const { summary, trades, equityCurve } = backtestResults;
+
+  // Calculate periodic returns from equity curve
+  const periodicReturns = [];
+  for (let i = 1; i < equityCurve.length; i++) {
+    if (equityCurve[i].capital && equityCurve[i - 1].capital) {
+      periodicReturns.push(
+        (equityCurve[i].capital / equityCurve[i - 1].capital) - 1
+      );
+    }
+  }
+
+  const periodsPerYear = CONFIG.TRADING_DAYS_PER_YEAR / CONFIG.HOLDING_PERIOD; // ~11.5 rebalances/year
+
+  const sharpe = calcSharpeRatio(periodicReturns, periodsPerYear);
+  const sortino = calcSortinoRatio(periodicReturns, periodsPerYear);
+  const cagr = parseFloat(summary.cagr) / 100;
+  const mdd = parseFloat(summary.maxDrawdown) / 100;
+  const calmar = calcCalmarRatio(cagr, mdd);
+  const maxConsecLosses = maxConsecutiveLosses(trades);
+  const monthlyRets = monthlyReturns(equityCurve);
+
+  // Profit factor
+  const grossProfit = trades.filter(t => t.pnl > 0).reduce((s, t) => s + t.pnl, 0);
+  const grossLoss = Math.abs(trades.filter(t => t.pnl < 0).reduce((s, t) => s + t.pnl, 0));
+  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : Infinity;
+
+  // Expectancy per trade
+  const winRate = parseFloat(summary.winRate) / 100;
+  const avgWin = parseFloat(summary.avgWinnerPct) / 100;
+  const avgLoss = parseFloat(summary.avgLoserPct) / 100;
+  const expectancy = (winRate * avgWin) - ((1 - winRate) * avgLoss);
+
+  // Exit reason breakdown
+  const exitReasons = {};
+  for (const t of trades) {
+    exitReasons[t.exitReason] = (exitReasons[t.exitReason] || 0) + 1;
+  }
+
+  // Top winners and losers
+  const sortedByPnl = [...trades].sort((a, b) => b.pnl - a.pnl);
+  const top5Winners = sortedByPnl.slice(0, 5).map(t => ({
+    symbol: t.symbol, date: t.entryDate, pnlPct: t.pnlPct
+  }));
+  const top5Losers = sortedByPnl.slice(-5).reverse().map(t => ({
+    symbol: t.symbol, date: t.entryDate, pnlPct: t.pnlPct
+  }));
+
+  return {
+    // ----- CORE METRICS -----
+    performance: {
+      ...summary,
+      sharpeRatio: sharpe !== null ? sharpe.toFixed(2) : 'N/A',
+      sortinoRatio: sortino !== null ? sortino.toFixed(2) : 'N/A',
+      calmarRatio: calmar !== Infinity ? calmar.toFixed(2) : 'N/A',
+      profitFactor: profitFactor !== Infinity ? profitFactor.toFixed(2) : 'N/A',
+      expectancyPerTrade: (expectancy * 100).toFixed(2) + '%',
+    },
+
+    // ----- RISK METRICS -----
+    risk: {
+      maxDrawdown: summary.maxDrawdown,
+      maxConsecutiveLosses: maxConsecLosses,
+      cashPeriodsCount: summary.cashPeriods,
+      cashPeriodsRatio: ((summary.cashPeriods / (summary.cashPeriods + summary.periodsTraded)) * 100).toFixed(1) + '%',
+    },
+
+    // ----- TRADE ANALYSIS -----
+    tradeAnalysis: {
+      totalTrades: summary.totalTrades,
+      exitReasonBreakdown: exitReasons,
+      top5Winners,
+      top5Losers,
+    },
+
+    // ----- MONTHLY RETURNS -----
+    monthlyReturns: monthlyRets.map(m => ({
+      month: m.month,
+      return: (m.return * 100).toFixed(2) + '%',
+    })),
+
+    // ----- FULL DATA (for charting) -----
+    equityCurve,
+    allTrades: trades,
+  };
+}
+
+
+// ============================================================================
+// DRAWDOWN ANALYSIS
+// ============================================================================
+
+/**
+ * Compute all drawdown periods from an equity curve
+ */
+function analyzeDrawdowns(equityCurve) {
+  const drawdowns = [];
+  let peak = equityCurve[0].capital;
+  let drawdownStart = null;
+  let maxDDInPeriod = 0;
+
+  for (let i = 0; i < equityCurve.length; i++) {
+    const cap = equityCurve[i].capital;
+
+    if (cap > peak) {
+      // New peak — close any open drawdown period
+      if (drawdownStart !== null && maxDDInPeriod > 0.02) {
+        drawdowns.push({
+          start: drawdownStart,
+          end: equityCurve[i].date,
+          maxDrawdown: (maxDDInPeriod * 100).toFixed(2) + '%',
+          recoveryPeriods: i - equityCurve.findIndex(e => e.date === drawdownStart),
+        });
+      }
+      peak = cap;
+      drawdownStart = null;
+      maxDDInPeriod = 0;
+    } else {
+      const dd = (peak - cap) / peak;
+      if (drawdownStart === null) drawdownStart = equityCurve[i].date;
+      if (dd > maxDDInPeriod) maxDDInPeriod = dd;
+    }
+  }
+
+  // Handle open drawdown at the end
+  if (drawdownStart !== null && maxDDInPeriod > 0.02) {
+    drawdowns.push({
+      start: drawdownStart,
+      end: 'ONGOING',
+      maxDrawdown: (maxDDInPeriod * 100).toFixed(2) + '%',
+      recoveryPeriods: null,
+    });
+  }
+
+  return drawdowns.sort((a, b) => parseFloat(b.maxDrawdown) - parseFloat(a.maxDrawdown));
+}
+
+
+// ============================================================================
+// SECTOR / CONCENTRATION ANALYSIS
+// ============================================================================
+
+/**
+ * Analyze portfolio concentration and sector exposure
+ * @param {Object[]} holdings - current portfolio holdings with sector info
+ */
+function analyzeConcentration(holdings) {
+  if (!holdings || holdings.length === 0) return null;
+
+  // HHI (Herfindahl-Hirschman Index) — measures concentration
+  const hhi = holdings.reduce((sum, h) => sum + (h.weight_invVol * 100) ** 2, 0);
+
+  // Sector breakdown (if sectors are provided)
+  const sectorWeights = {};
+  for (const h of holdings) {
+    const sector = h.sector || 'Unknown';
+    sectorWeights[sector] = (sectorWeights[sector] || 0) + h.weight_invVol;
+  }
+
+  // Top holding weight
+  const maxWeight = Math.max(...holdings.map(h => h.weight_invVol));
+
+  return {
+    numberOfHoldings: holdings.length,
+    hhiIndex: hhi.toFixed(0),
+    concentration: hhi > 1500 ? 'HIGH' : hhi > 1000 ? 'MODERATE' : 'LOW',
+    topHoldingWeight: (maxWeight * 100).toFixed(1) + '%',
+    sectorBreakdown: Object.entries(sectorWeights)
+      .map(([sector, w]) => ({ sector, weight: (w * 100).toFixed(1) + '%' }))
+      .sort((a, b) => parseFloat(b.weight) - parseFloat(a.weight)),
+  };
+}
+
+
+// ============================================================================
+// REGIME ANALYSIS
+// ============================================================================
+
+/**
+ * Break down performance by market regime (bull vs bear)
+ */
+function performanceByRegime(trades, equityCurve) {
+  const bullTrades = [];
+  const bearTrades = [];
+
+  // Map trades to their regime
+  for (const t of trades) {
+    const ec = equityCurve.find(e => e.date === t.entryDate);
+    if (ec && ec.regime === 'BULL') {
+      bullTrades.push(t);
+    } else {
+      bearTrades.push(t);
+    }
+  }
+
+  const summarize = (tradeSet) => {
+    if (tradeSet.length === 0) return { trades: 0 };
+    const wins = tradeSet.filter(t => t.pnl > 0).length;
+    const totalPnl = tradeSet.reduce((s, t) => s + t.pnl, 0);
+    return {
+      trades: tradeSet.length,
+      winRate: ((wins / tradeSet.length) * 100).toFixed(1) + '%',
+      totalPnl: Math.round(totalPnl),
+      avgPnlPct: ((tradeSet.reduce((s, t) => s + parseFloat(t.pnlPct), 0) / tradeSet.length)).toFixed(2) + '%',
+    };
+  };
+
+  return {
+    bull: summarize(bullTrades),
+    bear: summarize(bearTrades),
+  };
+}
+
+
+// ============================================================================
+// PARAMETER SENSITIVITY ANALYSIS
+// ============================================================================
+
+/**
+ * Test how different parameter choices affect results
+ * (Run multiple backtests with parameter variations)
+ */
+function sensitivityAnalysis(universeHistory, capitalBase = 10000000) {
+  const results = [];
+
+  const weightCombos = [
+    { w1: 0.35, w3: 0.40, w6: 0.25, label: 'Default (35/40/25)' },
+    { w1: 0.50, w3: 0.30, w6: 0.20, label: 'Aggressive (50/30/20)' },
+    { w1: 0.20, w3: 0.50, w6: 0.30, label: 'Conservative (20/50/30)' },
+    { w1: 0.33, w3: 0.34, w6: 0.33, label: 'Equal (33/34/33)' },
+    { w1: 0.00, w3: 1.00, w6: 0.00, label: 'Pure 3M only' },
+    { w1: 1.00, w3: 0.00, w6: 0.00, label: 'Pure 1M only' },
+  ];
+
+  const topNCombos = [10, 15, 20, 25];
+  const stopLossCombos = [0.06, 0.08, 0.10, 0.12];
+
+  // Test weight variations (keep other params default)
+  for (const combo of weightCombos) {
+    const originalWeights = {
+      w1: CONFIG.WEIGHT_1M,
+      w3: CONFIG.WEIGHT_3M,
+      w6: CONFIG.WEIGHT_6M,
+    };
+
+    CONFIG.WEIGHT_1M = combo.w1;
+    CONFIG.WEIGHT_3M = combo.w3;
+    CONFIG.WEIGHT_6M = combo.w6;
+
+    const bt = runBacktest(universeHistory, capitalBase);
+
+    results.push({
+      parameter: 'Momentum Weights',
+      variation: combo.label,
+      cagr: bt.summary.cagr,
+      maxDD: bt.summary.maxDrawdown,
+      winRate: bt.summary.winRate,
+      trades: bt.summary.totalTrades,
+    });
+
+    // Restore
+    CONFIG.WEIGHT_1M = originalWeights.w1;
+    CONFIG.WEIGHT_3M = originalWeights.w3;
+    CONFIG.WEIGHT_6M = originalWeights.w6;
+  }
+
+  // Test top-N variations
+  for (const n of topNCombos) {
+    const original = CONFIG.TOP_N_STOCKS;
+    CONFIG.TOP_N_STOCKS = n;
+
+    const bt = runBacktest(universeHistory, capitalBase);
+    results.push({
+      parameter: 'Portfolio Size',
+      variation: `Top ${n}`,
+      cagr: bt.summary.cagr,
+      maxDD: bt.summary.maxDrawdown,
+      winRate: bt.summary.winRate,
+      trades: bt.summary.totalTrades,
+    });
+
+    CONFIG.TOP_N_STOCKS = original;
+  }
+
+  // Test stop-loss variations
+  for (const sl of stopLossCombos) {
+    const original = CONFIG.STOP_LOSS_PCT;
+    CONFIG.STOP_LOSS_PCT = sl;
+
+    const bt = runBacktest(universeHistory, capitalBase);
+    results.push({
+      parameter: 'Stop Loss',
+      variation: `${(sl * 100).toFixed(0)}%`,
+      cagr: bt.summary.cagr,
+      maxDD: bt.summary.maxDrawdown,
+      winRate: bt.summary.winRate,
+      trades: bt.summary.totalTrades,
+    });
+
+    CONFIG.STOP_LOSS_PCT = original;
+  }
+
+  return results;
+}
+
+
+// ============================================================================
+// USAGE EXAMPLE / DEMO
+// ============================================================================
+
+function runDemo() {
+  console.log('=== MOMENTUM STRATEGY — DEMONSTRATION ===\n');
+
+  // Simulate some stock data (in production, this comes from your data source)
+  function generateMockPrices(startPrice, days, trend = 0.001, noise = 0.02) {
+    const prices = [startPrice];
+    for (let i = 1; i < days; i++) {
+      const change = trend + (Math.random() - 0.5) * noise;
+      prices.push(prices[i - 1] * (1 + change));
+    }
+    return prices;
+  }
+
+  function generateMockVolumes(days, baseVol = 500000) {
+    return Array.from({ length: days }, () =>
+      Math.round(baseVol * (0.5 + Math.random()))
+    );
+  }
+
+  const DAYS = 150; // need at least 132 + some buffer
+
+  // Create mock universe
+  const mockStocks = [
+    { symbol: 'RELIANCE', trend: 0.0015, noise: 0.025, turnover: 50 },
+    { symbol: 'TCS', trend: 0.0012, noise: 0.018, turnover: 35 },
+    { symbol: 'INFY', trend: 0.0020, noise: 0.022, turnover: 40 },
+    { symbol: 'HDFCBANK', trend: 0.0008, noise: 0.020, turnover: 45 },
+    { symbol: 'ICICIBANK', trend: 0.0018, noise: 0.028, turnover: 30 },
+    { symbol: 'HINDUNILVR', trend: 0.0005, noise: 0.015, turnover: 20 },
+    { symbol: 'BHARTIARTL', trend: 0.0025, noise: 0.030, turnover: 25 },
+    { symbol: 'SBIN', trend: 0.0022, noise: 0.035, turnover: 28 },
+    { symbol: 'BAJFINANCE', trend: 0.0030, noise: 0.040, turnover: 22 },
+    { symbol: 'LT', trend: 0.0010, noise: 0.020, turnover: 18 },
+    { symbol: 'TATAMOTORS', trend: 0.0028, noise: 0.038, turnover: 15 },
+    { symbol: 'AXISBANK', trend: 0.0015, noise: 0.025, turnover: 20 },
+    { symbol: 'WIPRO', trend: 0.0006, noise: 0.020, turnover: 12 },
+    { symbol: 'SUNPHARMA', trend: 0.0018, noise: 0.022, turnover: 16 },
+    { symbol: 'MARUTI', trend: 0.0012, noise: 0.025, turnover: 14 },
+    { symbol: 'TITAN', trend: 0.0020, noise: 0.030, turnover: 11 },
+    { symbol: 'ADANIENT', trend: 0.0035, noise: 0.050, turnover: 25 },
+    { symbol: 'POWERGRID', trend: 0.0008, noise: 0.015, turnover: 10 },
+    { symbol: 'NTPC', trend: 0.0015, noise: 0.020, turnover: 12 },
+    { symbol: 'JSWSTEEL', trend: 0.0022, noise: 0.035, turnover: 15 },
+    { symbol: 'SMALLCAP1', trend: -0.001, noise: 0.04, turnover: 2 }, // should be filtered (low turnover)
+    { symbol: 'WILDCAP1', trend: 0.004, noise: 0.08, turnover: 8 },  // should be filtered (high vol)
+  ];
+
+  const universe = mockStocks.map(s => ({
+    symbol: s.symbol,
+    prices: generateMockPrices(1000, DAYS, s.trend, s.noise),
+    volumes: generateMockVolumes(DAYS),
+    avgDailyTurnoverCr: s.turnover,
+  }));
+
+  const niftyPrices = generateMockPrices(18000, DAYS, 0.0012, 0.012);
+
+  // ---- 1. Single period portfolio generation ----
+  console.log('--- SINGLE PERIOD PORTFOLIO GENERATION ---\n');
+  const portfolio = generatePortfolio(universe, niftyPrices, '2024-01-15');
+  console.log(`Market Regime: ${portfolio.regime}`);
+  console.log(`Signal: ${portfolio.signal}`);
+  console.log(`Candidates: ${portfolio.totalCandidates}, Passed filters: ${portfolio.passedFilters}`);
+  console.log(`\nSelected Holdings (${portfolio.holdings.length}):`);
+  console.log('-'.repeat(95));
+  console.log(
+    'Symbol'.padEnd(15) +
+    'Score'.padEnd(10) +
+    '1M Ret'.padEnd(10) +
+    '3M Ret'.padEnd(10) +
+    '6M Ret'.padEnd(10) +
+    'Vol'.padEnd(10) +
+    'Weight'.padEnd(10) +
+    'Stop Loss'.padEnd(12)
+  );
+  console.log('-'.repeat(95));
+
+  for (const h of portfolio.holdings) {
+    console.log(
+      h.symbol.padEnd(15) +
+      h.composite.toFixed(4).padEnd(10) +
+      (h.ret1m * 100).toFixed(1).padStart(5).padEnd(10) + '%' +
+      (h.ret3m * 100).toFixed(1).padStart(4).padEnd(10) + '%' +
+      (h.ret6m * 100).toFixed(1).padStart(4).padEnd(10) + '%' +
+      (h.volatility * 100).toFixed(1).padStart(4).padEnd(10) + '%' +
+      (h.weight_invVol * 100).toFixed(1).padStart(4).padEnd(10) + '%' +
+      ('₹' + h.stopLoss.toFixed(0)).padEnd(12)
+    );
+  }
+
+  // ---- 2. Concentration analysis ----
+  console.log('\n--- CONCENTRATION ANALYSIS ---\n');
+  const concentration = analyzeConcentration(portfolio.holdings);
+  console.log(JSON.stringify(concentration, null, 2));
+
+  // ---- 3. Position monitoring demo ----
+  console.log('\n--- POSITION MONITORING DEMO ---\n');
+  const demoPosition = {
+    symbol: 'INFY',
+    entryPrice: 1500,
+    pricesSinceEntry: [1500, 1520, 1540, 1560, 1580, 1600, 1620, 1650, 1660, 1655, 1640, 1635],
+  };
+
+  const scenarios = [
+    { price: 1650, days: 10, label: 'Up 10% day 10' },
+    { price: 1380, days: 5, label: 'Down 8% day 5 (stop loss)' },
+    { price: 1700, days: 22, label: 'Up 13.3% day 22 (holding period end)' },
+    { price: 1640, days: 15, label: 'Was up 10%+, trailing stop check' },
+  ];
+
+  for (const s of scenarios) {
+    const result = checkExitConditions(demoPosition, s.price, s.days);
+    console.log(`${s.label}: ${result.action} ${result.reason || ''} (PnL: ${(result.pnlPct * 100).toFixed(1)}%)`);
+  }
+
+  // ---- 4. Backtest simulation ----
+  console.log('\n--- BACKTEST SIMULATION ---\n');
+
+  // Create multiple periods of universe data for backtest
+  const universeHistory = [];
+  for (let period = 0; period < 12; period++) {
+    const offset = period * CONFIG.HOLDING_PERIOD;
+    const periodStocks = mockStocks.map(s => ({
+      symbol: s.symbol,
+      prices: generateMockPrices(1000, DAYS, s.trend + (Math.random() - 0.5) * 0.001, s.noise),
+      volumes: generateMockVolumes(DAYS),
+      avgDailyTurnoverCr: s.turnover,
+    }));
+
+    const month = String(period + 1).padStart(2, '0');
+    universeHistory.push({
+      date: `2024-${month}-15`,
+      stocks: periodStocks,
+      niftyPrices: generateMockPrices(18000, DAYS, 0.001 + (Math.random() - 0.3) * 0.0005, 0.012),
+    });
+  }
+
+  const backtestResults = runBacktest(universeHistory, 10000000);
+  const report = generateAnalysisReport(backtestResults);
+
+  console.log('PERFORMANCE SUMMARY:');
+  console.log(JSON.stringify(report.performance, null, 2));
+
+  console.log('\nRISK METRICS:');
+  console.log(JSON.stringify(report.risk, null, 2));
+
+  console.log('\nTRADE ANALYSIS:');
+  console.log(JSON.stringify(report.tradeAnalysis, null, 2));
+
+  console.log('\nEQUITY CURVE:');
+  for (const e of report.equityCurve) {
+    console.log(`  ${e.date}  ₹${e.capital?.toLocaleString('en-IN') || '-'}  [${e.regime}] DD: ${e.drawdown || '-'}`);
+  }
+
+  // ---- 5. Drawdown analysis ----
+  console.log('\n--- DRAWDOWN ANALYSIS ---');
+  const drawdowns = analyzeDrawdowns(report.equityCurve);
+  if (drawdowns.length > 0) {
+    console.log(JSON.stringify(drawdowns.slice(0, 5), null, 2));
+  } else {
+    console.log('No significant drawdowns (>2%) detected.');
+  }
+
+  // ---- 6. Regime analysis ----
+  console.log('\n--- PERFORMANCE BY REGIME ---');
+  const regimePerf = performanceByRegime(report.allTrades, report.equityCurve);
+  console.log(JSON.stringify(regimePerf, null, 2));
+
+  console.log('\n=== STRATEGY ANALYSIS COMPLETE ===');
+}
+
+
+// ============================================================================
+// EXPORTS
+// ============================================================================
+
+module.exports = {
+  // Configuration
+  CONFIG,
+
+  // Core calculations
+  calcReturn,
+  calcMomentumScore,
+  calcRealizedVolatility,
+  calcAvgVolume,
+  isBullRegime,
+  calcTrailingStopLevel,
+
+  // Filters
+  applyFilters,
+
+  // Portfolio construction
+  generatePortfolio,
+
+  // Position management
+  checkExitConditions,
+
+  // Backtesting
+  runBacktest,
+
+  // Analytics
+  calcSharpeRatio,
+  calcSortinoRatio,
+  calcCalmarRatio,
+  maxConsecutiveLosses,
+  monthlyReturns,
+  generateAnalysisReport,
+  analyzeDrawdowns,
+  analyzeConcentration,
+  performanceByRegime,
+  sensitivityAnalysis,
+};
+
+
+// Run demo if executed directly
+if (require.main === module) {
+  runDemo();
+}
