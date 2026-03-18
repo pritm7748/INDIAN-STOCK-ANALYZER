@@ -1,126 +1,138 @@
 // src/app/api/strategy/momentum/route.ts
-// Runs the Momentum Trading Strategy on a curated set of liquid NSE stocks
+// Streams momentum analysis across ALL ~500 stocks via SSE
 
 import { NextResponse } from 'next/server'
 import yahooFinance from 'yahoo-finance2'
-import { generateMomentumPortfolio, StockData, DEFAULT_CONFIG } from '@/lib/strategy/momentum'
+import { generateMomentumPortfolio, checkMarketRegime, StockData, DEFAULT_CONFIG } from '@/lib/strategy/momentum'
 import { STOCK_LIST } from '@/lib/stockList'
 
 const yf = new (yahooFinance as any)()
+const BATCH_SIZE = 8
 
-// Use a subset of highly liquid large-cap + mid-cap stocks to keep API fast
-// Pick ~50 diverse, liquid stocks from the list
-const MOMENTUM_UNIVERSE_SYMBOLS = [
-  // Large-cap blue chips
-  'RELIANCE.NS', 'TCS.NS', 'INFY.NS', 'HDFCBANK.NS', 'ICICIBANK.NS',
-  'BHARTIARTL.NS', 'SBIN.NS', 'LT.NS', 'ITC.NS', 'HINDUNILVR.NS',
-  'KOTAKBANK.NS', 'BAJFINANCE.NS', 'MARUTI.NS', 'ASIANPAINT.NS', 'TITAN.NS',
-  'SUNPHARMA.NS', 'HCLTECH.NS', 'AXISBANK.NS', 'WIPRO.NS', 'ULTRACEMCO.NS',
-  // Mid-cap momentum candidates
-  'TATASTEEL.NS', 'JSWSTEEL.NS', 'HINDALCO.NS', 'ADANIENT.NS', 'ADANIPORTS.NS',
-  'BAJAJFINSV.NS', 'TECHM.NS', 'DRREDDY.NS', 'CIPLA.NS', 'DIVISLAB.NS',
-  'TATAPOWER.NS', 'POWERGRID.NS', 'NTPC.NS', 'BPCL.NS', 'ONGC.NS',
-  'COALINDIA.NS', 'GRASIM.NS', 'NESTLEIND.NS', 'BRITANNIA.NS', 'EICHERMOT.NS',
-  'HEROMOTOCO.NS', 'TRENT.NS', 'HAL.NS', 'BEL.NS', 'TATACONSUM.NS',
-  'INDIGO.NS', 'APOLLOHOSP.NS', 'DLF.NS', 'SHRIRAMFIN.NS', 'PERSISTENT.NS',
-  'POLYCAB.NS', 'DIXON.NS', 'PIDILITIND.NS', 'GODREJCP.NS', 'DABUR.NS',
-  'CHOLAFIN.NS', 'IRCTC.NS', 'VBL.NS', 'SRF.NS', 'KEI.NS',
-]
+export const maxDuration = 120 // Vercel edge timeout
+export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  try {
-    // Fetch 1 year of data (need at least 132 trading days + buffer for 6M lookback)
-    const endDate = new Date()
-    const startDate = new Date()
-    startDate.setMonth(endDate.getMonth() - 10) // ~10 months
-    const period1 = startDate.toISOString().split('T')[0]
+  const encoder = new TextEncoder()
 
-    // Fetch Nifty 50 benchmark
-    let niftyPrices: number[] = []
-    try {
-      const niftyResult = await yf.chart('^NSEI', { period1, interval: '1d' } as any) as any
-      if (niftyResult?.quotes) {
-        niftyPrices = niftyResult.quotes
-          .filter((q: any) => q.close !== null)
-          .map((q: any) => q.close)
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: string, data: any) => {
+        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`))
       }
-    } catch (e) {
-      console.error('Failed to fetch Nifty:', e)
-    }
 
-    // Fetch all stocks in parallel (batched to avoid rate limits)
-    const BATCH_SIZE = 10
-    const universe: StockData[] = []
-    const errors: string[] = []
+      try {
+        // Fetch 10 months of data for 6M lookback
+        const endDate = new Date()
+        const startDate = new Date()
+        startDate.setMonth(endDate.getMonth() - 10)
+        const period1 = startDate.toISOString().split('T')[0]
 
-    for (let i = 0; i < MOMENTUM_UNIVERSE_SYMBOLS.length; i += BATCH_SIZE) {
-      const batch = MOMENTUM_UNIVERSE_SYMBOLS.slice(i, i + BATCH_SIZE)
+        // 1. Fetch Nifty first for regime check
+        send('status', { phase: 'regime', message: 'Checking market regime (Nifty 50)...' })
+        let niftyPrices: number[] = []
+        try {
+          const niftyResult = await yf.chart('^NSEI', { period1, interval: '1d' } as any) as any
+          if (niftyResult?.quotes) {
+            niftyPrices = niftyResult.quotes.filter((q: any) => q.close !== null).map((q: any) => q.close)
+          }
+        } catch { /* continue without regime filter */ }
 
-      const results = await Promise.allSettled(
-        batch.map(async (symbol) => {
-          try {
-            const chartResult = await yf.chart(symbol, { period1, interval: '1d' } as any) as any
-            if (!chartResult?.quotes || chartResult.quotes.length < 50) {
-              throw new Error(`Insufficient data for ${symbol}`)
+        const regime = checkMarketRegime(niftyPrices, DEFAULT_CONFIG.NIFTY_SMA_PERIOD)
+        send('regime', { ...regime, smaPeriod: DEFAULT_CONFIG.NIFTY_SMA_PERIOD })
+
+        // 2. Scan all stocks in batches
+        const allSymbols = STOCK_LIST.map(s => s.symbol)
+        const totalBatches = Math.ceil(allSymbols.length / BATCH_SIZE)
+        const allStockData: StockData[] = []
+        let scannedCount = 0
+        let errorCount = 0
+
+        send('status', { phase: 'scanning', message: `Scanning ${allSymbols.length} stocks...`, total: allSymbols.length })
+
+        for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+          const batch = allSymbols.slice(batchIdx * BATCH_SIZE, (batchIdx + 1) * BATCH_SIZE)
+
+          const results = await Promise.allSettled(
+            batch.map(async (symbol) => {
+              const chartResult = await yf.chart(symbol, { period1, interval: '1d' } as any) as any
+              if (!chartResult?.quotes || chartResult.quotes.length < 50) {
+                throw new Error('Insufficient data')
+              }
+
+              const quotes = chartResult.quotes.filter((q: any) => q.close !== null && q.volume !== null)
+              const prices = quotes.map((q: any) => q.close as number)
+              const volumes = quotes.map((q: any) => q.volume as number)
+
+              // Estimate avg daily turnover in crores
+              const last20 = quotes.slice(-20)
+              const avgTurnover = last20.length > 0
+                ? last20.reduce((s: number, q: any) => s + (q.close * q.volume), 0) / last20.length / 1e7
+                : 0
+
+              const stockInfo = STOCK_LIST.find(s => s.symbol === symbol)
+
+              return {
+                symbol,
+                name: stockInfo?.name || symbol.replace('.NS', ''),
+                sector: stockInfo?.sector || 'Unknown',
+                prices,
+                volumes,
+                avgDailyTurnoverCr: avgTurnover,
+              } as StockData
+            })
+          )
+
+          for (const r of results) {
+            if (r.status === 'fulfilled') {
+              allStockData.push(r.value)
+            } else {
+              errorCount++
             }
+          }
 
-            const quotes = chartResult.quotes.filter((q: any) => q.close !== null && q.volume !== null)
-            const prices = quotes.map((q: any) => q.close as number)
-            const volumes = quotes.map((q: any) => q.volume as number)
+          scannedCount += batch.length
 
-            // Estimate avg daily turnover = avg(close * volume) / 1e7 (to get in Cr)
-            const last20 = quotes.slice(-20)
-            const avgTurnover = last20.reduce((s: number, q: any) => s + (q.close * q.volume), 0) / last20.length / 1e7
+          // Send progress update with intermediate top picks
+          send('progress', {
+            scanned: scannedCount,
+            total: allSymbols.length,
+            fetched: allStockData.length,
+            errors: errorCount,
+            batchDone: batchIdx + 1,
+            totalBatches,
+            pct: Math.round((scannedCount / allSymbols.length) * 100),
+          })
+        }
 
-            const stockInfo = STOCK_LIST.find(s => s.symbol === symbol)
+        // 3. Run the full momentum engine on all fetched data
+        send('status', { phase: 'analyzing', message: `Analyzing ${allStockData.length} stocks...` })
 
-            return {
-              symbol,
-              name: stockInfo?.name || symbol.replace('.NS', ''),
-              sector: stockInfo?.sector || 'Unknown',
-              prices,
-              volumes,
-              avgDailyTurnoverCr: avgTurnover,
-            } as StockData
-          } catch (err: any) {
-            throw new Error(`${symbol}: ${err.message}`)
+        const portfolio = generateMomentumPortfolio(allStockData, niftyPrices, DEFAULT_CONFIG)
+
+        send('result', {
+          ...portfolio,
+          fetchStats: {
+            totalSymbols: allSymbols.length,
+            successfulFetches: allStockData.length,
+            failedFetches: errorCount,
           }
         })
-      )
 
-      for (const result of results) {
-        if (result.status === 'fulfilled') {
-          universe.push(result.value)
-        } else {
-          errors.push(result.reason?.message || 'Unknown error')
-        }
+        send('done', { success: true })
+      } catch (err: any) {
+        send('error', { message: err.message || 'Strategy failed' })
+      } finally {
+        controller.close()
       }
     }
+  })
 
-    if (universe.length < 10) {
-      return NextResponse.json(
-        { error: `Only ${universe.length} stocks fetched successfully. Need at least 10.`, errors },
-        { status: 500 }
-      )
-    }
-
-    // Run the momentum strategy
-    const portfolio = generateMomentumPortfolio(universe, niftyPrices, DEFAULT_CONFIG)
-
-    return NextResponse.json({
-      ...portfolio,
-      fetchStats: {
-        totalSymbols: MOMENTUM_UNIVERSE_SYMBOLS.length,
-        successfulFetches: universe.length,
-        failedFetches: errors.length,
-        errors: errors.slice(0, 5),
-      },
-    })
-  } catch (error: any) {
-    console.error('Momentum Strategy API Error:', error)
-    return NextResponse.json(
-      { error: error.message || 'Strategy analysis failed' },
-      { status: 500 }
-    )
-  }
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+    },
+  })
 }

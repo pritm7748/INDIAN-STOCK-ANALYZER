@@ -1,11 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import {
     Brain, Loader2, TrendingUp, TrendingDown, Shield,
     Zap, Target, BarChart3, AlertTriangle, ChevronDown,
-    ChevronRight, Activity, Clock, Filter, ArrowUpRight,
-    ArrowDownRight, Minus, Info
+    ChevronRight, Activity, Clock, Filter, Info, StopCircle
 } from 'lucide-react'
 
 interface Holding {
@@ -54,13 +53,32 @@ interface StrategyResult {
     }
 }
 
+interface ScanProgress {
+    scanned: number
+    total: number
+    fetched: number
+    errors: number
+    pct: number
+}
+
+interface RegimeInfo {
+    isBull: boolean
+    currentPrice: number
+    sma: number
+    smaPeriod: number
+}
+
 export default function StrategyAnalysisPage() {
-    const [loading, setLoading] = useState(false)
+    const [scanning, setScanning] = useState(false)
     const [result, setResult] = useState<StrategyResult | null>(null)
     const [error, setError] = useState('')
     const [showFiltered, setShowFiltered] = useState(false)
     const [showAllScored, setShowAllScored] = useState(false)
     const [activeTimeframe, setActiveTimeframe] = useState('1M')
+    const [progress, setProgress] = useState<ScanProgress | null>(null)
+    const [regime, setRegime] = useState<RegimeInfo | null>(null)
+    const [statusMsg, setStatusMsg] = useState('')
+    const abortRef = useRef<AbortController | null>(null)
 
     const timeframes = [
         { id: '1W', label: '1 Week', available: false },
@@ -70,24 +88,80 @@ export default function StrategyAnalysisPage() {
         { id: '1Y', label: '1 Year', available: false },
     ]
 
-    const runMomentumStrategy = async () => {
-        setLoading(true)
+    const stopScan = useCallback(() => {
+        abortRef.current?.abort()
+        setScanning(false)
+        setStatusMsg('Scan stopped')
+    }, [])
+
+    const runMomentumStrategy = useCallback(async () => {
+        setScanning(true)
         setError('')
         setResult(null)
+        setProgress(null)
+        setRegime(null)
+        setStatusMsg('Connecting...')
+
+        const abort = new AbortController()
+        abortRef.current = abort
+
         try {
-            const res = await fetch('/api/strategy/momentum')
-            if (!res.ok) {
-                const data = await res.json()
-                throw new Error(data.error || 'Strategy failed')
+            const res = await fetch('/api/strategy/momentum', { signal: abort.signal })
+            if (!res.ok || !res.body) throw new Error('Failed to connect')
+
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+
+                let currentEvent = ''
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        currentEvent = line.slice(7).trim()
+                    } else if (line.startsWith('data: ') && currentEvent) {
+                        try {
+                            const data = JSON.parse(line.slice(6))
+                            switch (currentEvent) {
+                                case 'status':
+                                    setStatusMsg(data.message || '')
+                                    break
+                                case 'regime':
+                                    setRegime(data)
+                                    break
+                                case 'progress':
+                                    setProgress(data)
+                                    setStatusMsg(`Scanning... ${data.scanned}/${data.total} stocks (${data.pct}%)`)
+                                    break
+                                case 'result':
+                                    setResult(data)
+                                    setStatusMsg('Analysis complete!')
+                                    break
+                                case 'error':
+                                    setError(data.message)
+                                    break
+                                case 'done':
+                                    break
+                            }
+                        } catch { /* skip malformed JSON */ }
+                        currentEvent = ''
+                    }
+                }
             }
-            const data = await res.json()
-            setResult(data)
         } catch (err: any) {
-            setError(err.message || 'Something went wrong')
+            if (err.name !== 'AbortError') {
+                setError(err.message || 'Something went wrong')
+            }
         } finally {
-            setLoading(false)
+            setScanning(false)
         }
-    }
+    }, [])
 
     return (
         <div className="max-w-[1400px] mx-auto space-y-5 overflow-x-hidden">
@@ -136,14 +210,22 @@ export default function StrategyAnalysisPage() {
                                     </div>
                                     <div>
                                         <h3 className="text-sm font-bold text-[var(--foreground)]">MOMENTUM TRADING</h3>
-                                        <p className="text-[10px] text-[var(--foreground-muted)]">Jegadeesh & Titman · Multi-period composite scoring · Inverse-vol weighting</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Jegadeesh & Titman · Multi-period composite scoring · Inv-vol weighting</p>
                                     </div>
                                     <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 text-[9px] font-bold rounded-full border border-emerald-500/20">PROVEN</span>
                                 </div>
-                                <button onClick={runMomentumStrategy} disabled={loading}
-                                    className="px-6 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 disabled:opacity-40 text-white font-semibold rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40 hover:scale-[1.02] active:scale-[0.98] whitespace-nowrap text-sm">
-                                    {loading ? <><Loader2 size={16} className="animate-spin" /> Scanning...</> : <><Zap size={16} /> Run Strategy</>}
-                                </button>
+                                <div className="flex items-center gap-2">
+                                    {scanning && (
+                                        <button onClick={stopScan}
+                                            className="px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-semibold rounded-xl flex items-center gap-2 transition-all text-sm border border-red-500/20">
+                                            <StopCircle size={16} /> Stop
+                                        </button>
+                                    )}
+                                    <button onClick={runMomentumStrategy} disabled={scanning}
+                                        className="px-6 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 disabled:opacity-40 text-white font-semibold rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40 hover:scale-[1.02] active:scale-[0.98] whitespace-nowrap text-sm">
+                                        {scanning ? <><Loader2 size={16} className="animate-spin" /> Scanning...</> : <><Zap size={16} /> Scan All Stocks</>}
+                                    </button>
+                                </div>
                             </div>
                             {/* Academic backing */}
                             <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-[var(--foreground-muted)]">
@@ -151,29 +233,68 @@ export default function StrategyAnalysisPage() {
                                 <span className="px-2 py-1 bg-[var(--background)] rounded-lg border border-[var(--border)]">📊 Sehgal & Balakrishnan 2002</span>
                                 <span className="px-2 py-1 bg-[var(--background)] rounded-lg border border-[var(--border)]">🇮🇳 NSE Nifty200 MOM30</span>
                                 <span className="px-2 py-1 bg-[var(--background)] rounded-lg border border-[var(--border)]">⏱️ {result?.holdingPeriod || '22 trading days'}</span>
+                                <span className="px-2 py-1 bg-[var(--background)] rounded-lg border border-[var(--border)]">🔍 ~500 stocks universe</span>
                             </div>
                         </div>
 
-                        {/* Loading */}
-                        {loading && (
-                            <div className="p-8 text-center space-y-3">
-                                <Loader2 size={32} className="animate-spin text-cyan-400 mx-auto" />
-                                <p className="text-sm text-[var(--foreground-muted)]">Scanning ~60 stocks, computing momentum scores, applying filters...</p>
-                                <div className="mx-auto h-1 w-48 bg-[var(--border)] rounded-full overflow-hidden">
-                                    <div className="h-full bg-gradient-to-r from-cyan-500 via-blue-500 to-cyan-500 rounded-full animate-pulse" style={{ width: '70%' }} />
+                        {/* LIVE SCANNING PROGRESS */}
+                        {scanning && (
+                            <div className="p-4 sm:p-5 space-y-3 border-b border-[var(--border)] bg-gradient-to-b from-cyan-500/5 to-transparent">
+                                {/* Regime info if received */}
+                                {regime && (
+                                    <div className={`rounded-xl p-3 border ${regime.isBull
+                                        ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
+                                        <div className="flex items-center gap-2 text-sm">
+                                            <span className={`px-2 py-1 rounded-lg text-xs font-bold ${regime.isBull
+                                                ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                                                {regime.isBull ? '🟢 BULL' : '🔴 BEAR'}
+                                            </span>
+                                            <span className="text-xs text-[var(--foreground-muted)]">
+                                                Nifty ₹{regime.currentPrice?.toFixed(0)} {regime.isBull ? '>' : '<'} {regime.smaPeriod}d SMA ₹{regime.sma?.toFixed(0)}
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Progress bar */}
+                                <div className="space-y-2">
+                                    <div className="flex items-center justify-between text-xs">
+                                        <span className="text-[var(--foreground-muted)] flex items-center gap-1.5">
+                                            <Loader2 size={12} className="animate-spin text-cyan-400" />
+                                            {statusMsg}
+                                        </span>
+                                        {progress && (
+                                            <span className="text-cyan-400 font-bold">{progress.pct}%</span>
+                                        )}
+                                    </div>
+                                    <div className="h-2 bg-[var(--border)] rounded-full overflow-hidden">
+                                        <div
+                                            className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full transition-all duration-300 ease-out"
+                                            style={{ width: `${progress?.pct || 2}%` }}
+                                        />
+                                    </div>
+                                    {progress && (
+                                        <div className="flex flex-wrap gap-3 text-[10px] text-[var(--foreground-muted)]">
+                                            <span>📊 Scanned: <strong className="text-[var(--foreground)]">{progress.scanned}/{progress.total}</strong></span>
+                                            <span>✅ Fetched: <strong className="text-emerald-400">{progress.fetched}</strong></span>
+                                            {progress.errors > 0 && (
+                                                <span>❌ Errors: <strong className="text-red-400">{progress.errors}</strong></span>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )}
 
                         {/* Error */}
                         {error && (
-                            <div className="p-4 mx-4 mb-4 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-2 text-sm text-red-400">
+                            <div className="p-4 mx-4 mb-4 mt-4 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-2 text-sm text-red-400">
                                 <AlertTriangle size={16} /> {error}
                             </div>
                         )}
 
                         {/* RESULTS */}
-                        {result && (
+                        {result && !scanning && (
                             <div className="p-4 sm:p-5 space-y-4">
                                 {/* Market Regime Banner */}
                                 <div className={`rounded-xl p-4 border-2 ${result.regime === 'BULL'
@@ -203,7 +324,7 @@ export default function StrategyAnalysisPage() {
                                 {/* Stats Row */}
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                                     {[
-                                        { label: 'Scanned', value: result.totalCandidates, icon: Activity, color: 'text-blue-400' },
+                                        { label: 'Universe Scanned', value: result.fetchStats?.totalSymbols || result.totalCandidates, icon: Activity, color: 'text-blue-400' },
                                         { label: 'Passed Filters', value: result.passedFilters, icon: Filter, color: 'text-emerald-400' },
                                         { label: 'Selected', value: result.holdings?.length || 0, icon: Target, color: 'text-cyan-400' },
                                         { label: 'Filtered Out', value: result.filteredOut?.length || 0, icon: AlertTriangle, color: 'text-amber-400' },
@@ -252,7 +373,7 @@ export default function StrategyAnalysisPage() {
                                             <h4 className="text-sm font-semibold text-[var(--foreground)]">
                                                 Top {result.holdings.length} Momentum Picks
                                             </h4>
-                                            <span className="text-[10px] text-[var(--foreground-muted)]">· ranked by composite score · inv-vol weighted</span>
+                                            <span className="text-[10px] text-[var(--foreground-muted)]">· from {result.fetchStats?.successfulFetches || result.totalCandidates} stocks · inv-vol weighted</span>
                                         </div>
 
                                         <div className="space-y-1.5">
@@ -274,38 +395,21 @@ export default function StrategyAnalysisPage() {
                                                             </div>
                                                         </div>
 
-                                                        {/* Score + Returns */}
+                                                        {/* Score + Returns (desktop) */}
                                                         <div className="hidden sm:flex items-center gap-2 shrink-0">
-                                                            <div className="text-center px-2">
-                                                                <p className="text-xs font-bold text-cyan-400">{(h.composite * 100).toFixed(1)}%</p>
-                                                                <p className="text-[8px] text-[var(--foreground-muted)]">Score</p>
-                                                            </div>
-                                                            <div className="text-center px-2">
-                                                                <p className={`text-xs font-bold ${h.ret1m >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                                                    {h.ret1m >= 0 ? '+' : ''}{(h.ret1m * 100).toFixed(1)}%
-                                                                </p>
-                                                                <p className="text-[8px] text-[var(--foreground-muted)]">1M</p>
-                                                            </div>
-                                                            <div className="text-center px-2">
-                                                                <p className={`text-xs font-bold ${h.ret3m >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                                                    {h.ret3m >= 0 ? '+' : ''}{(h.ret3m * 100).toFixed(1)}%
-                                                                </p>
-                                                                <p className="text-[8px] text-[var(--foreground-muted)]">3M</p>
-                                                            </div>
-                                                            <div className="text-center px-2">
-                                                                <p className={`text-xs font-bold ${h.ret6m >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                                                    {h.ret6m >= 0 ? '+' : ''}{(h.ret6m * 100).toFixed(1)}%
-                                                                </p>
-                                                                <p className="text-[8px] text-[var(--foreground-muted)]">6M</p>
-                                                            </div>
-                                                            <div className="text-center px-2">
-                                                                <p className="text-xs font-bold text-[var(--foreground)]">{(h.volatility * 100).toFixed(1)}%</p>
-                                                                <p className="text-[8px] text-[var(--foreground-muted)]">Vol</p>
-                                                            </div>
-                                                            <div className="text-center px-2">
-                                                                <p className="text-xs font-bold text-violet-400">{(h.weightInvVol * 100).toFixed(1)}%</p>
-                                                                <p className="text-[8px] text-[var(--foreground-muted)]">Wt</p>
-                                                            </div>
+                                                            {[
+                                                                { l: 'Score', v: `${(h.composite * 100).toFixed(1)}%`, c: 'text-cyan-400' },
+                                                                { l: '1M', v: `${h.ret1m >= 0 ? '+' : ''}${(h.ret1m * 100).toFixed(1)}%`, c: h.ret1m >= 0 ? 'text-emerald-400' : 'text-red-400' },
+                                                                { l: '3M', v: `${h.ret3m >= 0 ? '+' : ''}${(h.ret3m * 100).toFixed(1)}%`, c: h.ret3m >= 0 ? 'text-emerald-400' : 'text-red-400' },
+                                                                { l: '6M', v: `${h.ret6m >= 0 ? '+' : ''}${(h.ret6m * 100).toFixed(1)}%`, c: h.ret6m >= 0 ? 'text-emerald-400' : 'text-red-400' },
+                                                                { l: 'Vol', v: `${(h.volatility * 100).toFixed(1)}%`, c: 'text-[var(--foreground)]' },
+                                                                { l: 'Wt', v: `${(h.weightInvVol * 100).toFixed(1)}%`, c: 'text-violet-400' },
+                                                            ].map(m => (
+                                                                <div key={m.l} className="text-center px-2">
+                                                                    <p className={`text-xs font-bold ${m.c}`}>{m.v}</p>
+                                                                    <p className="text-[8px] text-[var(--foreground-muted)]">{m.l}</p>
+                                                                </div>
+                                                            ))}
                                                         </div>
 
                                                         {/* Price + SL */}
@@ -366,6 +470,7 @@ export default function StrategyAnalysisPage() {
                                                 <tr className="text-[var(--foreground-muted)] text-[10px]">
                                                     <th className="text-left py-2 px-2">#</th>
                                                     <th className="text-left py-2 px-2">Stock</th>
+                                                    <th className="text-left py-2 px-2 hidden sm:table-cell">Sector</th>
                                                     <th className="text-right py-2 px-2">Score</th>
                                                     <th className="text-right py-2 px-2">1M</th>
                                                     <th className="text-right py-2 px-2">3M</th>
@@ -379,6 +484,7 @@ export default function StrategyAnalysisPage() {
                                                     <tr key={s.symbol} className={`border-t border-[var(--border)] ${i < (result.config?.TOP_N_STOCKS || 15) ? 'bg-cyan-500/5' : ''}`}>
                                                         <td className="py-1.5 px-2 text-[var(--foreground-muted)]">{i + 1}</td>
                                                         <td className="py-1.5 px-2 text-[var(--foreground)] font-medium">{s.symbol.replace('.NS', '')}</td>
+                                                        <td className="py-1.5 px-2 text-[var(--foreground-muted)] hidden sm:table-cell text-[10px]">{s.sector}</td>
                                                         <td className="py-1.5 px-2 text-right text-cyan-400 font-bold">{(s.composite * 100).toFixed(2)}%</td>
                                                         <td className={`py-1.5 px-2 text-right ${s.ret1m >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{(s.ret1m * 100).toFixed(1)}%</td>
                                                         <td className={`py-1.5 px-2 text-right ${s.ret3m >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{(s.ret3m * 100).toFixed(1)}%</td>
@@ -415,6 +521,17 @@ export default function StrategyAnalysisPage() {
                                     </>
                                 )}
 
+                                {/* Fetch Stats */}
+                                {result.fetchStats && (
+                                    <div className="bg-[var(--background)] rounded-xl p-3 border border-[var(--border)] flex flex-wrap gap-4 text-[10px] text-[var(--foreground-muted)]">
+                                        <span>🔍 Universe: <strong className="text-[var(--foreground)]">{result.fetchStats.totalSymbols}</strong> stocks</span>
+                                        <span>✅ Fetched: <strong className="text-emerald-400">{result.fetchStats.successfulFetches}</strong></span>
+                                        {result.fetchStats.failedFetches > 0 && (
+                                            <span>❌ Failed: <strong className="text-red-400">{result.fetchStats.failedFetches}</strong></span>
+                                        )}
+                                    </div>
+                                )}
+
                                 {/* Strategy Config */}
                                 {result.config && (
                                     <div className="bg-[var(--background)] rounded-xl p-3 border border-[var(--border)]">
@@ -439,7 +556,7 @@ export default function StrategyAnalysisPage() {
                         )}
                     </div>
 
-                    {/* More strategies coming soon placeholder */}
+                    {/* More strategies placeholder */}
                     <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-6 border-dashed opacity-60">
                         <div className="flex items-center gap-3">
                             <div className="w-10 h-10 bg-[var(--background)] rounded-xl flex items-center justify-center">
