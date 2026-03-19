@@ -1421,7 +1421,7 @@ export default function StrategyAnalysisPage() {
                                                 { l: 'Min Down', v: `${mrResult.config.MIN_CONSECUTIVE_DOWN} days` },
                                                 { l: 'Time Stop', v: `${mrResult.config.TIME_STOP_DAYS}d` },
                                                 { l: 'ATR Stop', v: `${mrResult.config.ATR_STOP_MULTIPLIER}×ATR` },
-                                                { l: 'Max Stop', v: `${(mrResult.config.MAX_STOP_PCT * 100)}%` },
+                                                { l: 'Max Stop', v: `${Math.round(mrResult.config.MAX_STOP_PCT * 100)}%` },
                                                 { l: 'Trend Filter', v: `${mrResult.config.SMA_TREND}-SMA` },
                                                 { l: 'Max Positions', v: mrResult.config.MAX_CONCURRENT_POSITIONS },
                                             ].map(c => (
