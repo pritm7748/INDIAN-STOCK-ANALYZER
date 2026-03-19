@@ -6,7 +6,7 @@ import {
     Zap, Target, BarChart3, AlertTriangle, ChevronDown,
     ChevronRight, Activity, Clock, Filter, Info, StopCircle,
     CalendarDays, ArrowRightLeft, ShieldCheck, Play,
-    Crosshair, Eye
+    Crosshair, Eye, GitPullRequestArrow
 } from 'lucide-react'
 
 interface Holding {
@@ -115,6 +115,16 @@ export default function StrategyAnalysisPage() {
     const [showSwingFiltered, setShowSwingFiltered] = useState(false)
     const swingAbortRef = useRef<AbortController | null>(null)
 
+    // Mean Reversion state
+    const [mrScanning, setMrScanning] = useState(false)
+    const [mrResult, setMrResult] = useState<any>(null)
+    const [mrError, setMrError] = useState('')
+    const [mrProgress, setMrProgress] = useState<ScanProgress | null>(null)
+    const [mrStatusMsg, setMrStatusMsg] = useState('')
+    const [showMrWatchlist, setShowMrWatchlist] = useState(false)
+    const [showMrFiltered, setShowMrFiltered] = useState(false)
+    const mrAbortRef = useRef<AbortController | null>(null)
+
     const timeframes = [
         { id: '1W', label: '1 Week', available: false },
         { id: '1M', label: '1 Month', available: true },
@@ -133,6 +143,12 @@ export default function StrategyAnalysisPage() {
         swingAbortRef.current?.abort()
         setSwingScanning(false)
         setSwingStatusMsg('Scan stopped')
+    }, [])
+
+    const stopMrScan = useCallback(() => {
+        mrAbortRef.current?.abort()
+        setMrScanning(false)
+        setMrStatusMsg('Scan stopped')
     }, [])
 
     const runMomentumStrategy = useCallback(async () => {
@@ -266,6 +282,66 @@ export default function StrategyAnalysisPage() {
             }
         } finally {
             setSwingScanning(false)
+        }
+    }, [])
+
+    const runMeanReversion = useCallback(async () => {
+        setMrScanning(true)
+        setMrError('')
+        setMrResult(null)
+        setMrProgress(null)
+        setMrStatusMsg('Connecting...')
+
+        const abort = new AbortController()
+        mrAbortRef.current = abort
+
+        try {
+            const res = await fetch('/api/strategy/mean-reversion', { signal: abort.signal })
+            if (!res.ok || !res.body) throw new Error('Failed to connect')
+
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue
+                    try {
+                        const data = JSON.parse(line.slice(6))
+                        switch (data.type) {
+                            case 'status':
+                                setMrStatusMsg(data.message || '')
+                                break
+                            case 'progress':
+                                setMrProgress(data)
+                                setMrStatusMsg(`Scanning... ${data.scanned}/${data.total} stocks (${data.pct}%)`)
+                                break
+                            case 'result':
+                                setMrResult(data.data)
+                                setMrStatusMsg('Analysis complete!')
+                                break
+                            case 'error':
+                                setMrError(data.message)
+                                break
+                            case 'done':
+                                break
+                        }
+                    } catch { /* skip */ }
+                }
+            }
+        } catch (err: any) {
+            if (err.name !== 'AbortError') {
+                setMrError(err.message || 'Something went wrong')
+            }
+        } finally {
+            setMrScanning(false)
         }
     }, [])
 
@@ -1090,6 +1166,276 @@ export default function StrategyAnalysisPage() {
                         )}
                     </div>
 
+                    {/* ═══ STRATEGY 3: MEAN REVERSION ═══ */}
+                    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
+                        {/* Header */}
+                        <div className="p-5 bg-gradient-to-r from-emerald-500/10 via-teal-500/5 to-transparent border-b border-[var(--border)]">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 bg-gradient-to-br from-emerald-500/20 to-teal-500/20 rounded-xl flex items-center justify-center">
+                                        <GitPullRequestArrow size={20} className="text-emerald-400" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-sm font-bold text-[var(--foreground)] flex items-center gap-2">
+                                            Strategy 3: Mean Reversion (RSI2)
+                                            <span className="text-[9px] bg-emerald-500/15 text-emerald-400 px-1.5 py-0.5 rounded-full font-medium">CONTRARIAN</span>
+                                        </h3>
+                                        <p className="text-[10px] text-[var(--foreground-muted)] mt-0.5">Buy oversold Nifty 100 stocks above 200-SMA · RSI(2) &lt; 10 entry · Connors &amp; Alvarez</p>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={mrScanning ? stopMrScan : runMeanReversion}
+                                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                                        mrScanning
+                                            ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                                            : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:shadow-lg hover:shadow-emerald-500/25'
+                                    }`}
+                                >
+                                    {mrScanning ? <><StopCircle size={14} /> Stop</> : <><Play size={14} /> Run Scan</>}
+                                </button>
+                            </div>
+
+                            {/* Progress */}
+                            {(mrScanning || mrProgress) && (
+                                <div className="mt-3">
+                                    <div className="flex items-center justify-between text-[10px] text-[var(--foreground-muted)] mb-1">
+                                        <span>{mrStatusMsg}</span>
+                                        <span>{mrProgress?.pct || 0}%</span>
+                                    </div>
+                                    <div className="w-full bg-[var(--background)] rounded-full h-1.5">
+                                        <div className="bg-gradient-to-r from-emerald-500 to-teal-500 h-1.5 rounded-full transition-all duration-300" style={{ width: `${mrProgress?.pct || 0}%` }} />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Error */}
+                        {mrError && (
+                            <div className="mx-5 mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-xs text-red-400">
+                                <AlertTriangle size={14} className="inline mr-1" /> {mrError}
+                            </div>
+                        )}
+
+                        {/* Expected Performance (before scan) */}
+                        {!mrResult && !mrScanning && (
+                            <div className="p-5">
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                                    {[
+                                        { label: 'Win Rate', value: '70-80%', icon: Target, color: 'text-emerald-400' },
+                                        { label: 'Avg Gain', value: '3-5%', icon: TrendingUp, color: 'text-teal-400' },
+                                        { label: 'Holding', value: '4-7 days', icon: Clock, color: 'text-cyan-400' },
+                                        { label: 'Max DD', value: '10-15%', icon: Shield, color: 'text-amber-400' },
+                                    ].map(m => (
+                                        <div key={m.label} className="bg-[var(--background)] rounded-xl p-3 text-center">
+                                            <m.icon size={16} className={`${m.color} mx-auto mb-1`} />
+                                            <div className="text-sm font-bold text-[var(--foreground)]">{m.value}</div>
+                                            <div className="text-[9px] text-[var(--foreground-muted)]">{m.label}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="text-[10px] text-[var(--foreground-muted)] bg-[var(--background)] rounded-lg p-3">
+                                    <p className="font-medium text-[var(--foreground)] mb-1">How it works:</p>
+                                    <ul className="space-y-0.5 list-disc list-inside">
+                                        <li>Scans for stocks in <span className="text-emerald-400">long-term uptrends</span> (price &gt; 200-SMA)</li>
+                                        <li>Identifies <span className="text-emerald-400">extreme short-term oversold</span> conditions (RSI(2) &lt; 10)</li>
+                                        <li>Requires 2+ consecutive down closes + earnings blackout check</li>
+                                        <li>Exit: RSI(2) &gt; 70, above 5-SMA, or 10-day time stop</li>
+                                        <li>Stop-loss: tighter of 2×ATR(14) or 7% below entry</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Results */}
+                        {mrResult && (
+                            <div className="p-5 space-y-4">
+                                {/* Market Regime */}
+                                {mrResult.regime && (
+                                    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs ${
+                                        mrResult.regime.regime === 'BULL' ? 'bg-emerald-500/10 text-emerald-400' :
+                                        mrResult.regime.regime === 'BULL_PANIC' ? 'bg-amber-500/10 text-amber-400' :
+                                        'bg-red-500/10 text-red-400'
+                                    }`}>
+                                        {mrResult.regime.regime === 'BULL' ? <TrendingUp size={14} /> : mrResult.regime.regime === 'BULL_PANIC' ? <AlertTriangle size={14} /> : <TrendingDown size={14} />}
+                                        <span className="font-semibold">Market: {mrResult.regime.regime}</span>
+                                        {mrResult.regime.nifty && <span className="text-[var(--foreground-muted)]">• Nifty {mrResult.regime.nifty} ({mrResult.regime.distancePct} from 200-SMA)</span>}
+                                        {mrResult.regime.warning && <span className="text-amber-400 ml-1">⚠ {mrResult.regime.warning}</span>}
+                                    </div>
+                                )}
+
+                                {/* Stats Row */}
+                                <div className="grid grid-cols-4 gap-3">
+                                    {[
+                                        { label: 'Scanned', value: mrResult.totalScanned, color: 'text-[var(--foreground)]' },
+                                        { label: 'Signals', value: mrResult.signalCount, color: 'text-emerald-400' },
+                                        { label: 'Watchlist', value: mrResult.watchlist?.length || 0, color: 'text-amber-400' },
+                                        { label: 'Filtered', value: mrResult.totalFiltered, color: 'text-[var(--foreground-muted)]' },
+                                    ].map(s => (
+                                        <div key={s.label} className="bg-[var(--background)] rounded-xl p-3 text-center">
+                                            <div className={`text-lg font-bold ${s.color}`}>{s.value}</div>
+                                            <div className="text-[9px] text-[var(--foreground-muted)]">{s.label}</div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Triggered Signals */}
+                                {mrResult.signals?.length > 0 && (
+                                    <div className="space-y-3">
+                                        <h4 className="text-xs font-bold text-emerald-400 flex items-center gap-2">
+                                            <Zap size={14} /> TRIGGERED SIGNALS ({mrResult.signals.length})
+                                        </h4>
+                                        {mrResult.signals.map((sig: any, idx: number) => (
+                                            <div key={idx} className="bg-[var(--background)] rounded-xl p-4 border border-emerald-500/20">
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <div>
+                                                        <span className="text-sm font-bold text-[var(--foreground)]">{sig.symbol}</span>
+                                                        {sig.name && <span className="text-[10px] text-[var(--foreground-muted)] ml-2">{sig.name}</span>}
+                                                        {sig.overallGrade && (
+                                                            <span className={`ml-2 text-[9px] px-1.5 py-0.5 rounded-full font-bold ${
+                                                                sig.overallGrade === 'A' ? 'bg-emerald-500/20 text-emerald-400' :
+                                                                sig.overallGrade === 'B' ? 'bg-teal-500/20 text-teal-400' :
+                                                                'bg-amber-500/20 text-amber-400'
+                                                            }`}>Grade {sig.overallGrade}</span>
+                                                        )}
+                                                    </div>
+                                                    <span className="text-xs text-emerald-400 font-semibold">Quality: {sig.qualityScore}/{sig.maxQualityScore}</span>
+                                                </div>
+
+                                                {/* Conditions */}
+                                                <div className="grid grid-cols-2 gap-1.5 mb-3">
+                                                    {sig.conditions?.map((c: any, ci: number) => (
+                                                        <div key={ci} className={`text-[10px] px-2 py-1 rounded-lg flex items-center gap-1 ${
+                                                            c.met ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
+                                                        }`}>
+                                                            {c.met ? '✓' : '✗'} {c.name.replace(/_/g, ' ')}
+                                                        </div>
+                                                    ))}
+                                                </div>
+
+                                                {/* Quality Factors */}
+                                                {sig.qualityFactors?.length > 0 && (
+                                                    <div className="text-[10px] text-[var(--foreground-muted)] mb-3 space-y-0.5">
+                                                        {sig.qualityFactors.map((f: string, fi: number) => (
+                                                            <div key={fi}>• {f}</div>
+                                                        ))}
+                                                    </div>
+                                                )}
+
+                                                {/* Trade Plan */}
+                                                {sig.trade && (
+                                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
+                                                        <div className="bg-[var(--card)] rounded-lg p-2">
+                                                            <div className="text-[var(--foreground-muted)]">Entry</div>
+                                                            <div className="font-bold text-[var(--foreground)]">₹{sig.trade.entryPrice}</div>
+                                                        </div>
+                                                        <div className="bg-[var(--card)] rounded-lg p-2">
+                                                            <div className="text-[var(--foreground-muted)]">Stop Loss</div>
+                                                            <div className="font-bold text-red-400">₹{sig.trade.stopLoss} ({sig.trade.stopDistancePct})</div>
+                                                        </div>
+                                                        <div className="bg-[var(--card)] rounded-lg p-2">
+                                                            <div className="text-[var(--foreground-muted)]">Target (BB Mid)</div>
+                                                            <div className="font-bold text-emerald-400">₹{sig.trade.bbMiddleTarget}</div>
+                                                        </div>
+                                                        <div className="bg-[var(--card)] rounded-lg p-2">
+                                                            <div className="text-[var(--foreground-muted)]">Risk:Reward</div>
+                                                            <div className="font-bold text-teal-400">{sig.trade.estimatedRiskReward}</div>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Key Indicators */}
+                                                <div className="flex flex-wrap gap-2 mt-3">
+                                                    {[
+                                                        { l: 'RSI(2)', v: sig.indicators?.rsi2 },
+                                                        { l: 'RSI(14)', v: sig.indicators?.rsi14 },
+                                                        { l: 'BB %B', v: sig.indicators?.bbPercentB },
+                                                        { l: 'Down Days', v: sig.indicators?.consecutiveDown },
+                                                        { l: 'Decline', v: sig.indicators?.cumulativeDecline },
+                                                    ].map(ind => (
+                                                        <span key={ind.l} className="text-[9px] px-2 py-0.5 bg-[var(--card)] rounded border border-[var(--border)] text-[var(--foreground-muted)]">
+                                                            <span className="text-[var(--foreground)] font-medium">{ind.l}:</span> {ind.v ?? 'N/A'}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {mrResult.signals?.length === 0 && mrResult.regime?.tradeable && (
+                                    <div className="text-center py-8 text-[var(--foreground-muted)] text-sm">
+                                        <Info size={24} className="mx-auto mb-2 opacity-50" />
+                                        No stocks currently meet all 4 mean reversion conditions.
+                                        <br />
+                                        <span className="text-[10px]">Check the watchlist for stocks close to triggering.</span>
+                                    </div>
+                                )}
+
+                                {/* Watchlist */}
+                                {mrResult.watchlist?.length > 0 && (
+                                    <div>
+                                        <button onClick={() => setShowMrWatchlist(!showMrWatchlist)} className="flex items-center gap-2 text-xs font-semibold text-amber-400 hover:text-amber-300 transition-colors">
+                                            {showMrWatchlist ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                            <Eye size={14} /> WATCHLIST — Almost Triggered ({mrResult.watchlist.length})
+                                        </button>
+                                        {showMrWatchlist && (
+                                            <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                                {mrResult.watchlist.map((w: any, i: number) => (
+                                                    <div key={i} className="bg-[var(--background)] rounded-lg p-3 text-[10px] border border-amber-500/10">
+                                                        <div className="font-bold text-[var(--foreground)] text-xs">{w.symbol} <span className="text-[var(--foreground-muted)] font-normal">{w.name}</span></div>
+                                                        <div className="text-[var(--foreground-muted)] mt-1">Score: {w.score}/4 • RSI(2): {w.rsi2} • Down: {w.consecutiveDown} days</div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Filtered */}
+                                {mrResult.filtered?.length > 0 && (
+                                    <div>
+                                        <button onClick={() => setShowMrFiltered(!showMrFiltered)} className="flex items-center gap-2 text-xs font-semibold text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-colors">
+                                            {showMrFiltered ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                            <Filter size={14} /> Filtered Stocks ({mrResult.totalFiltered})
+                                        </button>
+                                        {showMrFiltered && (
+                                            <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                                {mrResult.filtered.slice(0, 20).map((f: any, i: number) => (
+                                                    <div key={i} className="text-[10px] px-2.5 py-1.5 bg-[var(--background)] rounded-lg text-[var(--foreground-muted)]">
+                                                        <span className="text-[var(--foreground)] font-medium">{f.symbol}</span> — {f.reason}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Config */}
+                                {mrResult.config && (
+                                    <div>
+                                        <h4 className="text-[10px] font-semibold text-[var(--foreground-muted)] mb-2 flex items-center gap-1"><Info size={12} /> Configuration</h4>
+                                        <div className="flex flex-wrap gap-1.5 text-[9px]">
+                                            {[
+                                                { l: 'RSI Entry', v: `< ${mrResult.config.RSI2_OVERSOLD}` },
+                                                { l: 'RSI Exit', v: `> ${mrResult.config.RSI2_OVERBOUGHT}` },
+                                                { l: 'Min Down', v: `${mrResult.config.MIN_CONSECUTIVE_DOWN} days` },
+                                                { l: 'Time Stop', v: `${mrResult.config.TIME_STOP_DAYS}d` },
+                                                { l: 'ATR Stop', v: `${mrResult.config.ATR_STOP_MULTIPLIER}×ATR` },
+                                                { l: 'Max Stop', v: `${(mrResult.config.MAX_STOP_PCT * 100)}%` },
+                                                { l: 'Trend Filter', v: `${mrResult.config.SMA_TREND}-SMA` },
+                                                { l: 'Max Positions', v: mrResult.config.MAX_CONCURRENT_POSITIONS },
+                                            ].map(c => (
+                                                <span key={c.l} className="px-2 py-1 bg-[var(--card)] rounded-lg border border-[var(--border)] text-[var(--foreground-muted)]">
+                                                    <span className="text-[var(--foreground)] font-medium">{c.l}:</span> {c.v}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
                     {/* More strategies placeholder */}
                     <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-6 border-dashed opacity-60">
                         <div className="flex items-center gap-3">
@@ -1098,7 +1444,7 @@ export default function StrategyAnalysisPage() {
                             </div>
                             <div>
                                 <h3 className="text-sm font-bold text-[var(--foreground-muted)]">More 1-Month strategies coming soon</h3>
-                                <p className="text-[10px] text-[var(--foreground-muted)]">Mean Reversion · Breakout · Value Momentum · Quality Factor</p>
+                                <p className="text-[10px] text-[var(--foreground-muted)]">Breakout · Value Momentum · Quality Factor</p>
                             </div>
                         </div>
                     </div>

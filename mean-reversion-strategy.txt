@@ -1,0 +1,2016 @@
+
+// RSI(2) Mean Reversion Strategy — Indian Markets (NSE)
+// Based on Connors & Alvarez methodology, adapted for Nifty 100 universe
+
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+const CONFIG = {
+  // Indicators
+  RSI_SHORT: 2,          // ultra-sensitive short-term RSI
+  RSI_LONG: 14,          // broader context RSI
+  SMA_TREND: 200,        // long-term trend filter
+  SMA_EXIT: 5,           // exit when price closes above 5-SMA
+  ATR_PERIOD: 14,        // Average True Range period
+  BB_PERIOD: 20,         // Bollinger Band SMA period
+  BB_STD_DEV: 2,         // Bollinger Band standard deviations
+
+  // Entry conditions
+  RSI2_OVERSOLD: 10,     // RSI(2) < 10 to trigger
+  MIN_CONSECUTIVE_DOWN: 2, // minimum consecutive lower closes
+  EARNINGS_BLACKOUT_DAYS: 5,
+
+  // Exit conditions
+  RSI2_OVERBOUGHT: 70,   // RSI(2) > 70 = take profit
+  TIME_STOP_DAYS: 10,    // exit after 10 trading days if no bounce
+  MAX_HOLDING_DAYS: 20,  // absolute maximum (safety net)
+
+  // Stop-loss
+  ATR_STOP_MULTIPLIER: 2,  // 2 × ATR(14) below entry
+  MAX_STOP_PCT: 0.07,      // 7% hard cap
+  // Use SMALLER of the two (tighter stop)
+
+  // Market regime
+  NIFTY_TREND_SMA: 200,  // Nifty > 200-SMA = bull regime
+
+  // Portfolio / risk
+  MAX_CONCURRENT_POSITIONS: 6,
+  RISK_PER_TRADE_PCT: 0.02,   // 2% of capital per trade
+  MAX_POSITION_PCT: 0.20,     // max 20% of capital in one stock
+  EQUAL_WEIGHT: false,         // false = risk-based sizing, true = equal weight
+
+  // Universe filter
+  MIN_AVG_TURNOVER_CR: 10,    // Nifty 100 stocks are liquid, ₹10cr+ min
+  MIN_PRICE: 50,               // avoid penny stocks
+  MIN_HISTORY_DAYS: 220,       // need 200-SMA + buffer
+
+  // Analytics
+  TRADING_DAYS_PER_YEAR: 252,
+  RISK_FREE_RATE: 0.065,       // ~6.5% Indian T-bill
+};
+
+
+// ============================================================================
+// TECHNICAL INDICATORS
+// ============================================================================
+
+/**
+ * Simple Moving Average
+ */
+function calcSMA(data, period) {
+  const result = new Array(data.length).fill(null);
+  if (data.length < period) return result;
+  for (let i = period - 1; i < data.length; i++) {
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) sum += data[j];
+    result[i] = sum / period;
+  }
+  return result;
+}
+
+/**
+ * Exponential Moving Average
+ */
+function calcEMA(data, period) {
+  const result = new Array(data.length).fill(null);
+  if (data.length < period) return result;
+  let sum = 0;
+  for (let i = 0; i < period; i++) sum += data[i];
+  result[period - 1] = sum / period;
+  const k = 2 / (period + 1);
+  for (let i = period; i < data.length; i++) {
+    result[i] = (data[i] - result[i - 1]) * k + result[i - 1];
+  }
+  return result;
+}
+
+/**
+ * RSI — Wilder's smoothing method
+ * Works for any period (RSI(2), RSI(14), etc.)
+ * @param {number[]} closes
+ * @param {number} period
+ * @returns {number[]}
+ */
+function calcRSI(closes, period) {
+  const result = new Array(closes.length).fill(null);
+  if (closes.length < period + 1) return result;
+
+  // Collect all changes
+  const changes = [];
+  for (let i = 1; i < closes.length; i++) {
+    changes.push(closes[i] - closes[i - 1]);
+  }
+
+  // First average gain/loss — simple average of first `period` changes
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 0; i < period; i++) {
+    if (changes[i] > 0) avgGain += changes[i];
+    else avgLoss += Math.abs(changes[i]);
+  }
+  avgGain /= period;
+  avgLoss /= period;
+
+  // RSI at the first valid point
+  if (avgLoss === 0) {
+    result[period] = 100;
+  } else {
+    const rs = avgGain / avgLoss;
+    result[period] = 100 - (100 / (1 + rs));
+  }
+
+  // Subsequent values use Wilder's smoothing
+  for (let i = period; i < changes.length; i++) {
+    const gain = changes[i] > 0 ? changes[i] : 0;
+    const loss = changes[i] < 0 ? Math.abs(changes[i]) : 0;
+
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+
+    if (avgLoss === 0) {
+      result[i + 1] = 100;
+    } else {
+      const rs = avgGain / avgLoss;
+      result[i + 1] = 100 - (100 / (1 + rs));
+    }
+  }
+
+  return result;
+}
+
+/**
+ * True Range for a single bar
+ */
+function trueRange(high, low, prevClose) {
+  return Math.max(
+    high - low,
+    Math.abs(high - prevClose),
+    Math.abs(low - prevClose)
+  );
+}
+
+/**
+ * Average True Range (ATR)
+ * Uses Wilder's smoothing (same as RMA)
+ * @param {number[]} highs
+ * @param {number[]} lows
+ * @param {number[]} closes
+ * @param {number} period
+ * @returns {number[]}
+ */
+function calcATR(highs, lows, closes, period) {
+  const len = closes.length;
+  const result = new Array(len).fill(null);
+  if (len < period + 1) return result;
+
+  // Calculate all true ranges
+  const tr = [0]; // first bar has no previous close
+  for (let i = 1; i < len; i++) {
+    tr.push(trueRange(highs[i], lows[i], closes[i - 1]));
+  }
+
+  // First ATR = simple average of first `period` true ranges (skip index 0)
+  let atrSum = 0;
+  for (let i = 1; i <= period; i++) {
+    atrSum += tr[i];
+  }
+  let atr = atrSum / period;
+  result[period] = atr;
+
+  // Wilder's smoothing
+  for (let i = period + 1; i < len; i++) {
+    atr = (atr * (period - 1) + tr[i]) / period;
+    result[i] = atr;
+  }
+
+  return result;
+}
+
+/**
+ * Bollinger Bands (SMA ± k × StdDev)
+ * @param {number[]} closes
+ * @param {number} period - SMA period (default 20)
+ * @param {number} numStdDev - multiplier (default 2)
+ * @returns {{ middle: number[], upper: number[], lower: number[], bandwidth: number[], percentB: number[] }}
+ */
+function calcBollingerBands(closes, period = 20, numStdDev = 2) {
+  const len = closes.length;
+  const middle = new Array(len).fill(null);
+  const upper = new Array(len).fill(null);
+  const lower = new Array(len).fill(null);
+  const bandwidth = new Array(len).fill(null);
+  const percentB = new Array(len).fill(null);
+
+  if (len < period) return { middle, upper, lower, bandwidth, percentB };
+
+  for (let i = period - 1; i < len; i++) {
+    // SMA
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) sum += closes[j];
+    const sma = sum / period;
+
+    // Standard deviation
+    let sqSum = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      sqSum += (closes[j] - sma) ** 2;
+    }
+    const stdDev = Math.sqrt(sqSum / period); // population std dev (matches typical BB)
+
+    middle[i] = sma;
+    upper[i] = sma + numStdDev * stdDev;
+    lower[i] = sma - numStdDev * stdDev;
+
+    // Bandwidth = (Upper - Lower) / Middle
+    bandwidth[i] = middle[i] !== 0 ? (upper[i] - lower[i]) / middle[i] : 0;
+
+    // %B = (Price - Lower) / (Upper - Lower)
+    const bandWidth = upper[i] - lower[i];
+    percentB[i] = bandWidth !== 0 ? (closes[i] - lower[i]) / bandWidth : 0.5;
+  }
+
+  return { middle, upper, lower, bandwidth, percentB };
+}
+
+/**
+ * Count consecutive down closes ending at index i
+ * @param {number[]} closes
+ * @param {number} atIndex - index to check from (default: last)
+ * @returns {number}
+ */
+function countConsecutiveDownCloses(closes, atIndex = null) {
+  const idx = atIndex !== null ? atIndex : closes.length - 1;
+  let count = 0;
+
+  for (let i = idx; i >= 1; i--) {
+    if (closes[i] < closes[i - 1]) {
+      count++;
+    } else {
+      break;
+    }
+  }
+
+  return count;
+}
+
+/**
+ * Calculate the cumulative decline over the consecutive down days
+ * (How much has the stock actually fallen in this streak?)
+ */
+function cumulativeDecline(closes, atIndex = null) {
+  const idx = atIndex !== null ? atIndex : closes.length - 1;
+  const downDays = countConsecutiveDownCloses(closes, idx);
+  if (downDays === 0) return 0;
+  const startPrice = closes[idx - downDays];
+  const endPrice = closes[idx];
+  return (endPrice - startPrice) / startPrice;
+}
+
+/**
+ * Annualized realized volatility
+ */
+function calcVolatility(closes, window = 20) {
+  if (closes.length < window + 1) return null;
+  const rets = [];
+  for (let i = closes.length - window; i < closes.length; i++) {
+    if (closes[i - 1] === 0) return null;
+    rets.push(Math.log(closes[i] / closes[i - 1]));
+  }
+  const mean = rets.reduce((s, r) => s + r, 0) / rets.length;
+  const variance = rets.reduce((s, r) => s + (r - mean) ** 2, 0) / (rets.length - 1);
+  return Math.sqrt(variance) * Math.sqrt(CONFIG.TRADING_DAYS_PER_YEAR);
+}
+
+
+// ============================================================================
+// FULL INDICATOR SNAPSHOT FOR A SINGLE STOCK
+// ============================================================================
+
+/**
+ * Compute every indicator needed for mean reversion at the latest bar
+ * @param {Object} stock - { symbol, opens[], highs[], lows[], closes[], volumes[] }
+ * @returns {Object|null} indicator snapshot
+ */
+function computeIndicators(stock) {
+  const { opens, highs, lows, closes, volumes } = stock;
+  const len = closes.length;
+
+  if (len < CONFIG.MIN_HISTORY_DAYS) return null;
+
+  const i = len - 1; // latest bar
+
+  // Core indicators
+  const rsi2 = calcRSI(closes, CONFIG.RSI_SHORT);
+  const rsi14 = calcRSI(closes, CONFIG.RSI_LONG);
+  const sma200 = calcSMA(closes, CONFIG.SMA_TREND);
+  const sma5 = calcSMA(closes, CONFIG.SMA_EXIT);
+  const atr14 = calcATR(highs, lows, closes, CONFIG.ATR_PERIOD);
+  const bb = calcBollingerBands(closes, CONFIG.BB_PERIOD, CONFIG.BB_STD_DEV);
+
+  // Consecutive down closes
+  const consecDown = countConsecutiveDownCloses(closes);
+  const cumDecline = cumulativeDecline(closes);
+
+  // Volatility
+  const volatility = calcVolatility(closes);
+
+  // Average volume
+  const avgVol20 = volumes.length >= 20
+    ? volumes.slice(-20).reduce((s, v) => s + v, 0) / 20
+    : null;
+
+  // Distance from 200-SMA (how far price is from the mean)
+  const distFrom200 = sma200[i] !== null
+    ? (closes[i] - sma200[i]) / sma200[i]
+    : null;
+
+  // Is 200-SMA rising? (compare current to 20 bars ago)
+  const sma200Rising =
+    sma200[i] !== null && i >= 20 && sma200[i - 20] !== null
+      ? sma200[i] > sma200[i - 20]
+      : false;
+
+  return {
+    // Price data at current bar
+    open: opens[i],
+    high: highs[i],
+    low: lows[i],
+    close: closes[i],
+    volume: volumes[i],
+    prevClose: closes[i - 1],
+
+    // RSI
+    rsi2: rsi2[i],
+    rsi14: rsi14[i],
+    rsi2Array: rsi2,
+
+    // Moving averages
+    sma200: sma200[i],
+    sma200Rising,
+    sma5: sma5[i],
+    sma5Array: sma5,
+    sma200Array: sma200,
+
+    // ATR
+    atr14: atr14[i],
+    atr14Array: atr14,
+
+    // Bollinger Bands
+    bbUpper: bb.upper[i],
+    bbMiddle: bb.middle[i],
+    bbLower: bb.lower[i],
+    bbBandwidth: bb.bandwidth[i],
+    bbPercentB: bb.percentB[i],
+
+    // Streak analysis
+    consecutiveDownDays: consecDown,
+    cumulativeDecline: cumDecline,
+
+    // Above 200-SMA?
+    aboveSma200: sma200[i] !== null ? closes[i] > sma200[i] : false,
+    distanceFromSma200: distFrom200,
+
+    // Above 5-SMA? (exit condition)
+    aboveSma5: sma5[i] !== null ? closes[i] > sma5[i] : false,
+
+    // Volume
+    avgVolume20: avgVol20,
+    volumeRatio: avgVol20 && avgVol20 > 0 ? volumes[i] / avgVol20 : null,
+
+    // Volatility
+    volatility,
+
+    // Full arrays for backtesting
+    closesArray: closes,
+    highsArray: highs,
+    lowsArray: lows,
+  };
+}
+
+
+// ============================================================================
+// MEAN REVERSION SIGNAL DETECTION
+// ============================================================================
+
+/**
+ * Core signal: check if all mean reversion entry conditions are met
+ * @param {Object} indicators - from computeIndicators()
+ * @param {Object} [stockMeta] - { earningsDate, avgDailyTurnoverCr }
+ * @param {string} [currentDate]
+ * @returns {Object} signal analysis
+ */
+function checkMeanReversionEntry(indicators, stockMeta = {}, currentDate = null) {
+  const conditions = [];
+  let score = 0;
+  const totalConditions = 4;
+
+  // ===== CONDITION 1: Long-term uptrend — Price > 200-day SMA =====
+  const inUptrend = indicators.aboveSma200;
+  if (inUptrend) {
+    score++;
+    conditions.push({
+      name: 'UPTREND_FILTER',
+      met: true,
+      detail: `Price ₹${r2(indicators.close)} > 200-SMA ₹${r2(indicators.sma200)} (+${r2(indicators.distanceFromSma200 * 100)}%)`,
+      critical: true,
+    });
+  } else {
+    conditions.push({
+      name: 'UPTREND_FILTER',
+      met: false,
+      detail: `Price ₹${r2(indicators.close)} BELOW 200-SMA ₹${r2(indicators.sma200)} — falling knife risk`,
+      critical: true,
+    });
+  }
+
+  // ===== CONDITION 2: RSI(2) < 10 — extremely oversold =====
+  const rsi2Oversold = indicators.rsi2 !== null && indicators.rsi2 < CONFIG.RSI2_OVERSOLD;
+  if (rsi2Oversold) {
+    score++;
+    conditions.push({
+      name: 'RSI2_OVERSOLD',
+      met: true,
+      detail: `RSI(2) = ${r2(indicators.rsi2)} < ${CONFIG.RSI2_OVERSOLD} (extremely oversold)`,
+      critical: true,
+    });
+  } else {
+    conditions.push({
+      name: 'RSI2_OVERSOLD',
+      met: false,
+      detail: `RSI(2) = ${indicators.rsi2 !== null ? r2(indicators.rsi2) : 'N/A'} (not oversold enough, need < ${CONFIG.RSI2_OVERSOLD})`,
+      critical: true,
+    });
+  }
+
+  // ===== CONDITION 3: 2+ consecutive down closes =====
+  const enoughDownDays = indicators.consecutiveDownDays >= CONFIG.MIN_CONSECUTIVE_DOWN;
+  if (enoughDownDays) {
+    score++;
+    conditions.push({
+      name: 'CONSECUTIVE_DOWN',
+      met: true,
+      detail: `${indicators.consecutiveDownDays} consecutive down closes (decline: ${r2(indicators.cumulativeDecline * 100)}%)`,
+      critical: true,
+    });
+  } else {
+    conditions.push({
+      name: 'CONSECUTIVE_DOWN',
+      met: false,
+      detail: `Only ${indicators.consecutiveDownDays} down close(s), need ≥ ${CONFIG.MIN_CONSECUTIVE_DOWN}`,
+      critical: true,
+    });
+  }
+
+  // ===== CONDITION 4: Not within 5 days of earnings =====
+  let earningsSafe = true;
+  if (stockMeta.earningsDate && currentDate) {
+    const diffDays = Math.abs(
+      (new Date(stockMeta.earningsDate) - new Date(currentDate)) / (1000 * 60 * 60 * 24)
+    );
+    if (diffDays <= CONFIG.EARNINGS_BLACKOUT_DAYS) {
+      earningsSafe = false;
+    }
+  }
+
+  if (earningsSafe) {
+    score++;
+    conditions.push({
+      name: 'EARNINGS_CLEAR',
+      met: true,
+      detail: 'No earnings announcement within blackout window',
+      critical: true,
+    });
+  } else {
+    conditions.push({
+      name: 'EARNINGS_CLEAR',
+      met: false,
+      detail: `Earnings within ${CONFIG.EARNINGS_BLACKOUT_DAYS} days — event risk too high`,
+      critical: true,
+    });
+  }
+
+  // ===== ALL 4 MUST BE TRUE =====
+  const triggered = score === totalConditions;
+
+  // ===== SUPPLEMENTARY QUALITY METRICS (not required, but rank signals) =====
+  const qualityFactors = [];
+  let qualityScore = 0;
+
+  // A. Bollinger Band position — below lower band = extreme oversold
+  if (indicators.bbPercentB !== null && indicators.bbPercentB < 0) {
+    qualityScore += 2;
+    qualityFactors.push(`BB %B = ${r2(indicators.bbPercentB)} (below lower band — extreme)`);
+  } else if (indicators.bbPercentB !== null && indicators.bbPercentB < 0.2) {
+    qualityScore += 1;
+    qualityFactors.push(`BB %B = ${r2(indicators.bbPercentB)} (near lower band)`);
+  }
+
+  // B. RSI(14) context — if RSI(14) is 30-50 while RSI(2) < 10, it's a healthy pullback
+  if (indicators.rsi14 !== null && indicators.rsi14 >= 30 && indicators.rsi14 <= 50) {
+    qualityScore += 2;
+    qualityFactors.push(`RSI(14) = ${r2(indicators.rsi14)} (healthy pullback zone)`);
+  } else if (indicators.rsi14 !== null && indicators.rsi14 < 30) {
+    qualityScore += 0;
+    qualityFactors.push(`RSI(14) = ${r2(indicators.rsi14)} (deeply oversold — higher risk)`);
+  }
+
+  // C. 200-SMA is rising — confirms genuine uptrend
+  if (indicators.sma200Rising) {
+    qualityScore += 1;
+    qualityFactors.push('200-SMA slope rising (strong uptrend)');
+  }
+
+  // D. Volume spike on the decline — possible capitulation
+  if (indicators.volumeRatio !== null && indicators.volumeRatio > 1.5) {
+    qualityScore += 1;
+    qualityFactors.push(`Volume ${r2(indicators.volumeRatio)}x average (possible capitulation)`);
+  }
+
+  // E. More consecutive down days = stronger reversion signal (up to a point)
+  if (indicators.consecutiveDownDays >= 4) {
+    qualityScore += 2;
+    qualityFactors.push(`${indicators.consecutiveDownDays} down days — extended selloff`);
+  } else if (indicators.consecutiveDownDays >= 3) {
+    qualityScore += 1;
+    qualityFactors.push(`${indicators.consecutiveDownDays} down days — solid pullback`);
+  }
+
+  // F. Distance from 200-SMA — still reasonably close = safer
+  if (indicators.distanceFromSma200 !== null) {
+    if (indicators.distanceFromSma200 > 0 && indicators.distanceFromSma200 < 0.10) {
+      qualityScore += 1;
+      qualityFactors.push(`Close to 200-SMA (${r2(indicators.distanceFromSma200 * 100)}% above) — strong support nearby`);
+    }
+  }
+
+  // ===== CALCULATE TRADE PARAMETERS IF TRIGGERED =====
+  let trade = null;
+  if (triggered) {
+    trade = calculateTradeParameters(indicators);
+  }
+
+  return {
+    triggered,
+    score,
+    totalConditions,
+    conditions,
+    qualityScore,
+    maxQualityScore: 9,
+    qualityFactors,
+    overallGrade: triggered
+      ? qualityScore >= 7 ? 'A' : qualityScore >= 5 ? 'B' : qualityScore >= 3 ? 'C' : 'D'
+      : null,
+    indicators: {
+      close: r2(indicators.close),
+      rsi2: r2(indicators.rsi2),
+      rsi14: r2(indicators.rsi14),
+      sma200: r2(indicators.sma200),
+      sma5: r2(indicators.sma5),
+      atr14: r2(indicators.atr14),
+      bbLower: r2(indicators.bbLower),
+      bbPercentB: r2(indicators.bbPercentB),
+      consecutiveDown: indicators.consecutiveDownDays,
+      cumulativeDecline: r2(indicators.cumulativeDecline * 100) + '%',
+      volatility: indicators.volatility ? r2(indicators.volatility * 100) + '%' : null,
+    },
+    trade,
+  };
+}
+
+/**
+ * Calculate entry, stop-loss, and target parameters
+ */
+function calculateTradeParameters(indicators) {
+  // Entry: next day's open (we use current close as proxy for planning)
+  const entryEstimate = indicators.close;
+
+  // Stop-loss: SMALLER of (2×ATR below entry) and (7% below entry)
+  const atrStop = indicators.atr14 !== null
+    ? entryEstimate - CONFIG.ATR_STOP_MULTIPLIER * indicators.atr14
+    : null;
+  const pctStop = entryEstimate * (1 - CONFIG.MAX_STOP_PCT);
+
+  let stopLoss;
+  if (atrStop !== null) {
+    stopLoss = Math.max(atrStop, pctStop); // SMALLER distance = HIGHER price = tighter stop
+  } else {
+    stopLoss = pctStop;
+  }
+
+  const stopDistancePct = (entryEstimate - stopLoss) / entryEstimate;
+
+  // Exit targets
+  const exitConditions = {
+    rsi2_overbought: `RSI(2) > ${CONFIG.RSI2_OVERBOUGHT}`,
+    above_5sma: `Close > 5-day SMA (currently ₹${r2(indicators.sma5)})`,
+    time_stop: `${CONFIG.TIME_STOP_DAYS} trading days with no bounce`,
+  };
+
+  // Expected move (conservative estimate based on BB and ATR)
+  const bbMiddle = indicators.bbMiddle || indicators.sma200;
+  const expectedBounce = bbMiddle
+    ? (bbMiddle - entryEstimate) / entryEstimate
+    : 0.04; // default 4%
+
+  // Risk-reward estimation
+  const reward = Math.abs(expectedBounce) * entryEstimate;
+  const risk = stopDistancePct * entryEstimate;
+  const riskReward = risk > 0 ? reward / risk : null;
+
+  return {
+    entryPrice: r2(entryEstimate),
+    entryType: 'Next day open',
+    stopLoss: r2(stopLoss),
+    stopMethod: atrStop !== null
+      ? `Tighter of 2×ATR (₹${r2(atrStop)}) and 7% (₹${r2(pctStop)})`
+      : `7% below entry (₹${r2(pctStop)})`,
+    stopDistancePct: r2(stopDistancePct * 100) + '%',
+    exitConditions,
+    expectedBounce: r2(expectedBounce * 100) + '%',
+    estimatedRiskReward: riskReward ? r2(riskReward) + ':1' : 'N/A',
+    bbMiddleTarget: r2(bbMiddle),
+  };
+}
+
+
+// ============================================================================
+// MARKET REGIME FILTER
+// ============================================================================
+
+/**
+ * Check if the broad market (Nifty 50) is in an uptrend
+ * For mean reversion, we use the 200-day SMA (same as individual stocks)
+ */
+function checkMarketRegime(niftyCloses) {
+  if (!niftyCloses || niftyCloses.length < CONFIG.NIFTY_TREND_SMA + 1) {
+    return { regime: 'UNKNOWN', tradeable: false, reason: 'Insufficient Nifty data' };
+  }
+
+  const sma200 = calcSMA(niftyCloses, CONFIG.NIFTY_TREND_SMA);
+  const currentNifty = niftyCloses[niftyCloses.length - 1];
+  const currentSma = sma200[sma200.length - 1];
+
+  if (currentSma === null) {
+    return { regime: 'UNKNOWN', tradeable: false, reason: 'SMA not yet computed' };
+  }
+
+  const aboveSma = currentNifty > currentSma;
+  const distancePct = ((currentNifty - currentSma) / currentSma) * 100;
+
+  // Additional check: is Nifty RSI(14) extremely low? (crash in progress)
+  const niftyRsi = calcRSI(niftyCloses, 14);
+  const currentNiftyRsi = niftyRsi[niftyRsi.length - 1];
+  const marketPanic = currentNiftyRsi !== null && currentNiftyRsi < 25;
+
+  if (!aboveSma) {
+    return {
+      regime: 'BEAR',
+      tradeable: false,
+      nifty: r2(currentNifty),
+      sma200: r2(currentSma),
+      distancePct: r2(distancePct) + '%',
+      niftyRsi14: r2(currentNiftyRsi),
+      reason: 'Nifty below 200-SMA — avoid mean reversion longs',
+    };
+  }
+
+  if (marketPanic) {
+    return {
+      regime: 'BULL_PANIC',
+      tradeable: true, // can still trade but with caution
+      nifty: r2(currentNifty),
+      sma200: r2(currentSma),
+      distancePct: r2(distancePct) + '%',
+      niftyRsi14: r2(currentNiftyRsi),
+      warning: 'Nifty RSI < 25 — market-wide panic, reduce position sizes',
+      positionSizeMultiplier: 0.5,
+    };
+  }
+
+  return {
+    regime: 'BULL',
+    tradeable: true,
+    nifty: r2(currentNifty),
+    sma200: r2(currentSma),
+    distancePct: r2(distancePct) + '%',
+    niftyRsi14: r2(currentNiftyRsi),
+    positionSizeMultiplier: 1.0,
+  };
+}
+
+
+// ============================================================================
+// UNIVERSE SCANNER
+// ============================================================================
+
+/**
+ * Scan entire Nifty 100 universe for mean reversion setups
+ * @param {Object[]} universe - stock OHLCV array
+ * @param {number[]} niftyCloses - Nifty 50 daily closes
+ * @param {string} currentDate
+ * @returns {Object} scan results
+ */
+function scanUniverse(universe, niftyCloses, currentDate = null) {
+  // Step 0: Market regime check
+  const regime = checkMarketRegime(niftyCloses);
+
+  if (!regime.tradeable) {
+    return {
+      date: currentDate,
+      regime,
+      signal: 'NO_TRADES',
+      message: regime.reason,
+      candidates: [],
+    };
+  }
+
+  const signals = [];
+  const filtered = [];
+  const notTriggered = [];
+
+  for (const stock of universe) {
+    // Pre-filter: liquidity, price, history
+    if (stock.avgDailyTurnoverCr && stock.avgDailyTurnoverCr < CONFIG.MIN_AVG_TURNOVER_CR) {
+      filtered.push({ symbol: stock.symbol, reason: `Turnover ₹${stock.avgDailyTurnoverCr}cr < ₹${CONFIG.MIN_AVG_TURNOVER_CR}cr` });
+      continue;
+    }
+
+    if (stock.closes && stock.closes[stock.closes.length - 1] < CONFIG.MIN_PRICE) {
+      filtered.push({ symbol: stock.symbol, reason: `Price ₹${stock.closes[stock.closes.length - 1]} below ₹${CONFIG.MIN_PRICE}` });
+      continue;
+    }
+
+    // Compute indicators
+    const indicators = computeIndicators(stock);
+    if (!indicators) {
+      filtered.push({ symbol: stock.symbol, reason: 'Insufficient history' });
+      continue;
+    }
+
+    // Check mean reversion conditions
+    const signal = checkMeanReversionEntry(indicators, stock, currentDate);
+
+    if (signal.triggered) {
+      signals.push({
+        symbol: stock.symbol,
+        ...signal,
+      });
+    } else {
+      // Track how close non-triggered stocks are (watchlist material)
+      notTriggered.push({
+        symbol: stock.symbol,
+        score: signal.score,
+        rsi2: signal.indicators.rsi2,
+        consecutiveDown: signal.indicators.consecutiveDown,
+        aboveSma200: signal.conditions.find(c => c.name === 'UPTREND_FILTER')?.met,
+      });
+    }
+  }
+
+  // Sort signals by quality score (best first)
+  signals.sort((a, b) => b.qualityScore - a.qualityScore);
+
+  // Identify stocks that are CLOSE to triggering (watchlist)
+  const watchlist = notTriggered
+    .filter(s => s.score >= 3 && s.aboveSma200)
+    .sort((a, b) => {
+      // Sort by RSI(2) ascending — closest to oversold first
+      const rsiA = parseFloat(a.rsi2) || 100;
+      const rsiB = parseFloat(b.rsi2) || 100;
+      return rsiA - rsiB;
+    })
+    .slice(0, 10);
+
+  return {
+    date: currentDate,
+    regime,
+    totalScanned: universe.length,
+    totalFiltered: filtered.length,
+    signalCount: signals.length,
+    signals,
+    filtered: filtered.slice(0, 10), // show first 10
+    watchlist,
+    positionSizeMultiplier: regime.positionSizeMultiplier || 1.0,
+  };
+}
+
+
+// ============================================================================
+// POSITION SIZING
+// ============================================================================
+
+/**
+ * Calculate position size based on risk and stop-loss distance
+ */
+function calcPositionSize(capital, entryPrice, stopLoss, sizeMultiplier = 1.0) {
+  if (entryPrice <= 0 || stopLoss <= 0 || stopLoss >= entryPrice) {
+    return { shares: 0, error: 'Invalid entry/stop parameters' };
+  }
+
+  const riskPerShare = entryPrice - stopLoss;
+  const maxRiskAmount = capital * CONFIG.RISK_PER_TRADE_PCT * sizeMultiplier;
+  const sharesFromRisk = Math.floor(maxRiskAmount / riskPerShare);
+
+  // Also enforce max position size (20% of capital)
+  const maxPositionValue = capital * CONFIG.MAX_POSITION_PCT;
+  const sharesFromMaxPos = Math.floor(maxPositionValue / entryPrice);
+
+  const shares = Math.min(sharesFromRisk, sharesFromMaxPos);
+  const positionValue = shares * entryPrice;
+  const actualRisk = shares * riskPerShare;
+
+  return {
+    shares,
+    positionValue: Math.round(positionValue),
+    positionPct: r2((positionValue / capital) * 100) + '%',
+    riskPerShare: r2(riskPerShare),
+    totalRisk: Math.round(actualRisk),
+    riskPctOfCapital: r2((actualRisk / capital) * 100) + '%',
+    sizeConstraint: shares === sharesFromMaxPos ? 'MAX_POSITION_CAP' : 'RISK_BASED',
+  };
+}
+
+
+// ============================================================================
+// EXIT MONITORING
+// ============================================================================
+
+/**
+ * Monitor an open mean reversion position and determine action
+ * @param {Object} position
+ *   { symbol, entryPrice, stopLoss, daysSinceEntry,
+ *     closesAfterEntry[], highsAfterEntry[], lowsAfterEntry[] }
+ * @returns {Object} action + reasoning
+ */
+function monitorPosition(position) {
+  const {
+    entryPrice, stopLoss, daysSinceEntry,
+    closesAfterEntry, highsAfterEntry, lowsAfterEntry,
+  } = position;
+
+  const len = closesAfterEntry.length;
+  if (len === 0) return { action: 'HOLD', reason: 'No data yet' };
+
+  const currentClose = closesAfterEntry[len - 1];
+  const currentLow = lowsAfterEntry[len - 1];
+  const pnlPct = (currentClose / entryPrice) - 1;
+
+  // Calculate current RSI(2) on the post-entry closes
+  // We need to combine pre-entry and post-entry closes for accurate RSI
+  const allCloses = position.preEntryCloses
+    ? [...position.preEntryCloses, ...closesAfterEntry]
+    : closesAfterEntry;
+
+  const rsi2 = calcRSI(allCloses, CONFIG.RSI_SHORT);
+  const currentRsi2 = rsi2[rsi2.length - 1];
+
+  // Calculate 5-day SMA on all available closes
+  const sma5 = calcSMA(allCloses, CONFIG.SMA_EXIT);
+  const currentSma5 = sma5[sma5.length - 1];
+
+  // ===== EXIT CHECK 1: STOP-LOSS HIT =====
+  if (currentLow <= stopLoss) {
+    return {
+      action: 'EXIT',
+      reason: 'STOP_LOSS_HIT',
+      exitPrice: stopLoss,
+      pnlPct: (stopLoss / entryPrice) - 1,
+      daysSinceEntry,
+      urgency: 'IMMEDIATE',
+    };
+  }
+
+  // ===== EXIT CHECK 2: RSI(2) > 70 — overbought, take profits =====
+  if (currentRsi2 !== null && currentRsi2 > CONFIG.RSI2_OVERBOUGHT) {
+    return {
+      action: 'EXIT',
+      reason: 'RSI2_OVERBOUGHT',
+      exitPrice: currentClose,
+      pnlPct,
+      rsi2: r2(currentRsi2),
+      daysSinceEntry,
+      note: `RSI(2) = ${r2(currentRsi2)} > ${CONFIG.RSI2_OVERBOUGHT} — mean reversion complete`,
+    };
+  }
+
+  // ===== EXIT CHECK 3: Price closes above 5-day SMA =====
+  if (currentSma5 !== null && currentClose > currentSma5) {
+    return {
+      action: 'EXIT',
+      reason: 'ABOVE_5SMA',
+      exitPrice: currentClose,
+      pnlPct,
+      sma5: r2(currentSma5),
+      daysSinceEntry,
+      note: `Close ₹${r2(currentClose)} > 5-SMA ₹${r2(currentSma5)} — bounced back to mean`,
+    };
+  }
+
+  // ===== EXIT CHECK 4: Time stop — 10 days with no meaningful bounce =====
+  if (daysSinceEntry >= CONFIG.TIME_STOP_DAYS) {
+    return {
+      action: 'EXIT',
+      reason: 'TIME_STOP',
+      exitPrice: currentClose,
+      pnlPct,
+      daysSinceEntry,
+      note: `${CONFIG.TIME_STOP_DAYS} days elapsed — no sufficient bounce, cutting dead money`,
+    };
+  }
+
+  // ===== EXIT CHECK 5: Absolute max holding (safety net) =====
+  if (daysSinceEntry >= CONFIG.MAX_HOLDING_DAYS) {
+    return {
+      action: 'EXIT',
+      reason: 'MAX_HOLDING_PERIOD',
+      exitPrice: currentClose,
+      pnlPct,
+      daysSinceEntry,
+    };
+  }
+
+  // ===== HOLD =====
+  return {
+    action: 'HOLD',
+    daysSinceEntry,
+    pnlPct,
+    currentClose: r2(currentClose),
+    rsi2: currentRsi2 !== null ? r2(currentRsi2) : null,
+    sma5: currentSma5 !== null ? r2(currentSma5) : null,
+    distanceToStop: r2(((currentClose - stopLoss) / currentClose) * 100) + '%',
+    daysRemaining: CONFIG.TIME_STOP_DAYS - daysSinceEntry,
+  };
+}
+
+
+// ============================================================================
+// BACKTEST ENGINE
+// ============================================================================
+
+/**
+ * Full backtest of mean reversion strategy
+ *
+ * @param {Object} data
+ *   { stocks: { [symbol]: { opens, highs, lows, closes, volumes, avgDailyTurnoverCr } },
+ *     niftyCloses: number[],
+ *     dates: string[] }
+ *   All arrays must be aligned by index (index 0 = dates[0])
+ * @param {number} capitalBase
+ * @returns {Object} complete backtest results
+ */
+function runBacktest(data, capitalBase = 10000000) {
+  const { stocks, niftyCloses, dates } = data;
+  const symbols = Object.keys(stocks);
+
+  let capital = capitalBase;
+  const openPositions = []; // { symbol, entryPrice, entryIdx, stopLoss, shares, ... }
+  const closedTrades = [];
+  const equityCurve = [];
+  let peakEquity = capitalBase;
+  let maxDrawdown = 0;
+  const dailySignalCounts = [];
+
+  // We need at least MIN_HISTORY_DAYS before we start scanning
+  const startIdx = CONFIG.MIN_HISTORY_DAYS;
+
+  for (let day = startIdx; day < dates.length; day++) {
+    const currentDate = dates[day];
+
+    // ===== 1. MONITOR EXISTING POSITIONS =====
+    const positionsToClose = [];
+
+    for (let p = 0; p < openPositions.length; p++) {
+      const pos = openPositions[p];
+      const stockData = stocks[pos.symbol];
+      if (!stockData) continue;
+
+      pos.daysSinceEntry++;
+      pos.closesAfterEntry.push(stockData.closes[day]);
+      pos.highsAfterEntry.push(stockData.highs[day]);
+      pos.lowsAfterEntry.push(stockData.lows[day]);
+
+      const exitCheck = monitorPosition(pos);
+
+      if (exitCheck.action === 'EXIT') {
+        const exitPrice = exitCheck.exitPrice;
+        const pnl = (exitPrice - pos.entryPrice) * pos.shares;
+
+        closedTrades.push({
+          symbol: pos.symbol,
+          entryDate: dates[pos.entryIdx],
+          exitDate: currentDate,
+          entryPrice: r2(pos.entryPrice),
+          exitPrice: r2(exitPrice),
+          shares: pos.shares,
+          pnl: Math.round(pnl),
+          pnlPct: r2(((exitPrice / pos.entryPrice) - 1) * 100) + '%',
+          holdingDays: pos.daysSinceEntry,
+          exitReason: exitCheck.reason,
+          entryRsi2: r2(pos.entryRsi2),
+          entryConsecDown: pos.entryConsecDown,
+          qualityGrade: pos.qualityGrade,
+        });
+
+        capital += pos.shares * exitPrice; // return capital from position
+        positionsToClose.push(p);
+      }
+    }
+
+    // Remove closed positions (reverse order)
+    for (let i = positionsToClose.length - 1; i >= 0; i--) {
+      openPositions.splice(positionsToClose[i], 1);
+    }
+
+    // ===== 2. SCAN FOR NEW ENTRIES =====
+    if (openPositions.length < CONFIG.MAX_CONCURRENT_POSITIONS) {
+      // Market regime check
+      const niftySlice = niftyCloses.slice(0, day + 1);
+      const regime = checkMarketRegime(niftySlice);
+
+      if (regime.tradeable) {
+        const slotsAvailable = CONFIG.MAX_CONCURRENT_POSITIONS - openPositions.length;
+        const currentSymbols = new Set(openPositions.map(p => p.symbol));
+        const candidates = [];
+
+        for (const sym of symbols) {
+          if (currentSymbols.has(sym)) continue;
+
+          const stockData = stocks[sym];
+
+          // Build the stock object with data up to current day
+          const stockSlice = {
+            symbol: sym,
+            opens: stockData.opens.slice(0, day + 1),
+            highs: stockData.highs.slice(0, day + 1),
+            lows: stockData.lows.slice(0, day + 1),
+            closes: stockData.closes.slice(0, day + 1),
+            volumes: stockData.volumes.slice(0, day + 1),
+            avgDailyTurnoverCr: stockData.avgDailyTurnoverCr,
+            earningsDate: stockData.earningsDate,
+          };
+
+          if (stockSlice.closes.length < CONFIG.MIN_HISTORY_DAYS) continue;
+
+          const indicators = computeIndicators(stockSlice);
+          if (!indicators) continue;
+
+          const signal = checkMeanReversionEntry(indicators, stockSlice, currentDate);
+          if (signal.triggered) {
+            candidates.push({ symbol: sym, signal, indicators });
+          }
+        }
+
+        // Sort by quality score, take best available
+        candidates.sort((a, b) => b.signal.qualityScore - a.signal.qualityScore);
+
+        for (const cand of candidates.slice(0, slotsAvailable)) {
+          const trade = cand.signal.trade;
+          if (!trade) continue;
+
+          // Entry at next day's open (we use current close as proxy for the stop)
+          // In a real scenario, entryPrice would be the next day's open
+          const entryPrice = cand.indicators.close;
+          const stopLoss = trade.stopLoss;
+          const sizeMultiplier = regime.positionSizeMultiplier || 1.0;
+
+          const sizing = calcPositionSize(capital, entryPrice, stopLoss, sizeMultiplier);
+          if (sizing.shares <= 0) continue;
+
+          // Deduct position value from available capital
+          capital -= sizing.positionValue;
+
+          openPositions.push({
+            symbol: cand.symbol,
+            entryPrice,
+            entryIdx: day,
+            stopLoss,
+            shares: sizing.shares,
+            daysSinceEntry: 0,
+            closesAfterEntry: [],
+            highsAfterEntry: [],
+            lowsAfterEntry: [],
+            preEntryCloses: cand.indicators.closesArray.slice(-50), // for RSI calculation continuity
+            entryRsi2: cand.indicators.rsi2,
+            entryConsecDown: cand.indicators.consecutiveDownDays,
+            qualityGrade: cand.signal.overallGrade,
+          });
+        }
+      }
+
+      dailySignalCounts.push({ date: currentDate, signals: 0 }); // simplified
+    }
+
+    // ===== 3. EQUITY CURVE =====
+    let openPositionValue = 0;
+    for (const pos of openPositions) {
+      const stockData = stocks[pos.symbol];
+      if (stockData && day < stockData.closes.length) {
+        openPositionValue += stockData.closes[day] * pos.shares;
+      }
+    }
+
+    const totalEquity = capital + openPositionValue;
+    if (totalEquity > peakEquity) peakEquity = totalEquity;
+    const dd = peakEquity > 0 ? (peakEquity - totalEquity) / peakEquity : 0;
+    if (dd > maxDrawdown) maxDrawdown = dd;
+
+    equityCurve.push({
+      date: currentDate,
+      cash: Math.round(capital),
+      invested: Math.round(openPositionValue),
+      totalEquity: Math.round(totalEquity),
+      positions: openPositions.length,
+      drawdown: r2(dd * 100) + '%',
+    });
+  }
+
+  // Force-close remaining positions at last available price
+  for (const pos of openPositions) {
+    const stockData = stocks[pos.symbol];
+    const exitPrice = stockData.closes[stockData.closes.length - 1];
+    const pnl = (exitPrice - pos.entryPrice) * pos.shares;
+
+    closedTrades.push({
+      symbol: pos.symbol,
+      entryDate: dates[pos.entryIdx],
+      exitDate: dates[dates.length - 1],
+      entryPrice: r2(pos.entryPrice),
+      exitPrice: r2(exitPrice),
+      shares: pos.shares,
+      pnl: Math.round(pnl),
+      pnlPct: r2(((exitPrice / pos.entryPrice) - 1) * 100) + '%',
+      holdingDays: pos.daysSinceEntry,
+      exitReason: 'BACKTEST_END',
+      entryRsi2: r2(pos.entryRsi2),
+      entryConsecDown: pos.entryConsecDown,
+      qualityGrade: pos.qualityGrade,
+    });
+
+    capital += exitPrice * pos.shares;
+  }
+
+  return buildAnalytics(closedTrades, equityCurve, capitalBase, capital, maxDrawdown);
+}
+
+
+// ============================================================================
+// ANALYTICS ENGINE
+// ============================================================================
+
+function buildAnalytics(trades, equityCurve, capitalBase, finalCapital, maxDrawdown) {
+  const totalTrades = trades.length;
+  const winners = trades.filter(t => t.pnl > 0);
+  const losers = trades.filter(t => t.pnl <= 0);
+
+  // Basic stats
+  const winRate = totalTrades > 0 ? winners.length / totalTrades : 0;
+  const avgWinPct = winners.length > 0
+    ? winners.reduce((s, t) => s + parseFloat(t.pnlPct), 0) / winners.length
+    : 0;
+  const avgLossPct = losers.length > 0
+    ? Math.abs(losers.reduce((s, t) => s + parseFloat(t.pnlPct), 0) / losers.length)
+    : 0;
+  const avgHoldingDays = totalTrades > 0
+    ? trades.reduce((s, t) => s + t.holdingDays, 0) / totalTrades
+    : 0;
+
+  const grossProfit = winners.reduce((s, t) => s + t.pnl, 0);
+  const grossLoss = Math.abs(losers.reduce((s, t) => s + t.pnl, 0));
+  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : Infinity;
+  const netProfit = grossProfit - grossLoss;
+
+  // Expectancy
+  const expectancy = (winRate * avgWinPct) - ((1 - winRate) * avgLossPct);
+
+  // CAGR estimation
+  const totalReturn = (finalCapital / capitalBase) - 1;
+  const firstDate = equityCurve.length > 0 ? new Date(equityCurve[0].date) : null;
+  const lastDate = equityCurve.length > 0 ? new Date(equityCurve[equityCurve.length - 1].date) : null;
+  const years = firstDate && lastDate
+    ? (lastDate - firstDate) / (365.25 * 24 * 60 * 60 * 1000)
+    : 1;
+  const cagr = years > 0 ? Math.pow(finalCapital / capitalBase, 1 / years) - 1 : 0;
+
+  // Risk-adjusted returns
+  const periodicReturns = [];
+  for (let i = 5; i < equityCurve.length; i += 5) {
+    const prev = equityCurve[i - 5].totalEquity;
+    const curr = equityCurve[i].totalEquity;
+    if (prev > 0) periodicReturns.push((curr / prev) - 1);
+  }
+  const sharpe = calcSharpeRatio(periodicReturns, 52);
+  const sortino = calcSortinoRatio(periodicReturns, 52);
+  const calmar = maxDrawdown > 0 ? cagr / maxDrawdown : null;
+
+  // Consecutive win/loss streaks
+  const { maxWinStreak, maxLoseStreak } = calcStreaks(trades);
+
+  // By exit reason
+  const byExitReason = analyzeByExitReason(trades);
+
+  // By quality grade
+  const byGrade = analyzeByGrade(trades);
+
+  // By consecutive down days at entry
+  const byConsecDown = analyzeByConsecDown(trades);
+
+  // By RSI(2) level at entry
+  const byRsi2Level = analyzeByRsi2Level(trades);
+
+  // Monthly returns
+  const monthly = calcMonthlyReturns(equityCurve);
+
+  // Drawdown analysis
+  const drawdowns = analyzeDrawdowns(equityCurve);
+
+  return {
+    summary: {
+      startingCapital: capitalBase,
+      endingCapital: Math.round(finalCapital),
+      netProfit: Math.round(netProfit),
+      totalReturn: r2(totalReturn * 100) + '%',
+      cagr: r2(cagr * 100) + '%',
+      totalTrades,
+      winners: winners.length,
+      losers: losers.length,
+      winRate: r2(winRate * 100) + '%',
+      avgWinPct: r2(avgWinPct) + '%',
+      avgLossPct: r2(avgLossPct) + '%',
+      winLossRatio: avgLossPct > 0 ? r2(avgWinPct / avgLossPct) : 'N/A',
+      profitFactor: profitFactor !== Infinity ? r2(profitFactor) : 'N/A',
+      expectancyPerTrade: r2(expectancy) + '%',
+      avgHoldingDays: r2(avgHoldingDays),
+      maxDrawdown: r2(maxDrawdown * 100) + '%',
+      sharpeRatio: sharpe !== null ? r2(sharpe) : 'N/A',
+      sortinoRatio: sortino !== null ? r2(sortino) : 'N/A',
+      calmarRatio: calmar !== null ? r2(calmar) : 'N/A',
+      maxWinStreak,
+      maxLoseStreak,
+    },
+    byExitReason,
+    byQualityGrade: byGrade,
+    byConsecutiveDownDays: byConsecDown,
+    byRsi2Level,
+    monthlyReturns: monthly,
+    drawdownPeriods: drawdowns,
+    topWinners: [...trades].sort((a, b) => b.pnl - a.pnl).slice(0, 10).map(formatTrade),
+    topLosers: [...trades].sort((a, b) => a.pnl - b.pnl).slice(0, 10).map(formatTrade),
+    allTrades: trades,
+    equityCurve,
+  };
+}
+
+
+// ============================================================================
+// DETAILED ANALYTICS BREAKDOWNS
+// ============================================================================
+
+/**
+ * Performance breakdown by exit reason
+ */
+function analyzeByExitReason(trades) {
+  const buckets = {};
+  for (const t of trades) {
+    if (!buckets[t.exitReason]) {
+      buckets[t.exitReason] = { trades: [], totalPnl: 0, wins: 0 };
+    }
+    buckets[t.exitReason].trades.push(t);
+    buckets[t.exitReason].totalPnl += t.pnl;
+    if (t.pnl > 0) buckets[t.exitReason].wins++;
+  }
+
+  const result = {};
+  for (const [reason, data] of Object.entries(buckets)) {
+    const n = data.trades.length;
+    result[reason] = {
+      count: n,
+      winRate: r2((data.wins / n) * 100) + '%',
+      avgPnlPct: r2(data.trades.reduce((s, t) => s + parseFloat(t.pnlPct), 0) / n) + '%',
+      totalPnl: Math.round(data.totalPnl),
+      avgHoldingDays: r2(data.trades.reduce((s, t) => s + t.holdingDays, 0) / n),
+    };
+  }
+  return result;
+}
+
+/**
+ * Performance by signal quality grade
+ */
+function analyzeByGrade(trades) {
+  const grades = { A: [], B: [], C: [], D: [], null: [] };
+  for (const t of trades) {
+    const g = t.qualityGrade || 'null';
+    if (!grades[g]) grades[g] = [];
+    grades[g].push(t);
+  }
+
+  const result = {};
+  for (const [grade, tradeList] of Object.entries(grades)) {
+    if (tradeList.length === 0) continue;
+    const n = tradeList.length;
+    const wins = tradeList.filter(t => t.pnl > 0).length;
+    result[`Grade ${grade}`] = {
+      count: n,
+      winRate: r2((wins / n) * 100) + '%',
+      avgPnlPct: r2(tradeList.reduce((s, t) => s + parseFloat(t.pnlPct), 0) / n) + '%',
+      totalPnl: Math.round(tradeList.reduce((s, t) => s + t.pnl, 0)),
+    };
+  }
+  return result;
+}
+
+/**
+ * Performance by number of consecutive down days at entry
+ */
+function analyzeByConsecDown(trades) {
+  const buckets = {};
+  for (const t of trades) {
+    const key = `${t.entryConsecDown || '?'} days`;
+    if (!buckets[key]) buckets[key] = [];
+    buckets[key].push(t);
+  }
+
+  const result = {};
+  for (const [bucket, tradeList] of Object.entries(buckets)) {
+    const n = tradeList.length;
+    const wins = tradeList.filter(t => t.pnl > 0).length;
+    result[bucket] = {
+      count: n,
+      winRate: r2((wins / n) * 100) + '%',
+      avgPnlPct: r2(tradeList.reduce((s, t) => s + parseFloat(t.pnlPct), 0) / n) + '%',
+    };
+  }
+  return result;
+}
+
+/**
+ * Performance by RSI(2) level at entry
+ */
+function analyzeByRsi2Level(trades) {
+  const buckets = {
+    'RSI2 < 2': [],
+    'RSI2 2-5': [],
+    'RSI2 5-10': [],
+  };
+
+  for (const t of trades) {
+    const rsi = parseFloat(t.entryRsi2);
+    if (isNaN(rsi)) continue;
+    if (rsi < 2) buckets['RSI2 < 2'].push(t);
+    else if (rsi < 5) buckets['RSI2 2-5'].push(t);
+    else buckets['RSI2 5-10'].push(t);
+  }
+
+  const result = {};
+  for (const [bucket, tradeList] of Object.entries(buckets)) {
+    if (tradeList.length === 0) continue;
+    const n = tradeList.length;
+    const wins = tradeList.filter(t => t.pnl > 0).length;
+    result[bucket] = {
+      count: n,
+      winRate: r2((wins / n) * 100) + '%',
+      avgPnlPct: r2(tradeList.reduce((s, t) => s + parseFloat(t.pnlPct), 0) / n) + '%',
+      avgHoldingDays: r2(tradeList.reduce((s, t) => s + t.holdingDays, 0) / n),
+    };
+  }
+  return result;
+}
+
+/**
+ * Monthly return calculation from equity curve
+ */
+function calcMonthlyReturns(equityCurve) {
+  if (equityCurve.length < 2) return [];
+
+  const monthlyEquity = {};
+  for (const point of equityCurve) {
+    const monthKey = point.date.substring(0, 7);
+    monthlyEquity[monthKey] = point.totalEquity;
+  }
+
+  const months = Object.keys(monthlyEquity).sort();
+  const returns = [];
+  for (let i = 1; i < months.length; i++) {
+    const ret = (monthlyEquity[months[i]] / monthlyEquity[months[i - 1]]) - 1;
+    returns.push({
+      month: months[i],
+      return: r2(ret * 100) + '%',
+      equity: monthlyEquity[months[i]],
+    });
+  }
+  return returns;
+}
+
+/**
+ * Find and characterize all drawdown periods
+ */
+function analyzeDrawdowns(equityCurve) {
+  const drawdowns = [];
+  let peak = equityCurve[0]?.totalEquity || 0;
+  let ddStart = null;
+  let maxDDInPeriod = 0;
+  let ddStartDate = null;
+
+  for (let i = 0; i < equityCurve.length; i++) {
+    const eq = equityCurve[i].totalEquity;
+
+    if (eq >= peak) {
+      // Recovery — close any open drawdown
+      if (ddStart !== null && maxDDInPeriod > 0.01) {
+        drawdowns.push({
+          start: ddStartDate,
+          trough: equityCurve[i - 1]?.date || ddStartDate,
+          recovery: equityCurve[i].date,
+          maxDrawdown: r2(maxDDInPeriod * 100) + '%',
+          durationDays: i - ddStart,
+        });
+      }
+      peak = eq;
+      ddStart = null;
+      maxDDInPeriod = 0;
+    } else {
+      if (ddStart === null) {
+        ddStart = i;
+        ddStartDate = equityCurve[i].date;
+      }
+      const dd = (peak - eq) / peak;
+      if (dd > maxDDInPeriod) maxDDInPeriod = dd;
+    }
+  }
+
+  // Handle open drawdown
+  if (ddStart !== null && maxDDInPeriod > 0.01) {
+    drawdowns.push({
+      start: ddStartDate,
+      trough: equityCurve[equityCurve.length - 1]?.date,
+      recovery: 'ONGOING',
+      maxDrawdown: r2(maxDDInPeriod * 100) + '%',
+      durationDays: equityCurve.length - ddStart,
+    });
+  }
+
+  return drawdowns.sort((a, b) => parseFloat(b.maxDrawdown) - parseFloat(a.maxDrawdown));
+}
+
+
+// ============================================================================
+// PARAMETER SENSITIVITY ANALYSIS
+// ============================================================================
+
+/**
+ * Test how varying key parameters affects strategy performance
+ */
+function sensitivityAnalysis(data, capitalBase = 10000000) {
+  const results = [];
+
+  // --- RSI(2) threshold variations ---
+  const rsiThresholds = [5, 8, 10, 15, 20];
+  for (const thresh of rsiThresholds) {
+    const orig = CONFIG.RSI2_OVERSOLD;
+    CONFIG.RSI2_OVERSOLD = thresh;
+    const bt = runBacktest(data, capitalBase);
+    results.push({
+      parameter: 'RSI(2) Threshold',
+      value: `< ${thresh}`,
+      trades: bt.summary.totalTrades,
+      winRate: bt.summary.winRate,
+      avgPnlPct: bt.summary.expectancyPerTrade,
+      maxDD: bt.summary.maxDrawdown,
+      totalReturn: bt.summary.totalReturn,
+    });
+    CONFIG.RSI2_OVERSOLD = orig;
+  }
+
+  // --- Consecutive down days required ---
+  const consecDays = [1, 2, 3, 4, 5];
+  for (const days of consecDays) {
+    const orig = CONFIG.MIN_CONSECUTIVE_DOWN;
+    CONFIG.MIN_CONSECUTIVE_DOWN = days;
+    const bt = runBacktest(data, capitalBase);
+    results.push({
+      parameter: 'Min Consecutive Down',
+      value: `${days} days`,
+      trades: bt.summary.totalTrades,
+      winRate: bt.summary.winRate,
+      avgPnlPct: bt.summary.expectancyPerTrade,
+      maxDD: bt.summary.maxDrawdown,
+      totalReturn: bt.summary.totalReturn,
+    });
+    CONFIG.MIN_CONSECUTIVE_DOWN = orig;
+  }
+
+  // --- Time stop variations ---
+  const timeStops = [5, 7, 10, 15, 20];
+  for (const ts of timeStops) {
+    const orig = CONFIG.TIME_STOP_DAYS;
+    CONFIG.TIME_STOP_DAYS = ts;
+    const bt = runBacktest(data, capitalBase);
+    results.push({
+      parameter: 'Time Stop',
+      value: `${ts} days`,
+      trades: bt.summary.totalTrades,
+      winRate: bt.summary.winRate,
+      avgPnlPct: bt.summary.expectancyPerTrade,
+      maxDD: bt.summary.maxDrawdown,
+      totalReturn: bt.summary.totalReturn,
+    });
+    CONFIG.TIME_STOP_DAYS = orig;
+  }
+
+  // --- Stop-loss method variations ---
+  const atrMultipliers = [1.5, 2.0, 2.5, 3.0];
+  for (const mult of atrMultipliers) {
+    const orig = CONFIG.ATR_STOP_MULTIPLIER;
+    CONFIG.ATR_STOP_MULTIPLIER = mult;
+    const bt = runBacktest(data, capitalBase);
+    results.push({
+      parameter: 'ATR Stop Multiplier',
+      value: `${mult}x ATR`,
+      trades: bt.summary.totalTrades,
+      winRate: bt.summary.winRate,
+      avgPnlPct: bt.summary.expectancyPerTrade,
+      maxDD: bt.summary.maxDrawdown,
+      totalReturn: bt.summary.totalReturn,
+    });
+    CONFIG.ATR_STOP_MULTIPLIER = orig;
+  }
+
+  // --- RSI(2) exit threshold ---
+  const exitThresholds = [50, 60, 70, 80, 90];
+  for (const et of exitThresholds) {
+    const orig = CONFIG.RSI2_OVERBOUGHT;
+    CONFIG.RSI2_OVERBOUGHT = et;
+    const bt = runBacktest(data, capitalBase);
+    results.push({
+      parameter: 'RSI(2) Exit Threshold',
+      value: `> ${et}`,
+      trades: bt.summary.totalTrades,
+      winRate: bt.summary.winRate,
+      avgPnlPct: bt.summary.expectancyPerTrade,
+      maxDD: bt.summary.maxDrawdown,
+      totalReturn: bt.summary.totalReturn,
+    });
+    CONFIG.RSI2_OVERBOUGHT = orig;
+  }
+
+  return results;
+}
+
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+function r2(n) {
+  return n !== null && n !== undefined && !isNaN(n) ? Math.round(n * 100) / 100 : null;
+}
+
+function formatTrade(t) {
+  return {
+    symbol: t.symbol,
+    entry: `${t.entryDate} @ ₹${t.entryPrice}`,
+    exit: `${t.exitDate} @ ₹${t.exitPrice}`,
+    pnlPct: t.pnlPct,
+    holdingDays: t.holdingDays,
+    exitReason: t.exitReason,
+    grade: t.qualityGrade,
+  };
+}
+
+function calcStreaks(trades) {
+  let maxWin = 0, maxLose = 0, curWin = 0, curLose = 0;
+  for (const t of trades) {
+    if (t.pnl > 0) {
+      curWin++;
+      curLose = 0;
+      maxWin = Math.max(maxWin, curWin);
+    } else {
+      curLose++;
+      curWin = 0;
+      maxLose = Math.max(maxLose, curLose);
+    }
+  }
+  return { maxWinStreak: maxWin, maxLoseStreak: maxLose };
+}
+
+function calcSharpeRatio(returns, periodsPerYear) {
+  if (!returns || returns.length < 2) return null;
+  const mean = returns.reduce((s, r) => s + r, 0) / returns.length;
+  const std = Math.sqrt(
+    returns.reduce((s, r) => s + (r - mean) ** 2, 0) / (returns.length - 1)
+  );
+  if (std === 0) return null;
+  const annReturn = mean * periodsPerYear;
+  const annStd = std * Math.sqrt(periodsPerYear);
+  return (annReturn - CONFIG.RISK_FREE_RATE) / annStd;
+}
+
+function calcSortinoRatio(returns, periodsPerYear) {
+  if (!returns || returns.length < 2) return null;
+  const mean = returns.reduce((s, r) => s + r, 0) / returns.length;
+  const downside = returns.filter(r => r < 0);
+  if (downside.length === 0) return Infinity;
+  const dsDev = Math.sqrt(downside.reduce((s, r) => s + r ** 2, 0) / downside.length);
+  if (dsDev === 0) return Infinity;
+  const annReturn = mean * periodsPerYear;
+  const annDsDev = dsDev * Math.sqrt(periodsPerYear);
+  return (annReturn - CONFIG.RISK_FREE_RATE) / annDsDev;
+}
+
+
+// ============================================================================
+// DEMO
+// ============================================================================
+
+function runDemo() {
+  console.log('═'.repeat(80));
+  console.log('  STRATEGY 3: RSI(2) MEAN REVERSION — INDIAN MARKETS');
+  console.log('═'.repeat(80));
+
+  // --- Generate mock data ---
+  function mockStock(symbol, days, basePx, trend, noise, turnover) {
+    const opens = [basePx];
+    const highs = [basePx * 1.01];
+    const lows = [basePx * 0.99];
+    const closes = [basePx];
+    const volumes = [500000];
+
+    for (let i = 1; i < days; i++) {
+      const prev = closes[i - 1];
+      const move = trend + (Math.random() - 0.5) * noise;
+      const o = prev * (1 + (Math.random() - 0.5) * noise * 0.3);
+      const c = o * (1 + move);
+      const h = Math.max(o, c) * (1 + Math.random() * noise * 0.4);
+      const l = Math.min(o, c) * (1 - Math.random() * noise * 0.4);
+      opens.push(o);
+      highs.push(h);
+      lows.push(l);
+      closes.push(c);
+      volumes.push(Math.round(500000 * (0.5 + Math.random())));
+    }
+
+    return { symbol, opens, highs, lows, closes, volumes, avgDailyTurnoverCr: turnover };
+  }
+
+  // Inject a "dip" into a stock to trigger mean reversion
+  function injectDip(stock, startIdx, daysDown, dailyDropPct) {
+    for (let d = 0; d < daysDown && startIdx + d < stock.closes.length; d++) {
+      const i = startIdx + d;
+      const drop = 1 - dailyDropPct;
+      stock.closes[i] = stock.closes[i - 1] * drop;
+      stock.opens[i] = stock.closes[i - 1] * (drop + 0.002);
+      stock.lows[i] = stock.closes[i] * 0.998;
+      stock.highs[i] = stock.opens[i] * 1.002;
+      stock.volumes[i] = Math.round(stock.volumes[i] * 1.8); // volume spike on drop
+    }
+  }
+
+  const DAYS = 300;
+
+  // Create stocks in uptrends (above their 200-SMA)
+  const reliance = mockStock('RELIANCE', DAYS, 2400, 0.0008, 0.02, 55);
+  const tcs = mockStock('TCS', DAYS, 3400, 0.0006, 0.018, 35);
+  const infy = mockStock('INFY', DAYS, 1400, 0.0010, 0.022, 40);
+  const hdfc = mockStock('HDFCBANK', DAYS, 1600, 0.0007, 0.02, 48);
+  const icici = mockStock('ICICIBANK', DAYS, 1000, 0.0012, 0.025, 30);
+  const sbin = mockStock('SBIN', DAYS, 600, 0.0015, 0.03, 25);
+  const bajfin = mockStock('BAJFINANCE', DAYS, 7000, 0.0010, 0.035, 22);
+  const titan = mockStock('TITAN', DAYS, 3200, 0.0008, 0.025, 18);
+
+  // Inject dips to create entry signals
+  injectDip(reliance, 250, 4, 0.025);   // 4 consecutive down days, ~2.5% daily
+  injectDip(infy, 245, 3, 0.030);       // 3 consecutive down, ~3% daily
+  injectDip(sbin, 248, 5, 0.020);       // 5 consecutive down, ~2% daily
+  injectDip(bajfin, 252, 3, 0.035);     // 3 consecutive down, ~3.5% daily
+
+  const universe = [reliance, tcs, infy, hdfc, icici, sbin, bajfin, titan];
+  const niftyCloses = mockStock('NIFTY', DAYS, 18000, 0.0005, 0.012, 0).closes;
+
+  // ====== 1. INDICATOR SNAPSHOT ======
+  console.log('\n' + '─'.repeat(80));
+  console.log('  1. INDICATOR SNAPSHOT — RELIANCE (after dip)');
+  console.log('─'.repeat(80));
+
+  const relIndicators = computeIndicators(reliance);
+  if (relIndicators) {
+    console.log(`  Close:          ₹${r2(relIndicators.close)}`);
+    console.log(`  200-SMA:        ₹${r2(relIndicators.sma200)}`);
+    console.log(`  Above 200-SMA:  ${relIndicators.aboveSma200}`);
+    console.log(`  5-SMA:          ₹${r2(relIndicators.sma5)}`);
+    console.log(`  RSI(2):         ${r2(relIndicators.rsi2)}`);
+    console.log(`  RSI(14):        ${r2(relIndicators.rsi14)}`);
+    console.log(`  ATR(14):        ₹${r2(relIndicators.atr14)}`);
+    console.log(`  BB Upper:       ₹${r2(relIndicators.bbUpper)}`);
+    console.log(`  BB Middle:      ₹${r2(relIndicators.bbMiddle)}`);
+    console.log(`  BB Lower:       ₹${r2(relIndicators.bbLower)}`);
+    console.log(`  BB %B:          ${r2(relIndicators.bbPercentB)}`);
+    console.log(`  BB Bandwidth:   ${r2(relIndicators.bbBandwidth)}`);
+    console.log(`  Consec Down:    ${relIndicators.consecutiveDownDays}`);
+    console.log(`  Cum. Decline:   ${r2(relIndicators.cumulativeDecline * 100)}%`);
+    console.log(`  Volume Ratio:   ${r2(relIndicators.volumeRatio)}x`);
+    console.log(`  Volatility:     ${relIndicators.volatility ? r2(relIndicators.volatility * 100) + '%' : 'N/A'}`);
+  }
+
+  // ====== 2. SIGNAL ANALYSIS (SINGLE STOCK) ======
+  console.log('\n' + '─'.repeat(80));
+  console.log('  2. MEAN REVERSION SIGNAL — RELIANCE');
+  console.log('─'.repeat(80));
+
+  if (relIndicators) {
+    const signal = checkMeanReversionEntry(relIndicators, reliance, '2024-06-15');
+
+    console.log(`\n  TRIGGERED: ${signal.triggered ? '✅ YES' : '❌ NO'}`);
+    console.log(`  Conditions Met: ${signal.score}/${signal.totalConditions}`);
+
+    console.log('\n  Condition Check:');
+    for (const c of signal.conditions) {
+      const icon = c.met ? '✓' : '✗';
+      console.log(`    ${icon} [${c.name}] ${c.detail}`);
+    }
+
+    console.log(`\n  Quality Score: ${signal.qualityScore}/${signal.maxQualityScore} (Grade: ${signal.overallGrade || '-'})`);
+    console.log('  Quality Factors:');
+    for (const f of signal.qualityFactors) {
+      console.log(`    • ${f}`);
+    }
+
+    if (signal.trade) {
+      console.log('\n  TRADE PLAN:');
+      console.log(`    Entry:    ₹${signal.trade.entryPrice} (${signal.trade.entryType})`);
+      console.log(`    Stop:     ₹${signal.trade.stopLoss} (${signal.trade.stopMethod})`);
+      console.log(`    Stop %:   ${signal.trade.stopDistancePct}`);
+      console.log(`    R:R Est:  ${signal.trade.estimatedRiskReward}`);
+      console.log(`    Target:   BB Middle ₹${signal.trade.bbMiddleTarget}`);
+      console.log(`    Expected: ~${signal.trade.expectedBounce} bounce`);
+      console.log('    Exits:');
+      Object.entries(signal.trade.exitConditions).forEach(([k, v]) =>
+        console.log(`      ${k}: ${v}`)
+      );
+    }
+  }
+
+  // ====== 3. MARKET REGIME ======
+  console.log('\n' + '─'.repeat(80));
+  console.log('  3. MARKET REGIME CHECK');
+  console.log('─'.repeat(80));
+
+  const regime = checkMarketRegime(niftyCloses);
+  console.log(`\n  Regime: ${regime.regime}`);
+  console.log(`  Tradeable: ${regime.tradeable}`);
+  console.log(`  Nifty: ${regime.nifty}`);
+  console.log(`  200-SMA: ${regime.sma200}`);
+  console.log(`  Distance: ${regime.distancePct}`);
+  console.log(`  RSI(14): ${regime.niftyRsi14}`);
+  if (regime.warning) console.log(`  ⚠ ${regime.warning}`);
+
+  // ====== 4. UNIVERSE SCAN ======
+  console.log('\n' + '─'.repeat(80));
+  console.log('  4. UNIVERSE SCAN');
+  console.log('─'.repeat(80));
+
+  const scanResult = scanUniverse(universe, niftyCloses, '2024-06-15');
+
+  console.log(`\n  Scanned: ${scanResult.totalScanned}`);
+  console.log(`  Filtered: ${scanResult.totalFiltered}`);
+  console.log(`  Signals: ${scanResult.signalCount}`);
+
+  if (scanResult.signals.length > 0) {
+    console.log('\n  TRIGGERED SIGNALS (sorted by quality):');
+    for (const sig of scanResult.signals) {
+      console.log(`\n    ${sig.symbol} — Grade ${sig.overallGrade} (Quality: ${sig.qualityScore}/${sig.maxQualityScore})`);
+      console.log(`      RSI(2): ${sig.indicators.rsi2}  |  Consec Down: ${sig.indicators.consecutiveDown}  |  Decline: ${sig.indicators.cumulativeDecline}`);
+      if (sig.trade) {
+        console.log(`      Entry: ₹${sig.trade.entryPrice}  Stop: ₹${sig.trade.stopLoss} (${sig.trade.stopDistancePct})  R:R: ${sig.trade.estimatedRiskReward}`);
+      }
+    }
+  }
+
+  if (scanResult.watchlist.length > 0) {
+    console.log('\n  WATCHLIST (almost triggered):');
+    for (const w of scanResult.watchlist) {
+      console.log(`    ${w.symbol} — Score ${w.score}/4, RSI(2): ${w.rsi2}, Down days: ${w.consecutiveDown}`);
+    }
+  }
+
+  // ====== 5. POSITION SIZING ======
+  console.log('\n' + '─'.repeat(80));
+  console.log('  5. POSITION SIZING');
+  console.log('─'.repeat(80));
+
+  const sizing = calcPositionSize(10000000, 2300, 2139);
+  console.log(`\n  Capital: ₹1,00,00,000`);
+  console.log(`  Entry: ₹2,300  |  Stop: ₹2,139  |  Risk/share: ₹${sizing.riskPerShare}`);
+  console.log(`  Shares: ${sizing.shares}`);
+  console.log(`  Position Value: ₹${sizing.positionValue.toLocaleString('en-IN')}`);
+  console.log(`  Position %: ${sizing.positionPct}`);
+  console.log(`  Total Risk: ₹${sizing.totalRisk.toLocaleString('en-IN')} (${sizing.riskPctOfCapital})`);
+  console.log(`  Constraint: ${sizing.sizeConstraint}`);
+
+  // ====== 6. POSITION MONITORING ======
+  console.log('\n' + '─'.repeat(80));
+  console.log('  6. POSITION MONITORING SCENARIOS');
+  console.log('─'.repeat(80));
+
+  const basePosition = {
+    symbol: 'RELIANCE',
+    entryPrice: 2300,
+    stopLoss: 2139,
+    preEntryCloses: reliance.closes.slice(-50),
+  };
+
+  const monitorScenarios = [
+    {
+      label: 'Day 2 — still dropping',
+      days: 2,
+      closesAfter: [2280, 2260],
+      highsAfter: [2290, 2275],
+      lowsAfter: [2270, 2250],
+    },
+    {
+      label: 'Day 3 — bouncing, RSI(2) recovering',
+      days: 3,
+      closesAfter: [2280, 2260, 2310],
+      highsAfter: [2290, 2275, 2320],
+      lowsAfter: [2270, 2250, 2255],
+    },
+    {
+      label: 'Day 5 — strong bounce, above 5-SMA',
+      days: 5,
+      closesAfter: [2280, 2260, 2310, 2340, 2370],
+      highsAfter: [2290, 2275, 2320, 2350, 2380],
+      lowsAfter: [2270, 2250, 2255, 2330, 2355],
+    },
+    {
+      label: 'Day 1 — gap down through stop',
+      days: 1,
+      closesAfter: [2100],
+      highsAfter: [2200],
+      lowsAfter: [2080],
+    },
+    {
+      label: 'Day 10 — time stop, stock flat',
+      days: 10,
+      closesAfter: [2290, 2285, 2295, 2280, 2290, 2300, 2295, 2290, 2285, 2295],
+      highsAfter: [2300, 2295, 2305, 2290, 2300, 2310, 2305, 2300, 2295, 2300],
+      lowsAfter: [2280, 2275, 2285, 2270, 2280, 2290, 2285, 2280, 2278, 2285],
+    },
+  ];
+
+  for (const scenario of monitorScenarios) {
+    const pos = {
+      ...basePosition,
+      daysSinceEntry: scenario.days,
+      closesAfterEntry: scenario.closesAfter,
+      highsAfterEntry: scenario.highsAfter,
+      lowsAfterEntry: scenario.lowsAfter,
+    };
+
+    const action = monitorPosition(pos);
+    console.log(`\n  ${scenario.label}:`);
+    console.log(`    → ${action.action} ${action.reason || ''}`);
+    if (action.pnlPct !== undefined) {
+      console.log(`    → P&L: ${r2(action.pnlPct * 100)}%`);
+    }
+    if (action.note) console.log(`    → ${action.note}`);
+    if (action.daysRemaining !== undefined) {
+      console.log(`    → Days remaining: ${action.daysRemaining}`);
+    }
+  }
+
+  // ====== 7. BACKTEST ======
+  console.log('\n' + '─'.repeat(80));
+  console.log('  7. BACKTEST SIMULATION');
+  console.log('─'.repeat(80));
+
+  // Build backtest data structure
+  const dates = [];
+  for (let d = 0; d < DAYS; d++) {
+    const date = new Date(2023, 0, 2 + d);
+    dates.push(date.toISOString().slice(0, 10));
+  }
+
+  const backtestData = {
+    stocks: {},
+    niftyCloses,
+    dates,
+  };
+
+  for (const stock of universe) {
+    backtestData.stocks[stock.symbol] = stock;
+  }
+
+  const btResults = runBacktest(backtestData, 10000000);
+
+  console.log('\n  PERFORMANCE SUMMARY:');
+  Object.entries(btResults.summary).forEach(([k, v]) =>
+    console.log(`    ${k}: ${v}`)
+  );
+
+  console.log('\n  BY EXIT REASON:');
+  Object.entries(btResults.byExitReason).forEach(([reason, stats]) =>
+    console.log(`    ${reason}: ${stats.count} trades, WR ${stats.winRate}, Avg ${stats.avgPnlPct}, Hold ${stats.avgHoldingDays}d`)
+  );
+
+  if (Object.keys(btResults.byQualityGrade).length > 0) {
+    console.log('\n  BY QUALITY GRADE:');
+    Object.entries(btResults.byQualityGrade).forEach(([grade, stats]) =>
+      console.log(`    ${grade}: ${stats.count} trades, WR ${stats.winRate}, Avg ${stats.avgPnlPct}`)
+    );
+  }
+
+  if (Object.keys(btResults.byRsi2Level).length > 0) {
+    console.log('\n  BY RSI(2) AT ENTRY:');
+    Object.entries(btResults.byRsi2Level).forEach(([level, stats]) =>
+      console.log(`    ${level}: ${stats.count} trades, WR ${stats.winRate}, Avg ${stats.avgPnlPct}, Hold ${stats.avgHoldingDays}d`)
+    );
+  }
+
+  if (Object.keys(btResults.byConsecutiveDownDays).length > 0) {
+    console.log('\n  BY CONSECUTIVE DOWN DAYS:');
+    Object.entries(btResults.byConsecutiveDownDays).forEach(([days, stats]) =>
+      console.log(`    ${days}: ${stats.count} trades, WR ${stats.winRate}, Avg ${stats.avgPnlPct}`)
+    );
+  }
+
+  if (btResults.topWinners.length > 0) {
+    console.log('\n  TOP WINNERS:');
+    btResults.topWinners.slice(0, 5).forEach(t =>
+      console.log(`    ${t.symbol} ${t.pnlPct} in ${t.holdingDays}d (${t.exitReason}) [${t.grade}]`)
+    );
+  }
+
+  if (btResults.topLosers.length > 0) {
+    console.log('\n  TOP LOSERS:');
+    btResults.topLosers.slice(0, 5).forEach(t =>
+      console.log(`    ${t.symbol} ${t.pnlPct} in ${t.holdingDays}d (${t.exitReason}) [${t.grade}]`)
+    );
+  }
+
+  if (btResults.drawdownPeriods.length > 0) {
+    console.log('\n  WORST DRAWDOWNS:');
+    btResults.drawdownPeriods.slice(0, 3).forEach(dd =>
+      console.log(`    ${dd.start} → ${dd.recovery}: ${dd.maxDrawdown} over ${dd.durationDays} days`)
+    );
+  }
+
+  console.log(`\n  Equity curve: ${btResults.equityCurve.length} data points`);
+  if (btResults.equityCurve.length > 0) {
+    const first = btResults.equityCurve[0];
+    const last = btResults.equityCurve[btResults.equityCurve.length - 1];
+    console.log(`    Start: ${first.date} ₹${first.totalEquity.toLocaleString('en-IN')} (${first.positions} pos)`);
+    console.log(`    End:   ${last.date} ₹${last.totalEquity.toLocaleString('en-IN')} (${last.positions} pos)`);
+  }
+
+  console.log('\n' + '═'.repeat(80));
+  console.log('  MEAN REVERSION STRATEGY ANALYSIS COMPLETE');
+  console.log('═'.repeat(80));
+}
+
+
+// ============================================================================
+// EXPORTS
+// ============================================================================
+
+module.exports = {
+  CONFIG,
+
+  // Indicators
+  calcSMA,
+  calcEMA,
+  calcRSI,
+  calcATR,
+  calcBollingerBands,
+  countConsecutiveDownCloses,
+  cumulativeDecline,
+  calcVolatility,
+  computeIndicators,
+
+  // Signal detection
+  checkMeanReversionEntry,
+  calculateTradeParameters,
+
+  // Market regime
+  checkMarketRegime,
+
+  // Scanner
+  scanUniverse,
+
+  // Position management
+  calcPositionSize,
+  monitorPosition,
+
+  // Backtesting
+  runBacktest,
+
+  // Analytics
+  analyzeByExitReason,
+  analyzeByGrade,
+  analyzeByConsecDown,
+  analyzeByRsi2Level,
+  analyzeDrawdowns,
+  sensitivityAnalysis,
+};
+
+if (require.main === module) {
+  runDemo();
+}
