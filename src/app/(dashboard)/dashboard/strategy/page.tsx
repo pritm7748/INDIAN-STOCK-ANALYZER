@@ -6,7 +6,7 @@ import {
     Zap, Target, BarChart3, AlertTriangle, ChevronDown,
     ChevronRight, Activity, Clock, Filter, Info, StopCircle,
     CalendarDays, ArrowRightLeft, ShieldCheck, Play,
-    Crosshair, Eye, GitPullRequestArrow
+    Crosshair, Eye, GitPullRequestArrow, PieChart, Repeat
 } from 'lucide-react'
 
 interface Holding {
@@ -125,6 +125,14 @@ export default function StrategyAnalysisPage() {
     const [showMrFiltered, setShowMrFiltered] = useState(false)
     const mrAbortRef = useRef<AbortController | null>(null)
 
+    // Sector Rotation state
+    const [srScanning, setSrScanning] = useState(false)
+    const [srResult, setSrResult] = useState<any>(null)
+    const [srError, setSrError] = useState('')
+    const [srProgress, setSrProgress] = useState<ScanProgress | null>(null)
+    const [srStatusMsg, setSrStatusMsg] = useState('')
+    const srAbortRef = useRef<AbortController | null>(null)
+
     const timeframes = [
         { id: '1W', label: '1 Week', available: false },
         { id: '1M', label: '1 Month', available: true },
@@ -149,6 +157,77 @@ export default function StrategyAnalysisPage() {
         mrAbortRef.current?.abort()
         setMrScanning(false)
         setMrStatusMsg('Scan stopped')
+    }, [])
+
+    const stopSrScan = useCallback(() => {
+        srAbortRef.current?.abort()
+        setSrScanning(false)
+        setSrStatusMsg('Scan stopped')
+    }, [])
+
+    const runSectorRotation = useCallback(async () => {
+        setSrScanning(true)
+        setSrError('')
+        setSrResult(null)
+        setSrProgress(null)
+        setSrStatusMsg('Connecting...')
+
+        const abort = new AbortController()
+        srAbortRef.current = abort
+
+        try {
+            const res = await fetch('/api/strategy/sector-rotation', { signal: abort.signal })
+            if (!res.ok || !res.body) throw new Error('Failed to connect')
+
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+
+                let currentEvent = ''
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        currentEvent = line.slice(7).trim()
+                    } else if (line.startsWith('data: ') && currentEvent) {
+                        try {
+                            const data = JSON.parse(line.slice(6))
+                            switch (currentEvent) {
+                                case 'status':
+                                    setSrStatusMsg(data.message || '')
+                                    break
+                                case 'progress':
+                                    setSrProgress(data)
+                                    setSrStatusMsg(`Scanning... ${data.scanned}/${data.total} stocks (${data.pct}%)`)
+                                    break
+                                case 'result':
+                                    setSrResult(data)
+                                    setSrStatusMsg('Analysis complete!')
+                                    break
+                                case 'error':
+                                    setSrError(data.message)
+                                    break
+                                case 'done':
+                                    break
+                            }
+                        } catch { /* skip */ }
+                        currentEvent = ''
+                    }
+                }
+            }
+        } catch (err: any) {
+            if (err.name !== 'AbortError') {
+                setSrError(err.message || 'Something went wrong')
+            }
+        } finally {
+            setSrScanning(false)
+        }
     }, [])
 
     const runMomentumStrategy = useCallback(async () => {
@@ -1430,6 +1509,251 @@ export default function StrategyAnalysisPage() {
                                                 </span>
                                             ))}
                                         </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* ═══════════════ STRATEGY 4: SECTOR ROTATION ═══════════════ */}
+                    <div className="bg-gradient-to-br from-amber-500/5 to-orange-500/5 border border-amber-500/20 rounded-2xl overflow-hidden">
+                        {/* Header */}
+                        <div className="p-6 pb-4">
+                            <div className="flex items-start justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 bg-gradient-to-br from-amber-500/20 to-orange-500/20 rounded-xl flex items-center justify-center">
+                                        <PieChart size={20} className="text-amber-400" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-sm font-bold text-[var(--foreground)] flex items-center gap-2">
+                                            Strategy 4: Sector Rotation
+                                            <span className="text-[10px] px-2 py-0.5 bg-amber-500/10 text-amber-400 rounded-full font-medium">RS + Cycle</span>
+                                        </h3>
+                                        <p className="text-[10px] text-[var(--foreground-muted)] mt-0.5">Relative strength ranking · Economic cycle overlay · Monthly rebalance</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    {srScanning && (
+                                        <button onClick={stopSrScan} className="px-3 py-1.5 bg-red-500/10 text-red-400 rounded-lg text-[10px] font-bold hover:bg-red-500/20 transition-all flex items-center gap-1">
+                                            <StopCircle size={12} /> Stop
+                                        </button>
+                                    )}
+                                    <button onClick={runSectorRotation} disabled={srScanning}
+                                        className="px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-xl text-xs font-bold hover:shadow-lg hover:shadow-amber-500/25 transition-all disabled:opacity-50 flex items-center gap-2">
+                                        {srScanning ? <><Loader2 size={14} className="animate-spin" /> Scanning...</> : <><Repeat size={14} /> Run Sector Rotation</>}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Progress bar */}
+                            {srScanning && srProgress && (
+                                <div className="mt-4">
+                                    <div className="flex justify-between text-[10px] text-[var(--foreground-muted)] mb-1">
+                                        <span>{srStatusMsg}</span>
+                                        <span>{srProgress.fetched} fetched · {srProgress.errors} errors</span>
+                                    </div>
+                                    <div className="w-full h-1.5 bg-[var(--background)] rounded-full overflow-hidden">
+                                        <div className="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full transition-all" style={{ width: `${srProgress.pct || 0}%` }} />
+                                    </div>
+                                </div>
+                            )}
+
+                            {srError && <div className="mt-3 text-xs text-red-400 bg-red-500/10 p-3 rounded-lg">{srError}</div>}
+                        </div>
+
+                        {/* Results */}
+                        {srResult && (
+                            <div className="px-6 pb-6 space-y-4">
+                                {/* Market Regime + Economic Phase */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div className="bg-[var(--card)] rounded-xl p-3 border border-[var(--card-border)]">
+                                        <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Market Regime</div>
+                                        <div className={`text-sm font-bold ${srResult.portfolio?.regime?.tradeable ? 'text-emerald-400' : 'text-red-400'}`}>
+                                            {srResult.portfolio?.regime?.regime || 'UNKNOWN'}
+                                        </div>
+                                        <div className="text-[10px] text-[var(--foreground-muted)] mt-1">
+                                            Nifty: ₹{srResult.portfolio?.regime?.nifty} · 50-SMA: ₹{srResult.portfolio?.regime?.sma50} · 200-SMA: ₹{srResult.portfolio?.regime?.sma200}
+                                        </div>
+                                    </div>
+                                    <div className="bg-[var(--card)] rounded-xl p-3 border border-[var(--card-border)]">
+                                        <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Economic Cycle Phase</div>
+                                        <div className="text-sm font-bold text-amber-400">
+                                            {srResult.economicPhase?.phase?.replace(/_/g, ' ') || 'N/A'}
+                                        </div>
+                                        <div className="text-[10px] text-[var(--foreground-muted)] mt-1">
+                                            Confidence: {srResult.economicPhase?.confidence} · Source: {srResult.economicPhase?.source?.replace(/_/g, ' ')}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Sector Ranking Table */}
+                                {srResult.sectorRanking && srResult.sectorRanking.length > 0 && (
+                                    <div className="bg-[var(--card)] rounded-xl border border-[var(--card-border)] overflow-hidden">
+                                        <div className="p-3 border-b border-[var(--card-border)]">
+                                            <h4 className="text-xs font-bold text-[var(--foreground)] flex items-center gap-2">
+                                                <BarChart3 size={14} className="text-amber-400" /> Sector Rankings ({srResult.sectorRanking.length} sectors)
+                                            </h4>
+                                        </div>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[10px]">
+                                                <thead>
+                                                    <tr className="text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="p-2 text-left">Rank</th>
+                                                        <th className="p-2 text-left">Sector</th>
+                                                        <th className="p-2 text-right">Score</th>
+                                                        <th className="p-2 text-right">RS 1M</th>
+                                                        <th className="p-2 text-right">RS 3M</th>
+                                                        <th className="p-2 text-left">Trend</th>
+                                                        <th className="p-2 text-left">RRG</th>
+                                                        <th className="p-2 text-left">Cycle</th>
+                                                        <th className="p-2 text-right">Ret 1M</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {srResult.sectorRanking.map((s: any, i: number) => (
+                                                        <tr key={i} className={`border-b border-[var(--card-border)]/50 ${i < (srResult.config?.TOP_SECTORS || 3) ? 'bg-amber-500/5' : ''}`}>
+                                                            <td className="p-2 font-bold text-[var(--foreground)]">{s.adjustedRank}</td>
+                                                            <td className="p-2 text-[var(--foreground)] font-medium">{s.sectorName}</td>
+                                                            <td className="p-2 text-right font-mono text-amber-400">{s.adjustedScore}</td>
+                                                            <td className="p-2 text-right font-mono">{s.rs1M}</td>
+                                                            <td className="p-2 text-right font-mono">{s.rs3M}</td>
+                                                            <td className="p-2">
+                                                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                                                    s.rsTrend === 'STRONG_IMPROVING' ? 'bg-emerald-500/20 text-emerald-400' :
+                                                                    s.rsTrend === 'IMPROVING' ? 'bg-green-500/15 text-green-400' :
+                                                                    s.rsTrend === 'WEAKENING' ? 'bg-red-500/15 text-red-400' :
+                                                                    s.rsTrend === 'STRONG_WEAKENING' ? 'bg-red-500/20 text-red-500' :
+                                                                    'bg-[var(--background)] text-[var(--foreground-muted)]'
+                                                                }`}>{s.rsTrend}</span>
+                                                            </td>
+                                                            <td className="p-2">
+                                                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                                                    s.rrgQuadrant === 'LEADING' ? 'bg-emerald-500/20 text-emerald-400' :
+                                                                    s.rrgQuadrant === 'IMPROVING' ? 'bg-blue-500/15 text-blue-400' :
+                                                                    s.rrgQuadrant === 'WEAKENING' ? 'bg-orange-500/15 text-orange-400' :
+                                                                    s.rrgQuadrant === 'LAGGING' ? 'bg-red-500/15 text-red-400' :
+                                                                    'bg-[var(--background)] text-[var(--foreground-muted)]'
+                                                                }`}>{s.rrgQuadrant}</span>
+                                                            </td>
+                                                            <td className="p-2">
+                                                                <span className={`text-[9px] font-bold ${
+                                                                    s.cycleAlignment === 'FAVORABLE' ? 'text-emerald-400' :
+                                                                    s.cycleAlignment === 'UNFAVORABLE' ? 'text-red-400' : 'text-[var(--foreground-muted)]'
+                                                                }`}>{s.cycleAlignment}</span>
+                                                            </td>
+                                                            <td className="p-2 text-right font-mono">{s.return1M}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Holdings */}
+                                {srResult.portfolio?.holdings?.length > 0 && (
+                                    <div className="bg-[var(--card)] rounded-xl border border-[var(--card-border)] overflow-hidden">
+                                        <div className="p-3 border-b border-[var(--card-border)]">
+                                            <h4 className="text-xs font-bold text-[var(--foreground)] flex items-center gap-2">
+                                                <Target size={14} className="text-amber-400" /> Portfolio Holdings ({srResult.portfolio.holdings.length} stocks)
+                                            </h4>
+                                        </div>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[10px]">
+                                                <thead>
+                                                    <tr className="text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="p-2 text-left">Symbol</th>
+                                                        <th className="p-2 text-left">Sector</th>
+                                                        <th className="p-2 text-right">Score</th>
+                                                        <th className="p-2 text-right">Weight</th>
+                                                        <th className="p-2 text-right">Alloc ₹</th>
+                                                        <th className="p-2 text-right">Shares</th>
+                                                        <th className="p-2 text-right">Stop</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {srResult.portfolio.holdings.map((h: any, i: number) => (
+                                                        <tr key={i} className="border-b border-[var(--card-border)]/50">
+                                                            <td className="p-2 font-bold text-amber-400">{(h.symbol || '').replace('.NS', '')}</td>
+                                                            <td className="p-2 text-[var(--foreground-muted)]">{h.sectorName || h.sector}</td>
+                                                            <td className="p-2 text-right font-mono text-[var(--foreground)]">{typeof h.momentumScore === 'number' ? (h.momentumScore * 100).toFixed(1) + '%' : '—'}</td>
+                                                            <td className="p-2 text-right font-mono text-[var(--foreground)]">{typeof h.weight === 'number' ? (h.weight * 100).toFixed(1) + '%' : '—'}</td>
+                                                            <td className="p-2 text-right font-mono text-[var(--foreground)]">₹{(h.allocatedCapital || 0).toLocaleString('en-IN')}</td>
+                                                            <td className="p-2 text-right font-mono">{h.shares || 0}</td>
+                                                            <td className="p-2 text-right font-mono text-red-400">₹{h.stopLoss || '—'}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Portfolio Stats + Config */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    {srResult.portfolio?.portfolioStats && (
+                                        <div className="bg-[var(--card)] rounded-xl p-3 border border-[var(--card-border)]">
+                                            <h4 className="text-[10px] text-[var(--foreground-muted)] font-bold mb-2">PORTFOLIO STATS</h4>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                {[
+                                                    { l: 'Holdings', v: srResult.portfolio.portfolioStats.totalHoldings },
+                                                    { l: 'Invested', v: srResult.portfolio.portfolioStats.investedPct },
+                                                    { l: 'HHI Index', v: srResult.portfolio.portfolioStats.hhiIndex },
+                                                    { l: 'Diversification', v: srResult.portfolio.portfolioStats.diversification },
+                                                    { l: 'Port. Vol', v: srResult.portfolio.portfolioStats.portfolioVolatility },
+                                                    { l: 'Max Weight', v: srResult.portfolio.portfolioStats.maxStockWeight },
+                                                ].map((item, i) => (
+                                                    <div key={i} className="text-[10px]">
+                                                        <span className="text-[var(--foreground-muted)]">{item.l}: </span>
+                                                        <span className="text-[var(--foreground)] font-bold">{item.v}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            {srResult.portfolio.portfolioStats.sectorConcentration && (
+                                                <div className="mt-2 pt-2 border-t border-[var(--card-border)]">
+                                                    <div className="text-[9px] text-[var(--foreground-muted)] mb-1">Sector Concentration</div>
+                                                    {srResult.portfolio.portfolioStats.sectorConcentration.map((sc: any, i: number) => (
+                                                        <div key={i} className="text-[10px] flex justify-between">
+                                                            <span className="text-[var(--foreground-muted)]">{sc.sector}</span>
+                                                            <span className="text-amber-400 font-mono">{sc.weight}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                    {srResult.config && (
+                                        <div className="bg-[var(--card)] rounded-xl p-3 border border-[var(--card-border)]">
+                                            <h4 className="text-[10px] text-[var(--foreground-muted)] font-bold mb-2">CONFIGURATION</h4>
+                                            <div className="grid grid-cols-2 gap-1.5">
+                                                {[
+                                                    { l: 'Top Sectors', v: srResult.config.TOP_SECTORS },
+                                                    { l: 'Stocks/Sector', v: srResult.config.STOCKS_PER_SECTOR },
+                                                    { l: 'Hold Period', v: `${srResult.config.HOLDING_PERIOD_DAYS}d` },
+                                                    { l: 'RS Weights', v: `${srResult.config.RS_WEIGHT_1M}/${srResult.config.RS_WEIGHT_3M}` },
+                                                    { l: 'Weighting', v: srResult.config.WEIGHTING_METHOD },
+                                                    { l: 'Max Sector Wt', v: `${Math.round(srResult.config.MAX_SECTOR_WEIGHT * 100)}%` },
+                                                    { l: 'Max Stock Wt', v: `${Math.round(srResult.config.MAX_STOCK_WEIGHT * 100)}%` },
+                                                    { l: 'Stock Stop', v: `${Math.round(srResult.config.STOCK_STOP_LOSS_PCT * 100)}%` },
+                                                    { l: 'Portfolio Stop', v: `${Math.round(srResult.config.STOP_LOSS_PCT * 100)}%` },
+                                                    { l: 'Cash Buffer', v: `${Math.round(srResult.config.CASH_RESERVE_PCT * 100)}%` },
+                                                ].map(c => (
+                                                    <div key={c.l} className="text-[10px]">
+                                                        <span className="text-[var(--foreground-muted)]">{c.l}: </span>
+                                                        <span className="text-[var(--foreground)] font-bold">{c.v}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Fetch Stats */}
+                                {srResult.fetchStats && (
+                                    <div className="text-[10px] text-[var(--foreground-muted)] flex items-center gap-4">
+                                        <span>Sectors: {srResult.fetchStats.sectorsFetched}/12</span>
+                                        <span>Stocks: {srResult.fetchStats.successfulFetches}/{srResult.fetchStats.totalSymbols}</span>
+                                        <span>Errors: {srResult.fetchStats.failedFetches}</span>
                                     </div>
                                 )}
                             </div>
