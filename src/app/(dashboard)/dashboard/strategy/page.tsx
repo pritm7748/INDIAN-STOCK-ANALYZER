@@ -5,7 +5,8 @@ import {
     Brain, Loader2, TrendingUp, TrendingDown, Shield,
     Zap, Target, BarChart3, AlertTriangle, ChevronDown,
     ChevronRight, Activity, Clock, Filter, Info, StopCircle,
-    CalendarDays, ArrowRightLeft, ShieldCheck, Play
+    CalendarDays, ArrowRightLeft, ShieldCheck, Play,
+    Crosshair, Eye
 } from 'lucide-react'
 
 interface Holding {
@@ -102,6 +103,18 @@ export default function StrategyAnalysisPage() {
     const [statusMsg, setStatusMsg] = useState('')
     const abortRef = useRef<AbortController | null>(null)
 
+    // Swing state
+    const [swingScanning, setSwingScanning] = useState(false)
+    const [swingResult, setSwingResult] = useState<any>(null)
+    const [swingError, setSwingError] = useState('')
+    const [swingProgress, setSwingProgress] = useState<ScanProgress | null>(null)
+    const [swingStatusMsg, setSwingStatusMsg] = useState('')
+    const [showSwingSetupA, setShowSwingSetupA] = useState(true)
+    const [showSwingSetupB, setShowSwingSetupB] = useState(true)
+    const [showSwingNearMiss, setShowSwingNearMiss] = useState(false)
+    const [showSwingFiltered, setShowSwingFiltered] = useState(false)
+    const swingAbortRef = useRef<AbortController | null>(null)
+
     const timeframes = [
         { id: '1W', label: '1 Week', available: false },
         { id: '1M', label: '1 Month', available: true },
@@ -114,6 +127,12 @@ export default function StrategyAnalysisPage() {
         abortRef.current?.abort()
         setScanning(false)
         setStatusMsg('Scan stopped')
+    }, [])
+
+    const stopSwingScan = useCallback(() => {
+        swingAbortRef.current?.abort()
+        setSwingScanning(false)
+        setSwingStatusMsg('Scan stopped')
     }, [])
 
     const runMomentumStrategy = useCallback(async () => {
@@ -182,6 +201,71 @@ export default function StrategyAnalysisPage() {
             }
         } finally {
             setScanning(false)
+        }
+    }, [])
+
+    const runSwingStrategy = useCallback(async () => {
+        setSwingScanning(true)
+        setSwingError('')
+        setSwingResult(null)
+        setSwingProgress(null)
+        setSwingStatusMsg('Connecting...')
+
+        const abort = new AbortController()
+        swingAbortRef.current = abort
+
+        try {
+            const res = await fetch('/api/strategy/swing', { signal: abort.signal })
+            if (!res.ok || !res.body) throw new Error('Failed to connect')
+
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+
+                let currentEvent = ''
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        currentEvent = line.slice(7).trim()
+                    } else if (line.startsWith('data: ') && currentEvent) {
+                        try {
+                            const data = JSON.parse(line.slice(6))
+                            switch (currentEvent) {
+                                case 'status':
+                                    setSwingStatusMsg(data.message || '')
+                                    break
+                                case 'progress':
+                                    setSwingProgress(data)
+                                    setSwingStatusMsg(`Scanning... ${data.scanned}/${data.total} stocks (${data.pct}%)`)
+                                    break
+                                case 'result':
+                                    setSwingResult(data)
+                                    setSwingStatusMsg('Analysis complete!')
+                                    break
+                                case 'error':
+                                    setSwingError(data.message)
+                                    break
+                                case 'done':
+                                    break
+                            }
+                        } catch { /* skip */ }
+                        currentEvent = ''
+                    }
+                }
+            }
+        } catch (err: any) {
+            if (err.name !== 'AbortError') {
+                setSwingError(err.message || 'Something went wrong')
+            }
+        } finally {
+            setSwingScanning(false)
         }
     }, [])
 
@@ -635,6 +719,365 @@ export default function StrategyAnalysisPage() {
                                                 { l: 'Vol Cap', v: `${(result.config.MAX_ANNUALIZED_VOLATILITY * 100).toFixed(0)}%` },
                                                 { l: 'Regime Filter', v: `Nifty > ${result.config.NIFTY_SMA_PERIOD}d SMA` },
                                                 { l: 'Earnings Blackout', v: `±${result.config.EARNINGS_BLACKOUT_DAYS}d from earnings` },
+                                            ].map(c => (
+                                                <span key={c.l} className="px-2 py-1 bg-[var(--card)] rounded-lg border border-[var(--border)] text-[var(--foreground-muted)]">
+                                                    <span className="text-[var(--foreground)] font-medium">{c.l}:</span> {c.v}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* ========================================== */}
+                    {/* STRATEGY 2: SWING TRADING */}
+                    {/* ========================================== */}
+                    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
+                        <div className="p-4 sm:p-5 border-b border-[var(--border)]">
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 bg-gradient-to-br from-violet-500/20 to-pink-500/20 rounded-xl flex items-center justify-center">
+                                        <Crosshair size={20} className="text-violet-400" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-sm font-bold text-[var(--foreground)]">SWING TRADING</h3>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">20-EMA Pullback + MACD Crossover · Multi-confluence · Technical Analysis</p>
+                                    </div>
+                                    <span className="px-2 py-0.5 bg-violet-500/10 text-violet-400 text-[9px] font-bold rounded-full border border-violet-500/20">2 SETUPS</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    {swingScanning && (
+                                        <button onClick={stopSwingScan}
+                                            className="px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-semibold rounded-xl flex items-center gap-2 transition-all text-sm border border-red-500/20">
+                                            <StopCircle size={16} /> Stop
+                                        </button>
+                                    )}
+                                    <button onClick={runSwingStrategy} disabled={swingScanning}
+                                        className="px-6 py-2.5 bg-gradient-to-r from-violet-600 to-pink-600 hover:from-violet-500 hover:to-pink-500 disabled:opacity-40 text-white font-semibold rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-violet-500/20 hover:shadow-violet-500/40 hover:scale-[1.02] active:scale-[0.98] whitespace-nowrap text-sm">
+                                        {swingScanning ? <><Loader2 size={16} className="animate-spin" /> Scanning...</> : <><Crosshair size={16} /> Scan Swing Setups</>}
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-[var(--foreground-muted)]">
+                                <span className="px-2 py-1 bg-[var(--background)] rounded-lg border border-[var(--border)]">📈 Setup A: 20-EMA Pullback (7 conditions)</span>
+                                <span className="px-2 py-1 bg-[var(--background)] rounded-lg border border-[var(--border)]">📊 Setup B: MACD Crossover (5 conditions)</span>
+                                <span className="px-2 py-1 bg-[var(--background)] rounded-lg border border-[var(--border)]">🇮🇳 Indian market filters</span>
+                                <span className="px-2 py-1 bg-[var(--background)] rounded-lg border border-[var(--border)]">⏱️ 2-4 week hold</span>
+                                <span className="px-2 py-1 bg-[var(--background)] rounded-lg border border-[var(--border)]">🔍 ~500 stocks</span>
+                            </div>
+                        </div>
+
+                        {/* SWING SCANNING PROGRESS */}
+                        {swingScanning && (
+                            <div className="p-4 sm:p-5 space-y-3 border-b border-[var(--border)] bg-gradient-to-b from-violet-500/5 to-transparent">
+                                <div className="space-y-2">
+                                    <div className="flex items-center justify-between text-xs">
+                                        <span className="text-[var(--foreground-muted)] flex items-center gap-1.5">
+                                            <Loader2 size={12} className="animate-spin text-violet-400" />
+                                            {swingStatusMsg}
+                                        </span>
+                                        {swingProgress && <span className="text-violet-400 font-bold">{swingProgress.pct}%</span>}
+                                    </div>
+                                    <div className="h-2 bg-[var(--border)] rounded-full overflow-hidden">
+                                        <div className="h-full bg-gradient-to-r from-violet-500 to-pink-500 rounded-full transition-all duration-300 ease-out"
+                                            style={{ width: `${swingProgress?.pct || 2}%` }} />
+                                    </div>
+                                    {swingProgress && (
+                                        <div className="flex flex-wrap gap-3 text-[10px] text-[var(--foreground-muted)]">
+                                            <span>📊 Scanned: <strong className="text-[var(--foreground)]">{swingProgress.scanned}/{swingProgress.total}</strong></span>
+                                            <span>✅ Fetched: <strong className="text-emerald-400">{swingProgress.fetched}</strong></span>
+                                            {swingProgress.errors > 0 && <span>❌ Errors: <strong className="text-red-400">{swingProgress.errors}</strong></span>}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {swingError && (
+                            <div className="p-4 mx-4 mb-4 mt-4 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-2 text-sm text-red-400">
+                                <AlertTriangle size={16} /> {swingError}
+                            </div>
+                        )}
+
+                        {/* SWING RESULTS */}
+                        {swingResult && !swingScanning && (
+                            <div className="p-4 sm:p-5 space-y-4">
+                                {/* Stats Row */}
+                                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                                    {[
+                                        { label: 'Scanned', value: swingResult.fetchStats?.totalSymbols || swingResult.totalScanned, icon: Activity, color: 'text-blue-400' },
+                                        { label: 'Setup A Hits', value: swingResult.setupA_signals?.length || 0, icon: TrendingUp, color: 'text-emerald-400' },
+                                        { label: 'Setup B Hits', value: swingResult.setupB_signals?.length || 0, icon: BarChart3, color: 'text-violet-400' },
+                                        { label: 'Near Misses', value: swingResult.nearMiss?.length || 0, icon: Eye, color: 'text-amber-400' },
+                                        { label: 'Filtered Out', value: swingResult.totalFiltered || 0, icon: Filter, color: 'text-red-400' },
+                                    ].map(s => (
+                                        <div key={s.label} className="bg-[var(--background)] rounded-xl p-3 border border-[var(--border)]">
+                                            <div className={`flex items-center gap-1.5 text-[10px] ${s.color} mb-1`}><s.icon size={12} /> {s.label}</div>
+                                            <p className="text-lg font-bold text-[var(--foreground)]">{s.value}</p>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Expected Performance */}
+                                {swingResult.performance && (
+                                    <div className="bg-[var(--background)] rounded-xl p-4 border border-[var(--border)]">
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <BarChart3 size={14} className="text-violet-400" />
+                                            <span className="text-xs font-semibold text-[var(--foreground)]">Expected Performance</span>
+                                        </div>
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                            {[
+                                                { l: 'Win Rate', v: swingResult.performance.expectedWinRate, c: 'text-emerald-400' },
+                                                { l: 'Reward:Risk', v: swingResult.performance.rewardRisk, c: 'text-cyan-400' },
+                                                { l: 'Holding', v: swingResult.performance.avgHoldingDays, c: 'text-blue-400' },
+                                            ].map(m => (
+                                                <div key={m.l} className="text-center py-2">
+                                                    <p className={`text-sm font-bold ${m.c}`}>{m.v}</p>
+                                                    <p className="text-[9px] text-[var(--foreground-muted)]">{m.l}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <p className="text-[10px] text-[var(--foreground-muted)] mt-2 flex items-center gap-1">
+                                            <Info size={10} /> {swingResult.performance.methodology}
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* SETUP A SIGNALS */}
+                                {swingResult.setupA_signals && swingResult.setupA_signals.length > 0 && (
+                                    <div className="space-y-2">
+                                        <button onClick={() => setShowSwingSetupA(!showSwingSetupA)}
+                                            className="flex items-center gap-2">
+                                            {showSwingSetupA ? <ChevronDown size={14} className="text-emerald-400" /> : <ChevronRight size={14} className="text-emerald-400" />}
+                                            <TrendingUp size={14} className="text-emerald-400" />
+                                            <span className="text-sm font-semibold text-[var(--foreground)]">Setup A: 20-EMA Pullback</span>
+                                            <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 text-[9px] font-bold rounded-full">{swingResult.setupA_signals.length} signals</span>
+                                        </button>
+
+                                        {showSwingSetupA && swingResult.setupA_signals.map((sig: any) => (
+                                            <div key={sig.symbol} className="bg-[var(--background)] rounded-xl p-3 border border-[var(--border)] hover:border-emerald-500/20 transition-all space-y-2">
+                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                    <div>
+                                                        <p className="text-sm font-medium text-[var(--foreground)]">{sig.name}</p>
+                                                        <p className="text-[10px] text-[var(--foreground-muted)]">{sig.symbol.replace('.NS', '')} · {sig.sector}</p>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="px-2 py-1 bg-emerald-500/10 text-emerald-400 text-[10px] font-bold rounded-lg">
+                                                            Confluence: {sig.confluenceRatio}
+                                                        </span>
+                                                        <span className="text-sm font-bold text-[var(--foreground)]">₹{sig.indicators?.close?.toFixed(0)}</span>
+                                                    </div>
+                                                </div>
+
+                                                {/* Condition checklist */}
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-0.5 text-[10px]">
+                                                    {sig.reasons?.map((r: string, i: number) => (
+                                                        <span key={i} className={`px-2 py-0.5 rounded ${r.startsWith('✓') ? 'text-emerald-400' : r.startsWith('~') ? 'text-amber-400' : 'text-red-400'}`}>{r}</span>
+                                                    ))}
+                                                </div>
+
+                                                {/* Trade plan */}
+                                                {sig.trade && (
+                                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-[var(--border)]">
+                                                        {[
+                                                            { l: 'Entry', v: `₹${sig.trade.entry}`, c: 'text-emerald-400' },
+                                                            { l: 'Stop Loss', v: `₹${sig.trade.stopLoss} (${sig.trade.riskPct})`, c: 'text-red-400' },
+                                                            { l: 'Target 1', v: `₹${sig.trade.target1} (${sig.trade.target1Pct})`, c: 'text-cyan-400' },
+                                                            { l: 'R:R', v: sig.trade.riskRewardRatio, c: 'text-violet-400' },
+                                                        ].map(m => (
+                                                            <div key={m.l} className="text-center bg-[var(--card)] rounded-lg p-1.5">
+                                                                <p className={`text-[10px] font-bold ${m.c}`}>{m.v}</p>
+                                                                <p className="text-[7px] text-[var(--foreground-muted)]">{m.l}</p>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+
+                                                {/* Indicators */}
+                                                <div className="flex flex-wrap gap-2 text-[9px] text-[var(--foreground-muted)]">
+                                                    {sig.indicators?.ema20 && <span>EMA20: ₹{sig.indicators.ema20}</span>}
+                                                    {sig.indicators?.sma50 && <span>SMA50: ₹{sig.indicators.sma50}</span>}
+                                                    {sig.indicators?.rsi && <span>RSI: {sig.indicators.rsi}</span>}
+                                                    {sig.indicators?.macdLine !== null && <span>MACD: {sig.indicators.macdLine}</span>}
+                                                    {sig.indicators?.volumeRatio && <span>Vol: {sig.indicators.volumeRatio}x</span>}
+                                                    {sig.indicators?.volatility && <span>σ: {sig.indicators.volatility}</span>}
+                                                </div>
+
+                                                {sig.warnings && sig.warnings.length > 0 && (
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {sig.warnings.map((w: string, i: number) => (
+                                                            <span key={i} className="px-2 py-0.5 bg-amber-500/10 text-amber-400 text-[9px] rounded-lg">⚠️ {w}</span>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* SETUP B SIGNALS */}
+                                {swingResult.setupB_signals && swingResult.setupB_signals.length > 0 && (
+                                    <div className="space-y-2">
+                                        <button onClick={() => setShowSwingSetupB(!showSwingSetupB)}
+                                            className="flex items-center gap-2">
+                                            {showSwingSetupB ? <ChevronDown size={14} className="text-violet-400" /> : <ChevronRight size={14} className="text-violet-400" />}
+                                            <BarChart3 size={14} className="text-violet-400" />
+                                            <span className="text-sm font-semibold text-[var(--foreground)]">Setup B: MACD Crossover</span>
+                                            <span className="px-2 py-0.5 bg-violet-500/10 text-violet-400 text-[9px] font-bold rounded-full">{swingResult.setupB_signals.length} signals</span>
+                                        </button>
+
+                                        {showSwingSetupB && swingResult.setupB_signals.map((sig: any) => (
+                                            <div key={sig.symbol} className="bg-[var(--background)] rounded-xl p-3 border border-[var(--border)] hover:border-violet-500/20 transition-all space-y-2">
+                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                    <div>
+                                                        <p className="text-sm font-medium text-[var(--foreground)]">{sig.name}</p>
+                                                        <p className="text-[10px] text-[var(--foreground-muted)]">{sig.symbol.replace('.NS', '')} · {sig.sector}</p>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="px-2 py-1 bg-violet-500/10 text-violet-400 text-[10px] font-bold rounded-lg">
+                                                            Confluence: {sig.confluenceRatio}
+                                                        </span>
+                                                        <span className="text-sm font-bold text-[var(--foreground)]">₹{sig.indicators?.close?.toFixed(0)}</span>
+                                                    </div>
+                                                </div>
+
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-0.5 text-[10px]">
+                                                    {sig.reasons?.map((r: string, i: number) => (
+                                                        <span key={i} className={`px-2 py-0.5 rounded ${r.startsWith('✓') ? 'text-emerald-400' : r.startsWith('~') ? 'text-amber-400' : 'text-red-400'}`}>{r}</span>
+                                                    ))}
+                                                </div>
+
+                                                {sig.trade && (
+                                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2 border-t border-[var(--border)]">
+                                                        {[
+                                                            { l: 'Entry', v: `₹${sig.trade.entry}`, c: 'text-emerald-400' },
+                                                            { l: 'Stop Loss', v: `₹${sig.trade.stopLoss} (${sig.trade.riskPct})`, c: 'text-red-400' },
+                                                            { l: 'Target', v: sig.trade.targetMethod, c: 'text-cyan-400' },
+                                                        ].map(m => (
+                                                            <div key={m.l} className="text-center bg-[var(--card)] rounded-lg p-1.5">
+                                                                <p className={`text-[10px] font-bold ${m.c}`}>{m.v}</p>
+                                                                <p className="text-[7px] text-[var(--foreground-muted)]">{m.l}</p>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+
+                                                <div className="flex flex-wrap gap-2 text-[9px] text-[var(--foreground-muted)]">
+                                                    {sig.indicators?.ema20 && <span>EMA20: ₹{sig.indicators.ema20}</span>}
+                                                    {sig.indicators?.macdLine !== null && <span>MACD: {sig.indicators.macdLine}</span>}
+                                                    {sig.indicators?.signalLine !== null && <span>Signal: {sig.indicators.signalLine}</span>}
+                                                    {sig.indicators?.histogram !== null && <span>Hist: {sig.indicators.histogram}</span>}
+                                                    {sig.indicators?.volumeRatio && <span>Vol: {sig.indicators.volumeRatio}x</span>}
+                                                </div>
+
+                                                {sig.warnings && sig.warnings.length > 0 && (
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {sig.warnings.map((w: string, i: number) => (
+                                                            <span key={i} className="px-2 py-0.5 bg-amber-500/10 text-amber-400 text-[9px] rounded-lg">⚠️ {w}</span>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* NO SIGNALS */}
+                                {(!swingResult.setupA_signals || swingResult.setupA_signals.length === 0) &&
+                                 (!swingResult.setupB_signals || swingResult.setupB_signals.length === 0) && (
+                                    <div className="text-center py-8 space-y-3">
+                                        <div className="w-16 h-16 bg-amber-500/10 rounded-2xl flex items-center justify-center mx-auto">
+                                            <Crosshair size={32} className="text-amber-400" />
+                                        </div>
+                                        <h3 className="text-lg font-bold text-amber-400">No Active Swing Setups</h3>
+                                        <p className="text-sm text-[var(--foreground-muted)] max-w-md mx-auto">
+                                            No stocks currently meet the multi-confluence criteria for either the 20-EMA Pullback or MACD Crossover setups. Check the near-misses for stocks approaching setup conditions.
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* NEAR MISSES */}
+                                {swingResult.nearMiss && swingResult.nearMiss.length > 0 && (
+                                    <>
+                                        <button onClick={() => setShowSwingNearMiss(!showSwingNearMiss)}
+                                            className="flex items-center gap-2 text-xs text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-colors">
+                                            {showSwingNearMiss ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                            <Eye size={14} /> {swingResult.nearMiss.length} near-misses (watchlist)
+                                        </button>
+
+                                        {showSwingNearMiss && (
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                                                {swingResult.nearMiss.map((nm: any) => (
+                                                    <div key={nm.symbol} className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-[var(--background)] border border-[var(--border)] text-[11px]">
+                                                        <div>
+                                                            <span className="font-medium text-[var(--foreground)]">{nm.symbol.replace('.NS', '')}</span>
+                                                            <span className="text-[var(--foreground-muted)] ml-1">{nm.name}</span>
+                                                        </div>
+                                                        <div className="flex gap-2">
+                                                            <span className="text-emerald-400">A:{nm.setupA_score}</span>
+                                                            <span className="text-violet-400">B:{nm.setupB_score}</span>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+
+                                {/* FILTERED OUT */}
+                                {swingResult.filtered && swingResult.filtered.length > 0 && (
+                                    <>
+                                        <button onClick={() => setShowSwingFiltered(!showSwingFiltered)}
+                                            className="flex items-center gap-2 text-xs text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-colors">
+                                            {showSwingFiltered ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                            {swingResult.filtered.length} stocks filtered out
+                                        </button>
+
+                                        {showSwingFiltered && (
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                                                {swingResult.filtered.map((f: any) => (
+                                                    <div key={f.symbol} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--background)] border border-[var(--border)] text-[11px]">
+                                                        <span className="text-red-400">✕</span>
+                                                        <span className="font-medium text-[var(--foreground)]">{f.symbol.replace('.NS', '')}</span>
+                                                        <span className="text-[var(--foreground-muted)] truncate">{f.reason}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+
+                                {/* Fetch Stats */}
+                                {swingResult.fetchStats && (
+                                    <div className="bg-[var(--background)] rounded-xl p-3 border border-[var(--border)] flex flex-wrap gap-4 text-[10px] text-[var(--foreground-muted)]">
+                                        <span>🔍 Universe: <strong className="text-[var(--foreground)]">{swingResult.fetchStats.totalSymbols}</strong></span>
+                                        <span>✅ Fetched: <strong className="text-emerald-400">{swingResult.fetchStats.successfulFetches}</strong></span>
+                                        {swingResult.fetchStats.failedFetches > 0 && (
+                                            <span>❌ Failed: <strong className="text-red-400">{swingResult.fetchStats.failedFetches}</strong></span>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Config */}
+                                {swingResult.config && (
+                                    <div className="bg-[var(--background)] rounded-xl p-3 border border-[var(--border)]">
+                                        <p className="text-[10px] font-semibold text-[var(--foreground-muted)] mb-2 uppercase tracking-wide">Strategy Configuration</p>
+                                        <div className="flex flex-wrap gap-2 text-[10px]">
+                                            {[
+                                                { l: 'EMA Fast/Mid', v: `${swingResult.config.EMA_FAST}/${swingResult.config.EMA_MID}` },
+                                                { l: 'SMA Slow', v: swingResult.config.SMA_SLOW },
+                                                { l: 'RSI Zone', v: `${swingResult.config.RSI_RESET_LOW}-${swingResult.config.RSI_RESET_HIGH}` },
+                                                { l: 'MACD', v: `${swingResult.config.MACD_FAST}/${swingResult.config.MACD_SLOW}/${swingResult.config.MACD_SIGNAL}` },
+                                                { l: 'Pullback', v: `±${(swingResult.config.PULLBACK_PROXIMITY_PCT * 100).toFixed(0)}% of EMA20` },
+                                                { l: 'Vol Trigger (A)', v: `${swingResult.config.TRIGGER_VOLUME_MULTIPLIER}x` },
+                                                { l: 'Vol Trigger (B)', v: `${swingResult.config.MACD_VOLUME_MULTIPLIER}x` },
+                                                { l: 'Min Stop', v: `${(swingResult.config.MIN_STOP_DISTANCE_PCT * 100).toFixed(0)}%` },
+                                                { l: 'Dead Money', v: `${swingResult.config.DEAD_MONEY_DAYS}d / ${(swingResult.config.DEAD_MONEY_THRESHOLD * 100).toFixed(0)}%` },
+                                                { l: 'Risk/Trade', v: `${(swingResult.config.MAX_RISK_PER_TRADE_PCT * 100).toFixed(0)}%` },
+                                                { l: 'Max Positions', v: swingResult.config.MAX_CONCURRENT_POSITIONS },
+                                                { l: 'Min Turnover', v: `₹${swingResult.config.MIN_AVG_TURNOVER_CR}cr` },
                                             ].map(c => (
                                                 <span key={c.l} className="px-2 py-1 bg-[var(--card)] rounded-lg border border-[var(--border)] text-[var(--foreground-muted)]">
                                                     <span className="text-[var(--foreground)] font-medium">{c.l}:</span> {c.v}
