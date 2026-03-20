@@ -6,7 +6,8 @@ import {
     Zap, Target, BarChart3, AlertTriangle, ChevronDown,
     ChevronRight, Activity, Clock, Filter, Info, StopCircle,
     CalendarDays, ArrowRightLeft, ShieldCheck, Play,
-    Crosshair, Eye, GitPullRequestArrow, PieChart, Repeat
+    Crosshair, Eye, GitPullRequestArrow, PieChart, Repeat,
+    Newspaper, Sparkles
 } from 'lucide-react'
 
 interface Holding {
@@ -133,6 +134,14 @@ export default function StrategyAnalysisPage() {
     const [srStatusMsg, setSrStatusMsg] = useState('')
     const srAbortRef = useRef<AbortController | null>(null)
 
+    // Event-Driven state
+    const [edScanning, setEdScanning] = useState(false)
+    const [edResult, setEdResult] = useState<any>(null)
+    const [edError, setEdError] = useState('')
+    const [edProgress, setEdProgress] = useState<ScanProgress | null>(null)
+    const [edStatusMsg, setEdStatusMsg] = useState('')
+    const edAbortRef = useRef<AbortController | null>(null)
+
     const timeframes = [
         { id: '1W', label: '1 Week', available: false },
         { id: '1M', label: '1 Month', available: true },
@@ -163,6 +172,12 @@ export default function StrategyAnalysisPage() {
         srAbortRef.current?.abort()
         setSrScanning(false)
         setSrStatusMsg('Scan stopped')
+    }, [])
+
+    const stopEdScan = useCallback(() => {
+        edAbortRef.current?.abort()
+        setEdScanning(false)
+        setEdStatusMsg('Scan stopped')
     }, [])
 
     const runSectorRotation = useCallback(async () => {
@@ -227,6 +242,71 @@ export default function StrategyAnalysisPage() {
             }
         } finally {
             setSrScanning(false)
+        }
+    }, [])
+
+    const runEventDriven = useCallback(async () => {
+        setEdScanning(true)
+        setEdError('')
+        setEdResult(null)
+        setEdProgress(null)
+        setEdStatusMsg('Connecting...')
+
+        const abort = new AbortController()
+        edAbortRef.current = abort
+
+        try {
+            const res = await fetch('/api/strategy/event-driven', { signal: abort.signal })
+            if (!res.ok || !res.body) throw new Error('Failed to connect')
+
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+
+                let currentEvent = ''
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        currentEvent = line.slice(7).trim()
+                    } else if (line.startsWith('data: ') && currentEvent) {
+                        try {
+                            const data = JSON.parse(line.slice(6))
+                            switch (currentEvent) {
+                                case 'status':
+                                    setEdStatusMsg(data.message || '')
+                                    break
+                                case 'progress':
+                                    setEdProgress(data)
+                                    setEdStatusMsg(`Scanning... ${data.scanned}/${data.total} stocks (${data.pct}%)`)
+                                    break
+                                case 'result':
+                                    setEdResult(data)
+                                    setEdStatusMsg('Analysis complete!')
+                                    break
+                                case 'error':
+                                    setEdError(data.message)
+                                    break
+                                case 'done':
+                                    break
+                            }
+                        } catch { /* skip */ }
+                        currentEvent = ''
+                    }
+                }
+            }
+        } catch (err: any) {
+            if (err.name !== 'AbortError') {
+                setEdError(err.message || 'Something went wrong')
+            }
+        } finally {
+            setEdScanning(false)
         }
     }, [])
 
@@ -1754,6 +1834,222 @@ export default function StrategyAnalysisPage() {
                                         <span>Sectors: {srResult.fetchStats.sectorsFetched}/12</span>
                                         <span>Stocks: {srResult.fetchStats.successfulFetches}/{srResult.fetchStats.totalSymbols}</span>
                                         <span>Errors: {srResult.fetchStats.failedFetches}</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Strategy 5: Event-Driven / Catalyst Trading */}
+                    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
+                        <div className="p-4 sm:p-5 border-b border-[var(--border)]">
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 bg-gradient-to-br from-amber-500/20 to-orange-500/20 rounded-xl flex items-center justify-center">
+                                        <Sparkles size={20} className="text-amber-400" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-sm font-bold text-[var(--foreground)]">EVENT-DRIVEN / CATALYST TRADING</h3>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Earnings Surprise (PEAD) · RBI Policy · Index Rebalancing · Bulk/Block Deals</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    {edScanning && (
+                                        <button onClick={stopEdScan} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs font-medium hover:bg-red-500/20 transition-colors">
+                                            <StopCircle size={14} /> Stop
+                                        </button>
+                                    )}
+                                    <button onClick={runEventDriven} disabled={edScanning}
+                                        className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                                            edScanning
+                                                ? 'bg-amber-500/10 text-amber-400/60 cursor-wait'
+                                                : 'bg-gradient-to-r from-amber-600 to-orange-600 text-white hover:shadow-lg hover:shadow-amber-500/20'
+                                        }`}>
+                                        {edScanning ? <><Loader2 size={14} className="animate-spin" /> Scanning...</> : <><Play size={14} /> Run Event Scanner</>}
+                                    </button>
+                                </div>
+                            </div>
+                            {edStatusMsg && <p className="text-[10px] text-[var(--foreground-muted)] mt-2">{edStatusMsg}</p>}
+                            {edError && <p className="text-[10px] text-red-400 mt-2">⚠ {edError}</p>}
+                            {edProgress && (
+                                <div className="mt-2 h-1.5 bg-[var(--background)] rounded-full overflow-hidden">
+                                    <div className="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full transition-all" style={{ width: `${edProgress.pct}%` }} />
+                                </div>
+                            )}
+                        </div>
+
+                        {edResult && (
+                            <div className="p-4 sm:p-5 space-y-4">
+                                {/* Summary */}
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                    <div className="bg-[var(--background)] rounded-xl p-3">
+                                        <p className="text-[9px] text-[var(--foreground-muted)] uppercase tracking-wide">Stocks Scanned</p>
+                                        <p className="text-lg font-bold text-[var(--foreground)]">{edResult.summary?.totalStocksScanned || 0}</p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-xl p-3">
+                                        <p className="text-[9px] text-[var(--foreground-muted)] uppercase tracking-wide">Earnings Signals</p>
+                                        <p className="text-lg font-bold text-emerald-400">{edResult.summary?.earningsTriggered || 0} <span className="text-xs text-[var(--foreground-muted)] font-normal">/ {edResult.summary?.earningsCandidates || 0}</span></p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-xl p-3">
+                                        <p className="text-[9px] text-[var(--foreground-muted)] uppercase tracking-wide">Bulk Deal Signals</p>
+                                        <p className="text-lg font-bold text-amber-400">{edResult.summary?.bulkDealTriggered || 0} <span className="text-xs text-[var(--foreground-muted)] font-normal">/ {edResult.summary?.bulkDealCandidates || 0}</span></p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-xl p-3">
+                                        <p className="text-[9px] text-[var(--foreground-muted)] uppercase tracking-wide">Earnings Season</p>
+                                        <p className="text-sm font-bold text-[var(--foreground)]">{edResult.calendar?.currentEarningsSeason?.label || 'Off-season'}</p>
+                                    </div>
+                                </div>
+
+                                {/* Earnings Surprise Signals */}
+                                {edResult.earningsSignals && edResult.earningsSignals.length > 0 && (
+                                    <div>
+                                        <h4 className="text-xs font-bold text-[var(--foreground)] mb-2 flex items-center gap-1.5">
+                                            <TrendingUp size={14} className="text-emerald-400" /> Earnings Surprise Candidates (PEAD)
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[10px]">
+                                                <thead>
+                                                    <tr className="text-[var(--foreground-muted)] border-b border-[var(--border)]">
+                                                        <th className="text-left py-1.5 px-2">Symbol</th>
+                                                        <th className="text-center py-1.5 px-2">Signal</th>
+                                                        <th className="text-center py-1.5 px-2">Score</th>
+                                                        <th className="text-center py-1.5 px-2">Quality</th>
+                                                        <th className="text-center py-1.5 px-2">Surprise</th>
+                                                        <th className="text-left py-1.5 px-2">Conditions</th>
+                                                        <th className="text-center py-1.5 px-2">Days Ago</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {edResult.earningsSignals.map((sig: any, i: number) => (
+                                                        <tr key={i} className={`border-b border-[var(--border)]/30 ${sig.triggered ? 'bg-emerald-500/5' : ''}`}>
+                                                            <td className="py-1.5 px-2 font-semibold text-[var(--foreground)]">{sig.symbol?.replace('.NS', '')}</td>
+                                                            <td className="py-1.5 px-2 text-center">
+                                                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${sig.triggered ? 'bg-emerald-500/20 text-emerald-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                                                                    {sig.triggered ? 'TRIGGERED' : 'CANDIDATE'}
+                                                                </span>
+                                                            </td>
+                                                            <td className="py-1.5 px-2 text-center text-[var(--foreground)]">{sig.score}/{sig.totalConditions}</td>
+                                                            <td className="py-1.5 px-2 text-center">
+                                                                {sig.qualityGrade ? (
+                                                                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${sig.qualityGrade === 'A+' ? 'bg-emerald-500/20 text-emerald-400' : sig.qualityGrade === 'A' ? 'bg-cyan-500/20 text-cyan-400' : 'bg-blue-500/20 text-blue-400'}`}>{sig.qualityGrade}</span>
+                                                                ) : <span className="text-[var(--foreground-muted)]">-</span>}
+                                                            </td>
+                                                            <td className="py-1.5 px-2 text-center text-[var(--foreground)]">{sig.surprisePct || '-'}</td>
+                                                            <td className="py-1.5 px-2">
+                                                                <div className="flex gap-1">
+                                                                    {sig.conditions?.map((c: any, j: number) => (
+                                                                        <span key={j} title={c.detail} className={`w-4 h-4 rounded flex items-center justify-center text-[8px] ${c.met ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                                                                            {c.met ? '✓' : '✗'}
+                                                                        </span>
+                                                                    ))}
+                                                                </div>
+                                                            </td>
+                                                            <td className="py-1.5 px-2 text-center text-[var(--foreground-muted)]">{sig.daysAgo || '-'}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Bulk Deal Signals */}
+                                {edResult.bulkDealSignals && edResult.bulkDealSignals.length > 0 && (
+                                    <div>
+                                        <h4 className="text-xs font-bold text-[var(--foreground)] mb-2 flex items-center gap-1.5">
+                                            <Newspaper size={14} className="text-amber-400" /> Bulk/Block Deal Activity
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[10px]">
+                                                <thead>
+                                                    <tr className="text-[var(--foreground-muted)] border-b border-[var(--border)]">
+                                                        <th className="text-left py-1.5 px-2">Symbol</th>
+                                                        <th className="text-center py-1.5 px-2">Signal</th>
+                                                        <th className="text-center py-1.5 px-2">Score</th>
+                                                        <th className="text-center py-1.5 px-2">Quality</th>
+                                                        <th className="text-left py-1.5 px-2">Detection</th>
+                                                        <th className="text-left py-1.5 px-2">Conditions</th>
+                                                        <th className="text-center py-1.5 px-2">Days Ago</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {edResult.bulkDealSignals.map((sig: any, i: number) => (
+                                                        <tr key={i} className={`border-b border-[var(--border)]/30 ${sig.triggered ? 'bg-amber-500/5' : ''}`}>
+                                                            <td className="py-1.5 px-2 font-semibold text-[var(--foreground)]">{sig.symbol?.replace('.NS', '')}</td>
+                                                            <td className="py-1.5 px-2 text-center">
+                                                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${sig.triggered ? 'bg-amber-500/20 text-amber-400' : 'bg-gray-500/20 text-gray-400'}`}>
+                                                                    {sig.triggered ? 'TRIGGERED' : 'WATCH'}
+                                                                </span>
+                                                            </td>
+                                                            <td className="py-1.5 px-2 text-center text-[var(--foreground)]">{sig.score}/{sig.totalConditions}</td>
+                                                            <td className="py-1.5 px-2 text-center">
+                                                                {sig.qualityGrade ? (
+                                                                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${sig.qualityGrade === 'A+' ? 'bg-emerald-500/20 text-emerald-400' : sig.qualityGrade === 'A' ? 'bg-cyan-500/20 text-cyan-400' : 'bg-blue-500/20 text-blue-400'}`}>{sig.qualityGrade}</span>
+                                                                ) : <span className="text-[var(--foreground-muted)]">-</span>}
+                                                            </td>
+                                                            <td className="py-1.5 px-2 text-[var(--foreground-muted)]">{sig.detectedFrom || '-'}</td>
+                                                            <td className="py-1.5 px-2">
+                                                                <div className="flex gap-1">
+                                                                    {sig.conditions?.map((c: any, j: number) => (
+                                                                        <span key={j} title={c.detail} className={`w-4 h-4 rounded flex items-center justify-center text-[8px] ${c.met ? 'bg-amber-500/20 text-amber-400' : 'bg-red-500/10 text-red-400'}`}>
+                                                                            {c.met ? '✓' : '✗'}
+                                                                        </span>
+                                                                    ))}
+                                                                </div>
+                                                            </td>
+                                                            <td className="py-1.5 px-2 text-center text-[var(--foreground-muted)]">{sig.daysAgo || '-'}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Upcoming Events Calendar */}
+                                {edResult.calendar && (
+                                    <div>
+                                        <h4 className="text-xs font-bold text-[var(--foreground)] mb-2 flex items-center gap-1.5">
+                                            <CalendarDays size={14} className="text-cyan-400" /> Upcoming Events
+                                        </h4>
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                            {edResult.calendar.upcomingRBI?.length > 0 && (
+                                                <div className="bg-[var(--background)] rounded-xl p-3">
+                                                    <p className="text-[9px] text-[var(--foreground-muted)] uppercase tracking-wide mb-1.5">RBI MPC</p>
+                                                    {edResult.calendar.upcomingRBI.map((e: any, i: number) => (
+                                                        <div key={i} className="text-[10px] text-[var(--foreground)] mb-1">
+                                                            <span className="text-cyan-400 font-mono">{e.date}</span> — {e.label}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            {edResult.calendar.upcomingRebalances?.length > 0 && (
+                                                <div className="bg-[var(--background)] rounded-xl p-3">
+                                                    <p className="text-[9px] text-[var(--foreground-muted)] uppercase tracking-wide mb-1.5">Index Rebalances</p>
+                                                    {edResult.calendar.upcomingRebalances.map((e: any, i: number) => (
+                                                        <div key={i} className="text-[10px] text-[var(--foreground)] mb-1">
+                                                            <span className="text-amber-400 font-mono">{e.date}</span> — {e.label}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            <div className="bg-[var(--background)] rounded-xl p-3">
+                                                <p className="text-[9px] text-[var(--foreground-muted)] uppercase tracking-wide mb-1.5">Current Season</p>
+                                                <p className="text-[10px] text-[var(--foreground)]">
+                                                    {edResult.calendar.currentEarningsSeason
+                                                        ? <><span className="text-emerald-400">●</span> {edResult.calendar.currentEarningsSeason.label}</>
+                                                        : <span className="text-[var(--foreground-muted)]">Off-season — no major earnings window</span>}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Fetch Stats */}
+                                {edResult.fetchStats && (
+                                    <div className="text-[10px] text-[var(--foreground-muted)] flex items-center gap-4">
+                                        <span>Stocks: {edResult.fetchStats.successfulFetches}/{edResult.fetchStats.totalSymbols}</span>
+                                        <span>Errors: {edResult.fetchStats.failedFetches}</span>
                                     </div>
                                 )}
                             </div>
