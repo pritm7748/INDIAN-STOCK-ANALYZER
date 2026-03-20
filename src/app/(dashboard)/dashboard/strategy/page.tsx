@@ -7,7 +7,7 @@ import {
     ChevronRight, Activity, Clock, Filter, Info, StopCircle,
     CalendarDays, ArrowRightLeft, ShieldCheck, Play,
     Crosshair, Eye, GitPullRequestArrow, PieChart, Repeat,
-    Newspaper, Sparkles
+    Newspaper, Sparkles, ArrowUpRight
 } from 'lucide-react'
 
 interface Holding {
@@ -142,6 +142,14 @@ export default function StrategyAnalysisPage() {
     const [edStatusMsg, setEdStatusMsg] = useState('')
     const edAbortRef = useRef<AbortController | null>(null)
 
+    // Breakout (VCP) state
+    const [boScanning, setBoScanning] = useState(false)
+    const [boResult, setBoResult] = useState<any>(null)
+    const [boError, setBoError] = useState('')
+    const [boProgress, setBoProgress] = useState<ScanProgress | null>(null)
+    const [boStatusMsg, setBoStatusMsg] = useState('')
+    const boAbortRef = useRef<AbortController | null>(null)
+
     const timeframes = [
         { id: '1W', label: '1 Week', available: false },
         { id: '1M', label: '1 Month', available: true },
@@ -178,6 +186,12 @@ export default function StrategyAnalysisPage() {
         edAbortRef.current?.abort()
         setEdScanning(false)
         setEdStatusMsg('Scan stopped')
+    }, [])
+
+    const stopBoScan = useCallback(() => {
+        boAbortRef.current?.abort()
+        setBoScanning(false)
+        setBoStatusMsg('Scan stopped')
     }, [])
 
     const runSectorRotation = useCallback(async () => {
@@ -307,6 +321,71 @@ export default function StrategyAnalysisPage() {
             }
         } finally {
             setEdScanning(false)
+        }
+    }, [])
+
+    const runBreakout = useCallback(async () => {
+        setBoScanning(true)
+        setBoError('')
+        setBoResult(null)
+        setBoProgress(null)
+        setBoStatusMsg('Connecting...')
+
+        const abort = new AbortController()
+        boAbortRef.current = abort
+
+        try {
+            const res = await fetch('/api/strategy/breakout', { signal: abort.signal })
+            if (!res.ok || !res.body) throw new Error('Failed to connect')
+
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+
+                let currentEvent = ''
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        currentEvent = line.slice(7).trim()
+                    } else if (line.startsWith('data: ') && currentEvent) {
+                        try {
+                            const data = JSON.parse(line.slice(6))
+                            switch (currentEvent) {
+                                case 'status':
+                                    setBoStatusMsg(data.message || '')
+                                    break
+                                case 'progress':
+                                    setBoProgress(data)
+                                    setBoStatusMsg(`Scanning... ${data.scanned}/${data.total} stocks (${data.pct}%)`)
+                                    break
+                                case 'result':
+                                    setBoResult(data)
+                                    setBoStatusMsg('Analysis complete!')
+                                    break
+                                case 'error':
+                                    setBoError(data.message)
+                                    break
+                                case 'done':
+                                    break
+                            }
+                        } catch { /* skip */ }
+                        currentEvent = ''
+                    }
+                }
+            }
+        } catch (err: any) {
+            if (err.name !== 'AbortError') {
+                setBoError(err.message || 'Something went wrong')
+            }
+        } finally {
+            setBoScanning(false)
         }
     }, [])
 
@@ -2056,6 +2135,151 @@ export default function StrategyAnalysisPage() {
                         )}
                     </div>
 
+                    {/* Strategy 6: Breakout Trading (Darvas Box / VCP) */}
+                    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-6 hover:border-emerald-500/30 transition-all">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-gradient-to-br from-emerald-500/20 to-teal-500/20 rounded-xl flex items-center justify-center">
+                                    <ArrowUpRight size={20} className="text-emerald-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-bold text-[var(--foreground)]">Breakout / VCP Trading</h3>
+                                    <p className="text-[10px] text-[var(--foreground-muted)]">Darvas Box + Volatility Contraction · Mid-cap focus · Delivery % filters</p>
+                                </div>
+                            </div>
+                            {boScanning ? (
+                                <button onClick={stopBoScan} className="flex items-center gap-1.5 bg-red-500/10 text-red-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-all">
+                                    <StopCircle size={14} /> Stop
+                                </button>
+                            ) : (
+                                <button onClick={runBreakout} className="flex items-center gap-1.5 bg-emerald-500/10 text-emerald-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-emerald-500/20 transition-all">
+                                    <Play size={14} /> Scan
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Progress */}
+                        {boScanning && (
+                            <div className="mb-4">
+                                <div className="flex items-center gap-2 text-xs text-emerald-400 mb-2">
+                                    <Loader2 size={14} className="animate-spin" />
+                                    <span>{boStatusMsg}</span>
+                                </div>
+                                {boProgress && (
+                                    <div className="w-full bg-[var(--background)] rounded-full h-1.5">
+                                        <div className="bg-gradient-to-r from-emerald-500 to-teal-500 h-1.5 rounded-full transition-all" style={{ width: `${boProgress.pct}%` }} />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Error */}
+                        {boError && (
+                            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-4">
+                                <p className="text-xs text-red-400"><AlertTriangle size={12} className="inline mr-1" />{boError}</p>
+                            </div>
+                        )}
+
+                        {/* Results */}
+                        {boResult && (
+                            <div className="space-y-4">
+                                {/* Summary */}
+                                <div className="grid grid-cols-3 gap-3">
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-emerald-400">{boResult.totalScanned}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Stocks Scanned</p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-teal-400">{boResult.signals?.length || 0}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Breakout Signals</p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-cyan-400">{boResult.watchlist?.length || 0}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Watchlist</p>
+                                    </div>
+                                </div>
+
+                                {/* Breakout Signals Table */}
+                                {boResult.signals && boResult.signals.length > 0 && (
+                                    <div>
+                                        <h4 className="text-xs font-bold text-emerald-400 mb-2 flex items-center gap-1"><Zap size={12} /> Breakout Signals</h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-xs">
+                                                <thead>
+                                                    <tr className="text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="text-left py-2 pr-3">Symbol</th>
+                                                        <th className="text-center py-2 px-2">Score</th>
+                                                        <th className="text-center py-2 px-2">Grade</th>
+                                                        <th className="text-right py-2 px-2">Entry</th>
+                                                        <th className="text-right py-2 px-2">Stop</th>
+                                                        <th className="text-right py-2 px-2">Target</th>
+                                                        <th className="text-center py-2 px-2">R:R</th>
+                                                        <th className="text-center py-2 pl-2">VCP</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {boResult.signals.map((s: any, i: number) => (
+                                                        <tr key={i} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-2 pr-3 font-medium text-[var(--foreground)]">{s.symbol}</td>
+                                                            <td className="py-2 px-2 text-center">{s.score}/{s.totalConditions}</td>
+                                                            <td className="py-2 px-2 text-center">
+                                                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${s.qualityGrade === 'A+' ? 'bg-emerald-500/20 text-emerald-400' : s.qualityGrade === 'A' ? 'bg-teal-500/20 text-teal-400' : s.qualityGrade === 'B' ? 'bg-cyan-500/20 text-cyan-400' : 'bg-gray-500/20 text-gray-400'}`}>
+                                                                    {s.qualityGrade}
+                                                                </span>
+                                                            </td>
+                                                            <td className="py-2 px-2 text-right">₹{s.trade?.entryPrice}</td>
+                                                            <td className="py-2 px-2 text-right text-red-400">₹{s.trade?.stopLoss}</td>
+                                                            <td className="py-2 px-2 text-right text-emerald-400">₹{s.trade?.measuredMoveTarget}</td>
+                                                            <td className="py-2 px-2 text-center">{s.trade?.riskReward}</td>
+                                                            <td className="py-2 pl-2 text-center">{s.vcpAnalysis?.detected ? '✅' : '—'}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {boResult.signals && boResult.signals.length === 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4 text-center">
+                                        <p className="text-xs text-[var(--foreground-muted)]">No breakout signals detected in current scan. Check the watchlist for near-breakout setups.</p>
+                                    </div>
+                                )}
+
+                                {/* Watchlist */}
+                                {boResult.watchlist && boResult.watchlist.length > 0 && (
+                                    <div>
+                                        <h4 className="text-xs font-bold text-cyan-400 mb-2 flex items-center gap-1"><Eye size={12} /> Near-Breakout Watchlist</h4>
+                                        <div className="space-y-1">
+                                            {boResult.watchlist.slice(0, 8).map((w: any, i: number) => (
+                                                <div key={i} className="bg-[var(--background)] rounded-lg p-2 flex items-center justify-between">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-xs font-medium text-[var(--foreground)]">{w.symbol}</span>
+                                                        <span className="text-[10px] text-cyan-400">{w.score}</span>
+                                                        {w.baseDetected && <span className="text-[9px] bg-emerald-500/10 text-emerald-400 px-1 rounded">Base</span>}
+                                                    </div>
+                                                    <div className="flex gap-1">
+                                                        {w.missingConditions?.map((c: string, j: number) => (
+                                                            <span key={j} className="text-[9px] bg-[var(--card)] text-[var(--foreground-muted)] px-1 rounded">{c.replace('_', ' ').toLowerCase()}</span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Fetch Stats */}
+                                {boResult.fetchStats && (
+                                    <div className="text-[10px] text-[var(--foreground-muted)] flex items-center gap-4">
+                                        <span>Stocks: {boResult.fetchStats.successfulFetches}/{boResult.fetchStats.totalSymbols}</span>
+                                        <span>Errors: {boResult.fetchStats.failedFetches}</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
                     {/* More strategies placeholder */}
                     <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-6 border-dashed opacity-60">
                         <div className="flex items-center gap-3">
@@ -2064,7 +2288,7 @@ export default function StrategyAnalysisPage() {
                             </div>
                             <div>
                                 <h3 className="text-sm font-bold text-[var(--foreground-muted)]">More 1-Month strategies coming soon</h3>
-                                <p className="text-[10px] text-[var(--foreground-muted)]">Breakout · Value Momentum · Quality Factor</p>
+                                <p className="text-[10px] text-[var(--foreground-muted)]">Value Momentum · Quality Factor</p>
                             </div>
                         </div>
                     </div>

@@ -1,0 +1,1997 @@
+
+// Breakout Trading — Darvas Box / VCP (Volatility Contraction Pattern)
+// Adapted for Indian Markets (NSE) — Mid-cap focus, delivery % filters
+
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+const CONFIG = {
+  // ── Prior Uptrend Requirements ──
+  MIN_PRIOR_GAIN_3M: 0.20,        // stock up at least 20% in prior 3 months
+  SMA_FAST: 50,
+  SMA_MID: 150,
+  SMA_SLOW: 200,
+  SMA_SLOPE_LOOKBACK: 20,         // days to check if 200-SMA rising
+
+  // ── Consolidation / Base Detection ──
+  MIN_BASE_DAYS: 15,              // 3 weeks minimum consolidation
+  MAX_BASE_DAYS: 30,              // 6 weeks maximum
+  BASE_DETECTION_WINDOW: 40,      // look back 40 days for base candidates
+  TIGHTENING_THRESHOLD: 0.6,      // later-half range ≤ 60% of first-half range
+  MAX_BASE_RANGE_PCT: 0.15,       // base width ≤ 15% of price (not too loose)
+  VOLUME_DECLINE_IN_BASE: true,   // volume should decline during base
+  VOLUME_DECLINE_RATIO: 0.7,      // second-half avg volume ≤ 70% of first-half
+
+  // ── Bollinger Bandwidth ──
+  BB_PERIOD: 20,
+  BB_STD_DEV: 2,
+  BB_SQUEEZE_PERCENTILE: 20,      // bandwidth in bottom 20% of 6-month range
+  BB_LOOKBACK_DAYS: 132,          // 6 months of bandwidth history
+
+  // ── Breakout Trigger ──
+  BREAKOUT_VOLUME_MULTIPLIER: 2.0, // volume ≥ 2× 20d avg
+  VOLUME_AVG_PERIOD: 20,
+  MIN_CANDLE_BODY_RATIO: 0.50,    // close near high (body ≥ 50% of range)
+  CLOSE_NEAR_HIGH_RATIO: 0.70,    // (close - low) / (high - low) ≥ 0.70
+
+  // ── Risk Management ──
+  STOP_BELOW_BASE_LOW: true,      // stop below consolidation low
+  MAX_STOP_PCT: 0.07,             // or 7%, whichever is tighter
+  TRAILING_ACTIVATION_PCT: 0.10,  // activate trailing after 10% gain
+  TRAILING_EMA: 10,               // trail with 10-EMA
+  MAX_HOLDING_DAYS: 20,           // 4 weeks max
+
+  // ── Targets ──
+  MEASURED_MOVE: true,            // target = breakout + base width
+  PARTIAL_EXIT_AT_1R: 0.30,      // book 30% at 1× risk
+  PARTIAL_EXIT_AT_TARGET: 0.40,  // book 40% at measured move target
+
+  // ── Indian Market Filters ──
+  MIN_DELIVERY_PCT: 35,           // breakout suspect if delivery < 35%
+  PREFER_DELIVERY_PCT: 45,        // ideal delivery % > 45%
+  MIN_AVG_TURNOVER_CR: 3,         // mid-caps need ≥ ₹3cr
+  PREFER_MIDCAP: true,            // Nifty Midcap 150 universe preferred
+  MIN_PRICE: 50,
+  MAX_PRICE: 50000,
+
+  // ── Multi-Stock Portfolio ──
+  MAX_CONCURRENT_POSITIONS: 8,
+  RISK_PER_TRADE_PCT: 0.015,      // 1.5% capital risk (breakout win rate lower)
+  MAX_POSITION_PCT: 0.12,
+
+  // ── Sector Breakout Amplification ──
+  SECTOR_BREAKOUT_BONUS: 0.15,    // boost score if sector index also breaking out
+
+  // ── Analytics ──
+  TRADING_DAYS_PER_YEAR: 252,
+  RISK_FREE_RATE: 0.065,
+};
+
+
+// ============================================================================
+// TECHNICAL INDICATORS
+// ============================================================================
+
+function calcSMA(data, period) {
+  const result = new Array(data.length).fill(null);
+  if (data.length < period) return result;
+  for (let i = period - 1; i < data.length; i++) {
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) sum += data[j];
+    result[i] = sum / period;
+  }
+  return result;
+}
+
+function calcEMA(data, period) {
+  const result = new Array(data.length).fill(null);
+  if (data.length < period) return result;
+  let sum = 0;
+  for (let i = 0; i < period; i++) sum += data[i];
+  result[period - 1] = sum / period;
+  const k = 2 / (period + 1);
+  for (let i = period; i < data.length; i++) {
+    result[i] = (data[i] - result[i - 1]) * k + result[i - 1];
+  }
+  return result;
+}
+
+function calcATR(highs, lows, closes, period = 14) {
+  const len = closes.length;
+  const result = new Array(len).fill(null);
+  if (len < period + 1) return result;
+
+  const tr = [0];
+  for (let i = 1; i < len; i++) {
+    tr.push(Math.max(
+      highs[i] - lows[i],
+      Math.abs(highs[i] - closes[i - 1]),
+      Math.abs(lows[i] - closes[i - 1])
+    ));
+  }
+
+  let atr = 0;
+  for (let i = 1; i <= period; i++) atr += tr[i];
+  atr /= period;
+  result[period] = atr;
+
+  for (let i = period + 1; i < len; i++) {
+    atr = (atr * (period - 1) + tr[i]) / period;
+    result[i] = atr;
+  }
+  return result;
+}
+
+/**
+ * Bollinger Bands with bandwidth and historical percentile
+ */
+function calcBollingerBands(closes, period = 20, numStdDev = 2) {
+  const len = closes.length;
+  const middle = new Array(len).fill(null);
+  const upper = new Array(len).fill(null);
+  const lower = new Array(len).fill(null);
+  const bandwidth = new Array(len).fill(null);
+
+  if (len < period) return { middle, upper, lower, bandwidth };
+
+  for (let i = period - 1; i < len; i++) {
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) sum += closes[j];
+    const sma = sum / period;
+
+    let sqSum = 0;
+    for (let j = i - period + 1; j <= i; j++) sqSum += (closes[j] - sma) ** 2;
+    const stdDev = Math.sqrt(sqSum / period);
+
+    middle[i] = sma;
+    upper[i] = sma + numStdDev * stdDev;
+    lower[i] = sma - numStdDev * stdDev;
+    bandwidth[i] = sma !== 0 ? (upper[i] - lower[i]) / sma : 0;
+  }
+
+  return { middle, upper, lower, bandwidth };
+}
+
+/**
+ * Calculate the percentile rank of the current bandwidth
+ * within its lookback history
+ */
+function calcBandwidthPercentile(bandwidthArray, lookback) {
+  const valid = bandwidthArray.filter(b => b !== null);
+  if (valid.length < lookback) return null;
+
+  const recent = valid.slice(-lookback);
+  const current = recent[recent.length - 1];
+  const sorted = [...recent].sort((a, b) => a - b);
+  const rank = sorted.findIndex(v => v >= current);
+
+  return (rank / sorted.length) * 100;
+}
+
+/**
+ * Find the N-day high and N-day low
+ */
+function calcChannelHighLow(highs, lows, period) {
+  const len = highs.length;
+  const channelHigh = new Array(len).fill(null);
+  const channelLow = new Array(len).fill(null);
+
+  if (len < period) return { channelHigh, channelLow };
+
+  for (let i = period - 1; i < len; i++) {
+    let maxH = -Infinity, minL = Infinity;
+    for (let j = i - period + 1; j <= i; j++) {
+      if (highs[j] > maxH) maxH = highs[j];
+      if (lows[j] < minL) minL = lows[j];
+    }
+    channelHigh[i] = maxH;
+    channelLow[i] = minL;
+  }
+
+  return { channelHigh, channelLow };
+}
+
+function calcVolatility(closes, window = 20) {
+  if (closes.length < window + 1) return null;
+  const rets = [];
+  for (let i = closes.length - window; i < closes.length; i++) {
+    if (closes[i - 1] === 0) return null;
+    rets.push(Math.log(closes[i] / closes[i - 1]));
+  }
+  const mean = rets.reduce((s, r) => s + r, 0) / rets.length;
+  const variance = rets.reduce((s, r) => s + (r - mean) ** 2, 0) / (rets.length - 1);
+  return Math.sqrt(variance) * Math.sqrt(CONFIG.TRADING_DAYS_PER_YEAR);
+}
+
+function calcReturn(prices, lookback) {
+  if (!prices || prices.length < lookback + 1) return null;
+  const curr = prices[prices.length - 1];
+  const prev = prices[prices.length - 1 - lookback];
+  return prev && prev !== 0 ? (curr / prev) - 1 : null;
+}
+
+function calcAvgVolume(volumes, period) {
+  if (!volumes || volumes.length < period) return null;
+  return volumes.slice(-period).reduce((s, v) => s + v, 0) / period;
+}
+
+
+// ============================================================================
+// CONSOLIDATION BASE DETECTION
+// ============================================================================
+
+/**
+ * Detect a consolidation base (Darvas Box / VCP pattern)
+ *
+ * @param {number[]} highs - daily highs
+ * @param {number[]} lows - daily lows
+ * @param {number[]} closes - daily closes
+ * @param {number[]} volumes - daily volumes
+ * @param {number} atIndex - detect base ending at this index (default: latest)
+ * @returns {Object|null} base details or null
+ */
+function detectConsolidationBase(highs, lows, closes, volumes, atIndex = null) {
+  const idx = atIndex !== null ? atIndex : closes.length - 1;
+
+  if (idx < CONFIG.BASE_DETECTION_WINDOW + 10) return null;
+
+  // Scan backwards from current bar to find the best base
+  let bestBase = null;
+  let bestScore = 0;
+
+  for (let baseLen = CONFIG.MIN_BASE_DAYS; baseLen <= CONFIG.MAX_BASE_DAYS; baseLen++) {
+    const startIdx = idx - baseLen + 1;
+    if (startIdx < 0) continue;
+
+    // Calculate base high and base low
+    let baseHigh = -Infinity;
+    let baseLow = Infinity;
+
+    for (let j = startIdx; j <= idx; j++) {
+      if (highs[j] > baseHigh) baseHigh = highs[j];
+      if (lows[j] < baseLow) baseLow = lows[j];
+    }
+
+    const baseRange = baseHigh - baseLow;
+    const baseRangePct = baseRange / baseLow;
+
+    // Skip if base is too wide (not really consolidation)
+    if (baseRangePct > CONFIG.MAX_BASE_RANGE_PCT) continue;
+
+    // ── Check tightening: later-half range should be tighter ──
+    const halfPoint = startIdx + Math.floor(baseLen / 2);
+    let firstHalfHigh = -Infinity, firstHalfLow = Infinity;
+    let secondHalfHigh = -Infinity, secondHalfLow = Infinity;
+
+    for (let j = startIdx; j < halfPoint; j++) {
+      if (highs[j] > firstHalfHigh) firstHalfHigh = highs[j];
+      if (lows[j] < firstHalfLow) firstHalfLow = lows[j];
+    }
+    for (let j = halfPoint; j <= idx; j++) {
+      if (highs[j] > secondHalfHigh) secondHalfHigh = highs[j];
+      if (lows[j] < secondHalfLow) secondHalfLow = lows[j];
+    }
+
+    const firstHalfRange = firstHalfHigh - firstHalfLow;
+    const secondHalfRange = secondHalfHigh - secondHalfLow;
+    const isTightening = firstHalfRange > 0
+      ? (secondHalfRange / firstHalfRange) <= CONFIG.TIGHTENING_THRESHOLD
+      : false;
+
+    // ── Check volume decline during base ──
+    let volumeDeclining = false;
+    if (CONFIG.VOLUME_DECLINE_IN_BASE && volumes) {
+      const firstHalfVol = volumes.slice(startIdx, halfPoint);
+      const secondHalfVol = volumes.slice(halfPoint, idx + 1);
+
+      if (firstHalfVol.length > 0 && secondHalfVol.length > 0) {
+        const avgFirst = firstHalfVol.reduce((s, v) => s + v, 0) / firstHalfVol.length;
+        const avgSecond = secondHalfVol.reduce((s, v) => s + v, 0) / secondHalfVol.length;
+        volumeDeclining = avgFirst > 0 && (avgSecond / avgFirst) <= CONFIG.VOLUME_DECLINE_RATIO;
+      }
+    }
+
+    // ── Score this base candidate ──
+    let score = 0;
+
+    // Tighter base = better
+    if (baseRangePct < 0.05) score += 3;
+    else if (baseRangePct < 0.08) score += 2;
+    else if (baseRangePct < 0.12) score += 1;
+
+    // Tightening pattern
+    if (isTightening) score += 3;
+
+    // Volume drying up
+    if (volumeDeclining) score += 2;
+
+    // Duration sweet spot (4-5 weeks best)
+    if (baseLen >= 18 && baseLen <= 25) score += 2;
+    else if (baseLen >= 15 && baseLen <= 30) score += 1;
+
+    // Lower highs pattern (descending resistance)
+    let lowerHighs = 0;
+    const chunk = Math.floor(baseLen / 3);
+    if (chunk >= 3) {
+      const h1 = Math.max(...highs.slice(startIdx, startIdx + chunk));
+      const h2 = Math.max(...highs.slice(startIdx + chunk, startIdx + 2 * chunk));
+      const h3 = Math.max(...highs.slice(startIdx + 2 * chunk, idx + 1));
+      if (h2 < h1) lowerHighs++;
+      if (h3 < h2) lowerHighs++;
+      score += lowerHighs;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestBase = {
+        startIndex: startIdx,
+        endIndex: idx,
+        baseDays: baseLen,
+        baseHigh,
+        baseLow,
+        baseRange: r2(baseRange),
+        baseRangePct: r2(baseRangePct * 100) + '%',
+        isTightening,
+        tighteningRatio: firstHalfRange > 0
+          ? r2(secondHalfRange / firstHalfRange)
+          : null,
+        volumeDeclining,
+        lowerHighs,
+        score,
+        maxScore: 11,
+      };
+    }
+  }
+
+  return bestBase;
+}
+
+
+// ============================================================================
+// VCP PATTERN DETECTION (Multi-Contraction)
+// ============================================================================
+
+/**
+ * Detect VCP (Volatility Contraction Pattern) — multiple contractions
+ *
+ * A VCP shows a series of tightening price contractions:
+ * T1 (widest) → T2 → T3 (tightest), each contraction smaller than the last.
+ *
+ * @param {number[]} highs
+ * @param {number[]} lows
+ * @param {number[]} closes
+ * @param {number} lookback - bars to scan (default 60)
+ * @returns {Object|null} VCP analysis
+ */
+function detectVCP(highs, lows, closes, lookback = 60) {
+  const len = closes.length;
+  if (len < lookback + 20) return null;
+
+  const startIdx = len - lookback;
+
+  // Find swing highs and swing lows within the lookback
+  const swings = findSwingPoints(highs, lows, startIdx, len - 1);
+
+  if (swings.highs.length < 2 || swings.lows.length < 2) return null;
+
+  // Identify contractions (pivot high to next pivot low to next pivot high)
+  const contractions = [];
+
+  for (let i = 0; i < swings.highs.length - 1; i++) {
+    const pivotHigh = swings.highs[i];
+    // Find the next swing low after this high
+    const nextLow = swings.lows.find(l => l.index > pivotHigh.index);
+    if (!nextLow) continue;
+
+    const range = pivotHigh.price - nextLow.price;
+    const rangePct = range / pivotHigh.price;
+
+    contractions.push({
+      highIdx: pivotHigh.index,
+      lowIdx: nextLow.index,
+      highPrice: pivotHigh.price,
+      lowPrice: nextLow.price,
+      range,
+      rangePct: r2(rangePct * 100),
+    });
+  }
+
+  if (contractions.length < 2) return null;
+
+  // Check if contractions are getting tighter (VCP signature)
+  let isVCP = true;
+  for (let i = 1; i < contractions.length; i++) {
+    if (contractions[i].range >= contractions[i - 1].range) {
+      isVCP = false;
+      break;
+    }
+  }
+
+  // Tightening ratio (last contraction vs first)
+  const tighteningRatio = contractions[0].range > 0
+    ? contractions[contractions.length - 1].range / contractions[0].range
+    : null;
+
+  return {
+    detected: isVCP && contractions.length >= 2,
+    contractions: contractions.length,
+    contractionsDetail: contractions.map((c, i) => ({
+      number: `T${i + 1}`,
+      range: r2(c.range),
+      rangePct: c.rangePct + '%',
+    })),
+    tighteningRatio: tighteningRatio !== null ? r2(tighteningRatio) : null,
+    finalContractionPct: contractions[contractions.length - 1].rangePct + '%',
+    pivotHigh: contractions[contractions.length - 1].highPrice,
+    pivotLow: contractions[contractions.length - 1].lowPrice,
+  };
+}
+
+/**
+ * Find swing highs and swing lows within a range
+ */
+function findSwingPoints(highs, lows, startIdx, endIdx, order = 3) {
+  const swingHighs = [];
+  const swingLows = [];
+
+  for (let i = startIdx + order; i <= endIdx - order; i++) {
+    let isHigh = true;
+    let isLow = true;
+
+    for (let j = 1; j <= order; j++) {
+      if (highs[i] <= highs[i - j] || highs[i] <= highs[i + j]) isHigh = false;
+      if (lows[i] >= lows[i - j] || lows[i] >= lows[i + j]) isLow = false;
+    }
+
+    if (isHigh) swingHighs.push({ index: i, price: highs[i] });
+    if (isLow) swingLows.push({ index: i, price: lows[i] });
+  }
+
+  return { highs: swingHighs, lows: swingLows };
+}
+
+
+// ============================================================================
+// FULL BREAKOUT SIGNAL ANALYSIS
+// ============================================================================
+
+/**
+ * Complete breakout analysis for a single stock
+ *
+ * @param {Object} stock
+ *   { symbol, opens[], highs[], lows[], closes[], volumes[],
+ *     avgDailyTurnoverCr, deliveryPct (optional),
+ *     sectorIndex (optional — sector index prices for amplification) }
+ *
+ * @param {string} [currentDate]
+ * @returns {Object} breakout signal analysis
+ */
+function analyzeBreakout(stock, currentDate = null) {
+  const { opens, highs, lows, closes, volumes } = stock;
+  const len = closes.length;
+
+  if (len < CONFIG.SMA_SLOW + 20) {
+    return { triggered: false, reason: 'Insufficient history' };
+  }
+
+  const idx = len - 1; // latest bar
+  const conditions = [];
+  let score = 0;
+  const totalConditions = 7;
+
+  // ═══════════════════════════════════════════════════════
+  // CONDITION 1: Prior uptrend — up ≥ 20% in 3 months
+  // ═══════════════════════════════════════════════════════
+  const gain3m = calcReturn(closes.slice(0, idx - CONFIG.MIN_BASE_DAYS + 1), 66);
+  // Use price from before the base started, not current price
+
+  const hasPriorUptrend = gain3m !== null && gain3m >= CONFIG.MIN_PRIOR_GAIN_3M;
+
+  if (hasPriorUptrend) {
+    score++;
+    conditions.push({
+      name: 'PRIOR_UPTREND',
+      met: true,
+      detail: `3-month gain before base: ${r2(gain3m * 100)}% (need ≥ ${CONFIG.MIN_PRIOR_GAIN_3M * 100}%)`,
+    });
+  } else {
+    conditions.push({
+      name: 'PRIOR_UPTREND',
+      met: false,
+      detail: `3-month gain: ${gain3m !== null ? r2(gain3m * 100) + '%' : 'N/A'} (need ≥ ${CONFIG.MIN_PRIOR_GAIN_3M * 100}%)`,
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // CONDITION 2: Moving averages aligned (50 > 150 > 200, all above price)
+  // ═══════════════════════════════════════════════════════
+  const sma50 = calcSMA(closes, CONFIG.SMA_FAST);
+  const sma150 = calcSMA(closes, CONFIG.SMA_MID);
+  const sma200 = calcSMA(closes, CONFIG.SMA_SLOW);
+
+  const s50 = sma50[idx], s150 = sma150[idx], s200 = sma200[idx];
+
+  const smasAligned =
+    s50 !== null && s150 !== null && s200 !== null &&
+    closes[idx] > s50 && s50 > s150 && s150 > s200;
+
+  // 200-SMA rising
+  const sma200Rising = s200 !== null && idx >= CONFIG.SMA_SLOPE_LOOKBACK &&
+    sma200[idx - CONFIG.SMA_SLOPE_LOOKBACK] !== null &&
+    s200 > sma200[idx - CONFIG.SMA_SLOPE_LOOKBACK];
+
+  if (smasAligned && sma200Rising) {
+    score++;
+    conditions.push({
+      name: 'SMA_ALIGNMENT',
+      met: true,
+      detail: `Price (₹${r2(closes[idx])}) > 50-SMA (₹${r2(s50)}) > 150-SMA (₹${r2(s150)}) > 200-SMA (₹${r2(s200)}), 200-SMA rising`,
+    });
+  } else {
+    const issues = [];
+    if (!smasAligned) issues.push('SMAs not properly aligned');
+    if (!sma200Rising) issues.push('200-SMA not rising');
+    conditions.push({
+      name: 'SMA_ALIGNMENT',
+      met: false,
+      detail: issues.join('; ') + ` | 50:${r2(s50)} 150:${r2(s150)} 200:${r2(s200)}`,
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // CONDITION 3: Consolidation base detected
+  // ═══════════════════════════════════════════════════════
+  const base = detectConsolidationBase(highs, lows, closes, volumes, idx);
+
+  if (base && base.score >= 5) {
+    score++;
+    conditions.push({
+      name: 'CONSOLIDATION_BASE',
+      met: true,
+      detail: `${base.baseDays}-day base: ₹${r2(base.baseLow)}–₹${r2(base.baseHigh)} (range ${base.baseRangePct}), ` +
+        `tightening: ${base.isTightening ? 'YES' : 'NO'}, vol declining: ${base.volumeDeclining ? 'YES' : 'NO'}, ` +
+        `score: ${base.score}/${base.maxScore}`,
+    });
+  } else {
+    conditions.push({
+      name: 'CONSOLIDATION_BASE',
+      met: false,
+      detail: base
+        ? `Base found but weak (score ${base.score}/${base.maxScore}): ${base.baseDays} days, range ${base.baseRangePct}`
+        : 'No valid consolidation base detected',
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // CONDITION 4: Bollinger Bandwidth squeeze
+  // ═══════════════════════════════════════════════════════
+  const bb = calcBollingerBands(closes, CONFIG.BB_PERIOD, CONFIG.BB_STD_DEV);
+  const bwPercentile = calcBandwidthPercentile(bb.bandwidth, CONFIG.BB_LOOKBACK_DAYS);
+  const currentBW = bb.bandwidth[idx];
+
+  const isSqueezed = bwPercentile !== null && bwPercentile <= CONFIG.BB_SQUEEZE_PERCENTILE;
+
+  if (isSqueezed) {
+    score++;
+    conditions.push({
+      name: 'BB_SQUEEZE',
+      met: true,
+      detail: `Bandwidth percentile: ${r2(bwPercentile)}% (need ≤ ${CONFIG.BB_SQUEEZE_PERCENTILE}%), BW: ${r2(currentBW)}`,
+    });
+  } else {
+    conditions.push({
+      name: 'BB_SQUEEZE',
+      met: false,
+      detail: `Bandwidth percentile: ${bwPercentile !== null ? r2(bwPercentile) + '%' : 'N/A'} (not squeezed enough)`,
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // CONDITION 5: Price breaks above base high
+  // ═══════════════════════════════════════════════════════
+  const breakoutLevel = base ? base.baseHigh : null;
+  const priceBreaksOut = breakoutLevel !== null && closes[idx] > breakoutLevel;
+
+  if (priceBreaksOut) {
+    score++;
+    conditions.push({
+      name: 'PRICE_BREAKOUT',
+      met: true,
+      detail: `Close ₹${r2(closes[idx])} > base high ₹${r2(breakoutLevel)} (breakout by ${r2(((closes[idx] / breakoutLevel) - 1) * 100)}%)`,
+    });
+  } else {
+    conditions.push({
+      name: 'PRICE_BREAKOUT',
+      met: false,
+      detail: breakoutLevel !== null
+        ? `Close ₹${r2(closes[idx])} still below base high ₹${r2(breakoutLevel)}`
+        : 'No base high established',
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // CONDITION 6: Volume surge on breakout day
+  // ═══════════════════════════════════════════════════════
+  const avgVol = calcAvgVolume(volumes.slice(0, idx), CONFIG.VOLUME_AVG_PERIOD);
+  const breakoutVolume = volumes[idx];
+  const volumeRatio = avgVol && avgVol > 0 ? breakoutVolume / avgVol : null;
+
+  const hasVolumeSurge = volumeRatio !== null && volumeRatio >= CONFIG.BREAKOUT_VOLUME_MULTIPLIER;
+
+  if (hasVolumeSurge) {
+    score++;
+    conditions.push({
+      name: 'VOLUME_SURGE',
+      met: true,
+      detail: `Volume ${r2(volumeRatio)}× average (${breakoutVolume.toLocaleString()} vs avg ${Math.round(avgVol).toLocaleString()})`,
+    });
+  } else {
+    conditions.push({
+      name: 'VOLUME_SURGE',
+      met: false,
+      detail: `Volume only ${r2(volumeRatio)}× average (need ≥ ${CONFIG.BREAKOUT_VOLUME_MULTIPLIER}×)`,
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // CONDITION 7: Strong bullish candle
+  // ═══════════════════════════════════════════════════════
+  const candleRange = highs[idx] - lows[idx];
+  const candleBody = Math.abs(closes[idx] - opens[idx]);
+  const bodyRatio = candleRange > 0 ? candleBody / candleRange : 0;
+  const closeNearHigh = candleRange > 0 ? (closes[idx] - lows[idx]) / candleRange : 0;
+  const isBullish = closes[idx] > opens[idx];
+
+  const strongCandle =
+    isBullish &&
+    bodyRatio >= CONFIG.MIN_CANDLE_BODY_RATIO &&
+    closeNearHigh >= CONFIG.CLOSE_NEAR_HIGH_RATIO;
+
+  if (strongCandle) {
+    score++;
+    conditions.push({
+      name: 'STRONG_CANDLE',
+      met: true,
+      detail: `Bullish candle: body ratio ${r2(bodyRatio)}, close near high ${r2(closeNearHigh)}`,
+    });
+  } else {
+    const issues = [];
+    if (!isBullish) issues.push('bearish');
+    if (bodyRatio < CONFIG.MIN_CANDLE_BODY_RATIO) issues.push(`weak body (${r2(bodyRatio)})`);
+    if (closeNearHigh < CONFIG.CLOSE_NEAR_HIGH_RATIO) issues.push(`close not near high (${r2(closeNearHigh)})`);
+    conditions.push({
+      name: 'STRONG_CANDLE',
+      met: false,
+      detail: issues.join(', '),
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // OVERALL SIGNAL
+  // ═══════════════════════════════════════════════════════
+  // Need at least 5/7 with PRICE_BREAKOUT and VOLUME_SURGE mandatory
+  const triggered = score >= 5 && priceBreaksOut && hasVolumeSurge;
+
+  // ═══════════════════════════════════════════════════════
+  // VCP ANALYSIS (supplementary)
+  // ═══════════════════════════════════════════════════════
+  const vcp = detectVCP(highs, lows, closes);
+
+  // ═══════════════════════════════════════════════════════
+  // QUALITY SCORING
+  // ═══════════════════════════════════════════════════════
+  let qualityScore = 0;
+  const qualityFactors = [];
+
+  // Base quality
+  if (base && base.score >= 8) {
+    qualityScore += 3;
+    qualityFactors.push(`Excellent base quality (${base.score}/${base.maxScore})`);
+  } else if (base && base.score >= 6) {
+    qualityScore += 2;
+    qualityFactors.push(`Good base quality (${base.score}/${base.maxScore})`);
+  } else if (base && base.score >= 4) {
+    qualityScore += 1;
+    qualityFactors.push(`Adequate base (${base.score}/${base.maxScore})`);
+  }
+
+  // VCP detected (multi-contraction)
+  if (vcp && vcp.detected) {
+    qualityScore += 2;
+    qualityFactors.push(`VCP confirmed: ${vcp.contractions} contractions, tightening ratio ${vcp.tighteningRatio}`);
+  }
+
+  // Volume conviction
+  if (volumeRatio !== null && volumeRatio > 3) {
+    qualityScore += 2;
+    qualityFactors.push(`Exceptional volume: ${r2(volumeRatio)}× average`);
+  } else if (volumeRatio !== null && volumeRatio > 2.5) {
+    qualityScore += 1;
+    qualityFactors.push(`Strong volume: ${r2(volumeRatio)}× average`);
+  }
+
+  // Tight squeeze
+  if (bwPercentile !== null && bwPercentile < 10) {
+    qualityScore += 1;
+    qualityFactors.push(`Extreme squeeze: bandwidth at ${r2(bwPercentile)} percentile`);
+  }
+
+  // Delivery percentage (Indian-specific)
+  if (stock.deliveryPct !== undefined && stock.deliveryPct !== null) {
+    if (stock.deliveryPct >= CONFIG.PREFER_DELIVERY_PCT) {
+      qualityScore += 1;
+      qualityFactors.push(`Strong delivery: ${stock.deliveryPct}% (genuine buying)`);
+    } else if (stock.deliveryPct < CONFIG.MIN_DELIVERY_PCT) {
+      qualityScore -= 1;
+      qualityFactors.push(`⚠ Low delivery: ${stock.deliveryPct}% — breakout may be speculative`);
+    }
+  }
+
+  // Sector breakout amplification
+  if (stock.sectorIndex) {
+    const sectorBreaking = detectSectorBreakout(stock.sectorIndex);
+    if (sectorBreaking) {
+      qualityScore += 2;
+      qualityFactors.push('Sector index also breaking out — amplified signal');
+    }
+  }
+
+  // Prior uptrend strength
+  if (gain3m !== null && gain3m > 0.40) {
+    qualityScore += 1;
+    qualityFactors.push(`Strong prior trend: ${r2(gain3m * 100)}% in 3 months`);
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // TRADE PARAMETERS
+  // ═══════════════════════════════════════════════════════
+  let trade = null;
+
+  if (triggered && base) {
+    const entryPrice = closes[idx]; // or next day open
+
+    // Stop: below base low, or MAX_STOP_PCT, whichever is tighter
+    const baseLowStop = base.baseLow * 0.998; // slight buffer
+    const pctStop = entryPrice * (1 - CONFIG.MAX_STOP_PCT);
+    const stopLoss = Math.max(baseLowStop, pctStop); // tighter
+
+    const risk = entryPrice - stopLoss;
+    const riskPct = risk / entryPrice;
+
+    // Measured move target: base width added to breakout
+    const measuredMoveTarget = entryPrice + base.baseRange;
+
+    // ATR for additional reference
+    const atr = calcATR(highs, lows, closes, 14);
+    const latestATR = atr[idx];
+
+    trade = {
+      entryPrice: r2(entryPrice),
+      entryType: 'Breakout close or next day open',
+      stopLoss: r2(stopLoss),
+      stopMethod: `Below base low ₹${r2(base.baseLow)} or ${CONFIG.MAX_STOP_PCT * 100}% — tighter of the two`,
+      riskPct: r2(riskPct * 100) + '%',
+      riskPerShare: r2(risk),
+      measuredMoveTarget: r2(measuredMoveTarget),
+      measuredMoveReturn: r2(((measuredMoveTarget - entryPrice) / entryPrice) * 100) + '%',
+      riskReward: risk > 0 ? r2((measuredMoveTarget - entryPrice) / risk) + ':1' : 'N/A',
+      trailingStop: `10-EMA after +${CONFIG.TRAILING_ACTIVATION_PCT * 100}% gain`,
+      maxHoldingDays: CONFIG.MAX_HOLDING_DAYS,
+      partialExits: {
+        at1R: `Book ${CONFIG.PARTIAL_EXIT_AT_1R * 100}% at ₹${r2(entryPrice + risk)} (+${r2((risk / entryPrice) * 100)}%)`,
+        atTarget: `Book ${CONFIG.PARTIAL_EXIT_AT_TARGET * 100}% at ₹${r2(measuredMoveTarget)}`,
+        remainder: 'Trail with 10-EMA',
+      },
+      atr14: r2(latestATR),
+    };
+  }
+
+  return {
+    strategy: 'BREAKOUT_VCP',
+    symbol: stock.symbol,
+    date: currentDate,
+    triggered,
+    score,
+    totalConditions,
+    conditions,
+    baseAnalysis: base,
+    vcpAnalysis: vcp,
+    bbSqueezePercentile: bwPercentile !== null ? r2(bwPercentile) + '%' : null,
+    qualityScore,
+    maxQualityScore: 12,
+    qualityGrade: triggered
+      ? qualityScore >= 9 ? 'A+' : qualityScore >= 7 ? 'A' : qualityScore >= 5 ? 'B' : 'C'
+      : null,
+    qualityFactors,
+    indicators: {
+      close: r2(closes[idx]),
+      sma50: r2(s50),
+      sma150: r2(s150),
+      sma200: r2(s200),
+      bbBandwidth: r2(currentBW),
+      volumeRatio: r2(volumeRatio),
+      volatility: calcVolatility(closes) ? r2(calcVolatility(closes) * 100) + '%' : null,
+    },
+    trade,
+  };
+}
+
+/**
+ * Simple check: is the sector index itself breaking out?
+ */
+function detectSectorBreakout(sectorPrices) {
+  if (!sectorPrices || sectorPrices.length < 30) return false;
+
+  const len = sectorPrices.length;
+  const high20 = Math.max(...sectorPrices.slice(-21, -1));
+  const current = sectorPrices[len - 1];
+  const avgVol20 = 1; // simplified — in real implementation use sector volumes
+
+  return current > high20;
+}
+
+
+// ============================================================================
+// INDIAN MARKET FILTERS
+// ============================================================================
+
+function applyIndianFilters(stock) {
+  const warnings = [];
+  let pass = true;
+
+  // Turnover
+  if (stock.avgDailyTurnoverCr && stock.avgDailyTurnoverCr < CONFIG.MIN_AVG_TURNOVER_CR) {
+    return { pass: false, reason: `Turnover ₹${stock.avgDailyTurnoverCr}cr < ₹${CONFIG.MIN_AVG_TURNOVER_CR}cr` };
+  }
+
+  // Price range
+  const price = stock.closes ? stock.closes[stock.closes.length - 1] : 0;
+  if (price < CONFIG.MIN_PRICE) {
+    return { pass: false, reason: `Price ₹${r2(price)} below minimum ₹${CONFIG.MIN_PRICE}` };
+  }
+
+  // Delivery %
+  if (stock.deliveryPct !== undefined && stock.deliveryPct < CONFIG.MIN_DELIVERY_PCT) {
+    warnings.push(`Low delivery: ${stock.deliveryPct}% (breakout may be speculative/F&O driven)`);
+  }
+
+  // Mid-cap preference
+  if (CONFIG.PREFER_MIDCAP && stock.marketCap && stock.marketCap > 500000) {
+    warnings.push('Large-cap — breakouts may be less explosive');
+  }
+
+  return { pass, warnings };
+}
+
+
+// ============================================================================
+// UNIVERSE SCANNER
+// ============================================================================
+
+/**
+ * Scan universe for breakout setups
+ */
+function scanUniverse(universe, currentDate = null) {
+  const signals = [];
+  const nearBreakout = [];
+  const filtered = [];
+
+  for (const stock of universe) {
+    // Filters
+    const filterResult = applyIndianFilters(stock);
+    if (!filterResult.pass) {
+      filtered.push({ symbol: stock.symbol, reason: filterResult.reason });
+      continue;
+    }
+
+    // Analyze
+    const analysis = analyzeBreakout(stock, currentDate);
+
+    if (analysis.triggered) {
+      signals.push({
+        ...analysis,
+        warnings: filterResult.warnings || [],
+      });
+    } else if (analysis.score >= 4) {
+      // Near breakout — watchlist material
+      nearBreakout.push({
+        symbol: stock.symbol,
+        score: `${analysis.score}/${analysis.totalConditions}`,
+        missingConditions: analysis.conditions.filter(c => !c.met).map(c => c.name),
+        bbSqueeze: analysis.bbSqueezePercentile,
+        baseDetected: !!analysis.baseAnalysis,
+      });
+    }
+  }
+
+  // Sort by quality
+  signals.sort((a, b) => b.qualityScore - a.qualityScore);
+
+  return {
+    date: currentDate,
+    totalScanned: universe.length,
+    totalFiltered: filtered.length,
+    breakoutSignals: signals.length,
+    signals,
+    watchlist: nearBreakout.slice(0, 15),
+    filtered: filtered.slice(0, 10),
+  };
+}
+
+
+// ============================================================================
+// POSITION SIZING
+// ============================================================================
+
+function calcPositionSize(capital, entryPrice, stopLoss) {
+  if (entryPrice <= 0 || stopLoss <= 0 || stopLoss >= entryPrice) {
+    return { shares: 0, error: 'Invalid parameters' };
+  }
+
+  const riskPerShare = entryPrice - stopLoss;
+  const maxRisk = capital * CONFIG.RISK_PER_TRADE_PCT;
+  const sharesFromRisk = Math.floor(maxRisk / riskPerShare);
+  const maxShares = Math.floor((capital * CONFIG.MAX_POSITION_PCT) / entryPrice);
+  const shares = Math.min(sharesFromRisk, maxShares);
+
+  return {
+    shares,
+    positionValue: Math.round(shares * entryPrice),
+    riskPerShare: r2(riskPerShare),
+    totalRisk: Math.round(shares * riskPerShare),
+    riskPct: r2((shares * riskPerShare / capital) * 100) + '%',
+    positionPct: r2((shares * entryPrice / capital) * 100) + '%',
+    constraint: shares === maxShares ? 'MAX_POSITION_CAP' : 'RISK_BASED',
+  };
+}
+
+
+// ============================================================================
+// POSITION MONITORING
+// ============================================================================
+
+/**
+ * Monitor an open breakout position
+ *
+ * @param {Object} position
+ *   { symbol, entryPrice, stopLoss, baseLow, measuredMoveTarget,
+ *     daysSinceEntry, sharesRemaining, initialShares,
+ *     partialExits: { at1R: boolean, atTarget: boolean },
+ *     closesAfterEntry[], highsAfterEntry[], lowsAfterEntry[],
+ *     ema10AfterEntry[] (computed) }
+ *
+ * @returns {Object} action recommendation
+ */
+function monitorPosition(position) {
+  const {
+    entryPrice, stopLoss, measuredMoveTarget, daysSinceEntry,
+    initialShares, partialExits,
+    closesAfterEntry, highsAfterEntry, lowsAfterEntry,
+  } = position;
+
+  const len = closesAfterEntry.length;
+  if (len === 0) return { action: 'HOLD', reason: 'No data yet' };
+
+  const currentClose = closesAfterEntry[len - 1];
+  const currentLow = lowsAfterEntry[len - 1];
+  const currentHigh = highsAfterEntry[len - 1];
+  const pnlPct = (currentClose / entryPrice) - 1;
+  const risk = entryPrice - stopLoss;
+
+  // ── 1. STOP-LOSS HIT ──
+  if (currentLow <= stopLoss) {
+    return {
+      action: 'EXIT_ALL',
+      reason: 'STOP_LOSS_HIT',
+      exitPrice: stopLoss,
+      pnlPct: (stopLoss / entryPrice) - 1,
+      daysSinceEntry,
+      urgency: 'IMMEDIATE',
+    };
+  }
+
+  // ── 2. PARTIAL EXIT AT 1R (book 30%) ──
+  if (!partialExits.at1R && risk > 0) {
+    const target1R = entryPrice + risk;
+    if (currentHigh >= target1R) {
+      return {
+        action: 'PARTIAL_EXIT',
+        reason: 'TARGET_1R',
+        exitPrice: r2(target1R),
+        exitQtyPct: CONFIG.PARTIAL_EXIT_AT_1R,
+        pnlPct: (target1R / entryPrice) - 1,
+        note: `Book ${CONFIG.PARTIAL_EXIT_AT_1R * 100}% at 1R (₹${r2(target1R)}). Move stop to breakeven for remainder.`,
+        newStopLoss: entryPrice,
+      };
+    }
+  }
+
+  // ── 3. PARTIAL EXIT AT MEASURED MOVE TARGET (book 40%) ──
+  if (!partialExits.atTarget && measuredMoveTarget && partialExits.at1R) {
+    if (currentHigh >= measuredMoveTarget) {
+      return {
+        action: 'PARTIAL_EXIT',
+        reason: 'MEASURED_MOVE_TARGET',
+        exitPrice: r2(measuredMoveTarget),
+        exitQtyPct: CONFIG.PARTIAL_EXIT_AT_TARGET,
+        pnlPct: (measuredMoveTarget / entryPrice) - 1,
+        note: `Book ${CONFIG.PARTIAL_EXIT_AT_TARGET * 100}% at measured move target (₹${r2(measuredMoveTarget)}). Trail remainder with 10-EMA.`,
+      };
+    }
+  }
+
+  // ── 4. TRAILING STOP (10-EMA) after 10%+ gain ──
+  if (pnlPct >= CONFIG.TRAILING_ACTIVATION_PCT && partialExits.at1R) {
+    const ema10 = calcEMA(closesAfterEntry, CONFIG.TRAILING_EMA);
+    const currentEma10 = ema10[ema10.length - 1];
+
+    if (currentEma10 !== null && currentClose < currentEma10) {
+      return {
+        action: 'EXIT_ALL',
+        reason: 'TRAILING_10EMA',
+        exitPrice: currentClose,
+        pnlPct,
+        daysSinceEntry,
+        note: `Close ₹${r2(currentClose)} below 10-EMA ₹${r2(currentEma10)}`,
+      };
+    }
+  }
+
+  // ── 5. TIME STOP ──
+  if (daysSinceEntry >= CONFIG.MAX_HOLDING_DAYS) {
+    return {
+      action: 'EXIT_ALL',
+      reason: 'MAX_HOLDING_PERIOD',
+      exitPrice: currentClose,
+      pnlPct,
+      daysSinceEntry,
+    };
+  }
+
+  // ── 6. FAILED BREAKOUT DETECTION ──
+  // If stock falls back below breakout level within 3 days = failed breakout
+  if (daysSinceEntry <= 3 && position.breakoutLevel) {
+    if (currentClose < position.breakoutLevel * 0.98) {
+      return {
+        action: 'EXIT_ALL',
+        reason: 'FAILED_BREAKOUT',
+        exitPrice: currentClose,
+        pnlPct,
+        daysSinceEntry,
+        note: 'Price fell back below breakout level — false breakout',
+        urgency: 'HIGH',
+      };
+    }
+  }
+
+  // ── HOLD ──
+  const ema10 = calcEMA(closesAfterEntry, Math.min(CONFIG.TRAILING_EMA, len));
+  const currentEma10 = ema10[ema10.length - 1];
+
+  return {
+    action: 'HOLD',
+    daysSinceEntry,
+    pnlPct,
+    currentPrice: r2(currentClose),
+    highSinceEntry: r2(Math.max(...highsAfterEntry)),
+    stopLoss: r2(stopLoss),
+    ema10: currentEma10 ? r2(currentEma10) : null,
+    distanceToStop: r2(((currentClose - stopLoss) / currentClose) * 100) + '%',
+    distanceToTarget: measuredMoveTarget
+      ? r2(((measuredMoveTarget - currentClose) / currentClose) * 100) + '%'
+      : 'trailing',
+    daysRemaining: CONFIG.MAX_HOLDING_DAYS - daysSinceEntry,
+    partialExitsDone: {
+      at1R: partialExits.at1R,
+      atTarget: partialExits.atTarget,
+    },
+  };
+}
+
+
+// ============================================================================
+// BACKTEST ENGINE
+// ============================================================================
+
+/**
+ * Backtest breakout strategy
+ *
+ * @param {Object[]} dailySnapshots - for each scan day:
+ *   { date, stocks: [ { symbol, opens[], highs[], lows[], closes[], volumes[],
+ *     avgDailyTurnoverCr, deliveryPct } ] }
+ *   Each stock should have full history up to that date.
+ *
+ * @param {number} capitalBase
+ * @returns {Object} backtest results
+ */
+function runBacktest(dailySnapshots, capitalBase = 10000000) {
+  let capital = capitalBase;
+  const openPositions = [];
+  const closedTrades = [];
+  const equityCurve = [];
+  let peakEquity = capitalBase;
+  let maxDrawdown = 0;
+
+  for (let dayIdx = 0; dayIdx < dailySnapshots.length; dayIdx++) {
+    const { date, stocks } = dailySnapshots[dayIdx];
+
+    // ── Monitor existing positions ──
+    const toClose = [];
+
+    for (let p = 0; p < openPositions.length; p++) {
+      const pos = openPositions[p];
+      pos.daysSinceEntry++;
+
+      const stockData = stocks.find(s => s.symbol === pos.symbol);
+      if (!stockData) continue;
+
+      const sLen = stockData.closes.length;
+      const currentClose = stockData.closes[sLen - 1];
+      const currentHigh = stockData.highs[sLen - 1];
+      const currentLow = stockData.lows[sLen - 1];
+
+      pos.closesAfterEntry.push(currentClose);
+      pos.highsAfterEntry.push(currentHigh);
+      pos.lowsAfterEntry.push(currentLow);
+
+      const action = monitorPosition(pos);
+
+      if (action.action === 'EXIT_ALL') {
+        const exitPrice = typeof action.exitPrice === 'number' ? action.exitPrice : currentClose;
+        const pnl = (exitPrice - pos.entryPrice) * pos.sharesRemaining;
+        capital += exitPrice * pos.sharesRemaining;
+
+        const totalPnl = (pos.realizedPnl || 0) + pnl;
+        closedTrades.push({
+          symbol: pos.symbol,
+          entryDate: pos.entryDate,
+          exitDate: date,
+          entryPrice: r2(pos.entryPrice),
+          exitPrice: r2(exitPrice),
+          pnl: Math.round(totalPnl),
+          pnlPct: r2(((exitPrice / pos.entryPrice) - 1) * 100) + '%',
+          holdingDays: pos.daysSinceEntry,
+          exitReason: action.reason,
+          qualityGrade: pos.qualityGrade,
+          baseScore: pos.baseScore,
+          vcpDetected: pos.vcpDetected,
+        });
+
+        toClose.push(p);
+      } else if (action.action === 'PARTIAL_EXIT') {
+        const exitPrice = typeof action.exitPrice === 'number'
+          ? action.exitPrice : parseFloat(action.exitPrice);
+        const exitShares = Math.floor(pos.initialShares * action.exitQtyPct);
+        const partialPnl = (exitPrice - pos.entryPrice) * exitShares;
+        capital += exitPrice * exitShares;
+        pos.sharesRemaining -= exitShares;
+        pos.realizedPnl = (pos.realizedPnl || 0) + partialPnl;
+
+        if (action.reason === 'TARGET_1R') {
+          pos.partialExits.at1R = true;
+          if (action.newStopLoss) pos.stopLoss = action.newStopLoss;
+        } else if (action.reason === 'MEASURED_MOVE_TARGET') {
+          pos.partialExits.atTarget = true;
+        }
+      }
+    }
+
+    for (let i = toClose.length - 1; i >= 0; i--) {
+      openPositions.splice(toClose[i], 1);
+    }
+
+    // ── Scan for new entries (weekly) ──
+    if (dayIdx % 5 === 0 && openPositions.length < CONFIG.MAX_CONCURRENT_POSITIONS) {
+      const scanResult = scanUniverse(stocks, date);
+
+      const currentSymbols = new Set(openPositions.map(p => p.symbol));
+      const slotsAvail = CONFIG.MAX_CONCURRENT_POSITIONS - openPositions.length;
+
+      for (const signal of scanResult.signals.slice(0, slotsAvail)) {
+        if (currentSymbols.has(signal.symbol)) continue;
+        if (!signal.trade) continue;
+
+        const entryPrice = parseFloat(signal.trade.entryPrice);
+        const stopLoss = parseFloat(signal.trade.stopLoss);
+
+        if (isNaN(entryPrice) || isNaN(stopLoss) || entryPrice <= 0) continue;
+
+        const sizing = calcPositionSize(capital, entryPrice, stopLoss);
+        if (sizing.shares <= 0) continue;
+
+        capital -= sizing.positionValue;
+
+        openPositions.push({
+          symbol: signal.symbol,
+          entryDate: date,
+          entryPrice,
+          stopLoss,
+          breakoutLevel: signal.baseAnalysis ? signal.baseAnalysis.baseHigh : entryPrice,
+          measuredMoveTarget: signal.trade.measuredMoveTarget
+            ? parseFloat(signal.trade.measuredMoveTarget) : null,
+          initialShares: sizing.shares,
+          sharesRemaining: sizing.shares,
+          daysSinceEntry: 0,
+          partialExits: { at1R: false, atTarget: false },
+          realizedPnl: 0,
+          closesAfterEntry: [],
+          highsAfterEntry: [],
+          lowsAfterEntry: [],
+          qualityGrade: signal.qualityGrade,
+          baseScore: signal.baseAnalysis ? signal.baseAnalysis.score : null,
+          vcpDetected: signal.vcpAnalysis ? signal.vcpAnalysis.detected : false,
+        });
+      }
+    }
+
+    // ── Equity curve ──
+    let openValue = 0;
+    for (const pos of openPositions) {
+      if (pos.closesAfterEntry.length > 0) {
+        openValue += pos.closesAfterEntry[pos.closesAfterEntry.length - 1] * pos.sharesRemaining;
+      }
+    }
+
+    const totalEquity = capital + openValue;
+    if (totalEquity > peakEquity) peakEquity = totalEquity;
+    const dd = peakEquity > 0 ? (peakEquity - totalEquity) / peakEquity : 0;
+    if (dd > maxDrawdown) maxDrawdown = dd;
+
+    equityCurve.push({
+      date,
+      totalEquity: Math.round(totalEquity),
+      positions: openPositions.length,
+      drawdown: r2(dd * 100) + '%',
+    });
+  }
+
+  // Force-close remaining
+  for (const pos of openPositions) {
+    const exitPrice = pos.closesAfterEntry.length > 0
+      ? pos.closesAfterEntry[pos.closesAfterEntry.length - 1]
+      : pos.entryPrice;
+    const pnl = (exitPrice - pos.entryPrice) * pos.sharesRemaining + (pos.realizedPnl || 0);
+    capital += exitPrice * pos.sharesRemaining;
+
+    closedTrades.push({
+      symbol: pos.symbol,
+      entryDate: pos.entryDate,
+      exitDate: 'FORCED',
+      entryPrice: r2(pos.entryPrice),
+      exitPrice: r2(exitPrice),
+      pnl: Math.round(pnl),
+      pnlPct: r2(((exitPrice / pos.entryPrice) - 1) * 100) + '%',
+      holdingDays: pos.daysSinceEntry,
+      exitReason: 'BACKTEST_END',
+      qualityGrade: pos.qualityGrade,
+    });
+  }
+
+  return buildAnalytics(closedTrades, equityCurve, capitalBase, capital, maxDrawdown);
+}
+
+
+// ============================================================================
+// ANALYTICS
+// ============================================================================
+
+function buildAnalytics(trades, equityCurve, capitalBase, finalCapital, maxDrawdown) {
+  const total = trades.length;
+  const winners = trades.filter(t => t.pnl > 0);
+  const losers = trades.filter(t => t.pnl <= 0);
+  const winRate = total > 0 ? winners.length / total : 0;
+
+  const avgWin = winners.length > 0
+    ? winners.reduce((s, t) => s + parseFloat(t.pnlPct), 0) / winners.length : 0;
+  const avgLoss = losers.length > 0
+    ? Math.abs(losers.reduce((s, t) => s + parseFloat(t.pnlPct), 0) / losers.length) : 0;
+  const avgHold = total > 0
+    ? trades.reduce((s, t) => s + t.holdingDays, 0) / total : 0;
+
+  const grossProfit = winners.reduce((s, t) => s + t.pnl, 0);
+  const grossLoss = Math.abs(losers.reduce((s, t) => s + t.pnl, 0));
+  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : Infinity;
+  const expectancy = (winRate * avgWin) - ((1 - winRate) * avgLoss);
+
+  const totalReturn = (finalCapital / capitalBase) - 1;
+
+  // Sharpe/Sortino from weekly returns
+  const weeklyReturns = [];
+  for (let i = 5; i < equityCurve.length; i += 5) {
+    const prev = equityCurve[i - 5].totalEquity;
+    const curr = equityCurve[i].totalEquity;
+    if (prev > 0) weeklyReturns.push((curr / prev) - 1);
+  }
+
+  const sharpe = calcSharpeRatio(weeklyReturns, 52);
+  const sortino = calcSortinoRatio(weeklyReturns, 52);
+
+  // R-multiple analysis (unique to breakout trading)
+  const rMultiples = trades.map(t => {
+    const pnl = parseFloat(t.pnlPct);
+    const risk = parseFloat(t.pnlPct); // approximate — real impl tracks risk
+    return pnl; // simplified
+  });
+
+  // By exit reason
+  const byExitReason = groupAnalyze(trades, 'exitReason');
+
+  // By quality grade
+  const byGrade = groupAnalyze(trades, 'qualityGrade');
+
+  // By VCP detection
+  const byVCP = {
+    withVCP: analyzeSubset(trades.filter(t => t.vcpDetected)),
+    withoutVCP: analyzeSubset(trades.filter(t => !t.vcpDetected)),
+  };
+
+  // By base score
+  const byBaseScore = {
+    strong: analyzeSubset(trades.filter(t => t.baseScore >= 7)),
+    moderate: analyzeSubset(trades.filter(t => t.baseScore >= 4 && t.baseScore < 7)),
+    weak: analyzeSubset(trades.filter(t => t.baseScore < 4 || t.baseScore === null)),
+  };
+
+  // Win distribution (breakout strategies have fat-tailed winners)
+  const pnlDistribution = {
+    bigWinners: trades.filter(t => parseFloat(t.pnlPct) > 15).length,
+    moderateWinners: trades.filter(t => parseFloat(t.pnlPct) > 5 && parseFloat(t.pnlPct) <= 15).length,
+    smallWinners: trades.filter(t => parseFloat(t.pnlPct) > 0 && parseFloat(t.pnlPct) <= 5).length,
+    smallLosers: trades.filter(t => parseFloat(t.pnlPct) <= 0 && parseFloat(t.pnlPct) > -5).length,
+    bigLosers: trades.filter(t => parseFloat(t.pnlPct) <= -5).length,
+  };
+
+  // Streaks
+  let maxWin = 0, maxLose = 0, curWin = 0, curLose = 0;
+  for (const t of trades) {
+    if (t.pnl > 0) { curWin++; curLose = 0; maxWin = Math.max(maxWin, curWin); }
+    else { curLose++; curWin = 0; maxLose = Math.max(maxLose, curLose); }
+  }
+
+  return {
+    summary: {
+      startingCapital: capitalBase,
+      endingCapital: Math.round(finalCapital),
+      totalReturn: r2(totalReturn * 100) + '%',
+      totalTrades: total,
+      winners: winners.length,
+      losers: losers.length,
+      winRate: r2(winRate * 100) + '%',
+      avgWinPct: r2(avgWin) + '%',
+      avgLossPct: r2(avgLoss) + '%',
+      winLossRatio: avgLoss > 0 ? r2(avgWin / avgLoss) : 'N/A',
+      profitFactor: profitFactor !== Infinity ? r2(profitFactor) : 'N/A',
+      expectancy: r2(expectancy) + '%',
+      maxDrawdown: r2(maxDrawdown * 100) + '%',
+      avgHoldingDays: r2(avgHold),
+      sharpeRatio: sharpe !== null ? r2(sharpe) : 'N/A',
+      sortinoRatio: sortino !== null ? r2(sortino) : 'N/A',
+      maxWinStreak: maxWin,
+      maxLoseStreak: maxLose,
+    },
+    pnlDistribution,
+    byExitReason,
+    byQualityGrade: byGrade,
+    byVCPDetection: byVCP,
+    byBaseQuality: byBaseScore,
+    topWinners: [...trades].sort((a, b) => b.pnl - a.pnl).slice(0, 10).map(formatTrade),
+    topLosers: [...trades].sort((a, b) => a.pnl - b.pnl).slice(0, 10).map(formatTrade),
+    trades,
+    equityCurve,
+  };
+}
+
+function groupAnalyze(trades, field) {
+  const groups = {};
+  for (const t of trades) {
+    const key = t[field] || 'Unknown';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(t);
+  }
+  const result = {};
+  for (const [key, list] of Object.entries(groups)) {
+    result[key] = analyzeSubset(list);
+  }
+  return result;
+}
+
+function analyzeSubset(trades) {
+  if (!trades || trades.length === 0) return { count: 0 };
+  const wins = trades.filter(t => t.pnl > 0);
+  return {
+    count: trades.length,
+    winRate: r2((wins.length / trades.length) * 100) + '%',
+    avgPnlPct: r2(trades.reduce((s, t) => s + parseFloat(t.pnlPct), 0) / trades.length) + '%',
+    totalPnl: Math.round(trades.reduce((s, t) => s + t.pnl, 0)),
+    avgHoldDays: r2(trades.reduce((s, t) => s + t.holdingDays, 0) / trades.length),
+  };
+}
+
+function formatTrade(t) {
+  return {
+    symbol: t.symbol,
+    pnlPct: t.pnlPct,
+    holdingDays: t.holdingDays,
+    exitReason: t.exitReason,
+    grade: t.qualityGrade,
+    vcp: t.vcpDetected,
+  };
+}
+
+function calcSharpeRatio(returns, periodsPerYear) {
+  if (!returns || returns.length < 2) return null;
+  const mean = returns.reduce((s, r) => s + r, 0) / returns.length;
+  const std = Math.sqrt(returns.reduce((s, r) => s + (r - mean) ** 2, 0) / (returns.length - 1));
+  if (std === 0) return null;
+  return (mean * periodsPerYear - CONFIG.RISK_FREE_RATE) / (std * Math.sqrt(periodsPerYear));
+}
+
+function calcSortinoRatio(returns, periodsPerYear) {
+  if (!returns || returns.length < 2) return null;
+  const mean = returns.reduce((s, r) => s + r, 0) / returns.length;
+  const down = returns.filter(r => r < 0);
+  if (down.length === 0) return Infinity;
+  const dsDev = Math.sqrt(down.reduce((s, r) => s + r ** 2, 0) / down.length);
+  if (dsDev === 0) return Infinity;
+  return (mean * periodsPerYear - CONFIG.RISK_FREE_RATE) / (dsDev * Math.sqrt(periodsPerYear));
+}
+
+
+// ============================================================================
+// SENSITIVITY ANALYSIS
+// ============================================================================
+
+function sensitivityAnalysis(dailySnapshots, capitalBase = 10000000) {
+  const results = [];
+
+  // Volume multiplier
+  for (const vm of [1.5, 2.0, 2.5, 3.0]) {
+    const orig = CONFIG.BREAKOUT_VOLUME_MULTIPLIER;
+    CONFIG.BREAKOUT_VOLUME_MULTIPLIER = vm;
+    const bt = runBacktest(dailySnapshots, capitalBase);
+    results.push({
+      param: 'Volume Multiplier', value: `${vm}×`,
+      trades: bt.summary.totalTrades, winRate: bt.summary.winRate,
+      avgWin: bt.summary.avgWinPct, return: bt.summary.totalReturn,
+    });
+    CONFIG.BREAKOUT_VOLUME_MULTIPLIER = orig;
+  }
+
+  // Min prior gain
+  for (const gain of [0.10, 0.15, 0.20, 0.30, 0.40]) {
+    const orig = CONFIG.MIN_PRIOR_GAIN_3M;
+    CONFIG.MIN_PRIOR_GAIN_3M = gain;
+    const bt = runBacktest(dailySnapshots, capitalBase);
+    results.push({
+      param: 'Min Prior Gain', value: `${gain * 100}%`,
+      trades: bt.summary.totalTrades, winRate: bt.summary.winRate,
+      avgWin: bt.summary.avgWinPct, return: bt.summary.totalReturn,
+    });
+    CONFIG.MIN_PRIOR_GAIN_3M = orig;
+  }
+
+  // Max stop loss
+  for (const sl of [0.05, 0.07, 0.10, 0.12]) {
+    const orig = CONFIG.MAX_STOP_PCT;
+    CONFIG.MAX_STOP_PCT = sl;
+    const bt = runBacktest(dailySnapshots, capitalBase);
+    results.push({
+      param: 'Max Stop %', value: `${sl * 100}%`,
+      trades: bt.summary.totalTrades, winRate: bt.summary.winRate,
+      avgWin: bt.summary.avgWinPct, return: bt.summary.totalReturn,
+    });
+    CONFIG.MAX_STOP_PCT = orig;
+  }
+
+  // BB squeeze percentile
+  for (const pct of [10, 15, 20, 30, 40]) {
+    const orig = CONFIG.BB_SQUEEZE_PERCENTILE;
+    CONFIG.BB_SQUEEZE_PERCENTILE = pct;
+    const bt = runBacktest(dailySnapshots, capitalBase);
+    results.push({
+      param: 'BB Squeeze %ile', value: `≤${pct}%`,
+      trades: bt.summary.totalTrades, winRate: bt.summary.winRate,
+      avgWin: bt.summary.avgWinPct, return: bt.summary.totalReturn,
+    });
+    CONFIG.BB_SQUEEZE_PERCENTILE = orig;
+  }
+
+  return results;
+}
+
+
+// ============================================================================
+// UTILITY
+// ============================================================================
+
+function r2(n) {
+  return n !== null && n !== undefined && !isNaN(n) ? Math.round(n * 100) / 100 : null;
+}
+
+
+// ============================================================================
+// DEMO
+// ============================================================================
+
+function runDemo() {
+  console.log('═'.repeat(80));
+  console.log('  STRATEGY 6: BREAKOUT TRADING — DARVAS BOX / VCP');
+  console.log('═'.repeat(80));
+
+  // ── Generate mock data with realistic breakout pattern ──
+  function mockBreakoutStock(symbol, days, basePx) {
+    const o = [], h = [], l = [], c = [], v = [];
+
+    // Phase 1: Uptrend (first ~100 days, +30%)
+    let price = basePx;
+    for (let i = 0; i < 100; i++) {
+      const trend = 0.003 + (Math.random() - 0.4) * 0.02;
+      price *= (1 + trend);
+      const open = price * (1 + (Math.random() - 0.5) * 0.01);
+      const close = price;
+      o.push(open);
+      h.push(Math.max(open, close) * (1 + Math.random() * 0.01));
+      l.push(Math.min(open, close) * (1 - Math.random() * 0.01));
+      c.push(close);
+      v.push(Math.round(800000 + Math.random() * 400000));
+    }
+
+    // Phase 2: Consolidation (~25 days, tight range)
+    const consolidationHigh = price * 1.02;
+    const consolidationLow = price * 0.95;
+    for (let i = 0; i < 25; i++) {
+      // Tightening: range narrows over time
+      const tightFactor = 1 - (i / 25) * 0.6;
+      const range = (consolidationHigh - consolidationLow) * tightFactor;
+      const mid = (consolidationHigh + consolidationLow) / 2;
+
+      const close = mid + (Math.random() - 0.5) * range;
+      const open = mid + (Math.random() - 0.5) * range * 0.8;
+      o.push(open);
+      h.push(Math.max(open, close) + Math.random() * range * 0.2);
+      l.push(Math.min(open, close) - Math.random() * range * 0.2);
+      c.push(close);
+      // Volume declining
+      v.push(Math.round(600000 * (1 - i * 0.02) + Math.random() * 200000));
+    }
+
+    // Phase 3: Breakout day
+    const breakoutOpen = consolidationHigh * 1.01;
+    const breakoutClose = consolidationHigh * 1.04;
+    o.push(breakoutOpen);
+    h.push(breakoutClose * 1.005);
+    l.push(breakoutOpen * 0.995);
+    c.push(breakoutClose);
+    v.push(Math.round(2000000 + Math.random() * 1000000)); // volume surge
+
+    // Phase 4: Follow-through (~20 days)
+    price = breakoutClose;
+    for (let i = 0; i < Math.min(20, days - 126); i++) {
+      const trend = 0.005 + (Math.random() - 0.4) * 0.02;
+      price *= (1 + trend);
+      const open = price * (1 + (Math.random() - 0.5) * 0.01);
+      const close = price;
+      o.push(open);
+      h.push(Math.max(open, close) * (1 + Math.random() * 0.01));
+      l.push(Math.min(open, close) * (1 - Math.random() * 0.01));
+      c.push(close);
+      v.push(Math.round(900000 + Math.random() * 600000));
+    }
+
+    // Fill remaining days if needed
+    while (c.length < days) {
+      const prev = c[c.length - 1];
+      price = prev * (1 + (Math.random() - 0.5) * 0.02);
+      o.push(price * 0.999);
+      h.push(price * 1.01);
+      l.push(price * 0.99);
+      c.push(price);
+      v.push(Math.round(700000 + Math.random() * 300000));
+    }
+
+    return {
+      symbol, opens: o, highs: h, lows: l, closes: c, volumes: v,
+      avgDailyTurnoverCr: 8 + Math.random() * 20,
+      deliveryPct: 40 + Math.random() * 25,
+    };
+  }
+
+  function mockGenericStock(symbol, days, basePx, trend, noise) {
+    const o = [], h = [], l = [], c = [], v = [];
+    let price = basePx;
+    for (let i = 0; i < days; i++) {
+      price *= (1 + trend + (Math.random() - 0.5) * noise);
+      const open = price * (1 + (Math.random() - 0.5) * noise * 0.3);
+      o.push(open); h.push(Math.max(open, price) * (1 + Math.random() * noise * 0.3));
+      l.push(Math.min(open, price) * (1 - Math.random() * noise * 0.3));
+      c.push(price); v.push(Math.round(500000 + Math.random() * 500000));
+    }
+    return {
+      symbol, opens: o, highs: h, lows: l, closes: c, volumes: v,
+      avgDailyTurnoverCr: 5 + Math.random() * 15,
+      deliveryPct: 35 + Math.random() * 20,
+    };
+  }
+
+  const DAYS = 200;
+
+  // Stocks with breakout patterns
+  const tatamotors = mockBreakoutStock('TATAMOTORS', DAYS, 400);
+  const hindalco = mockBreakoutStock('HINDALCO', DAYS, 500);
+
+  // Regular stocks (no breakout)
+  const reliance = mockGenericStock('RELIANCE', DAYS, 2500, 0.001, 0.02);
+  const tcs = mockGenericStock('TCS', DAYS, 3500, 0.0005, 0.018);
+  const infy = mockGenericStock('INFY', DAYS, 1400, 0.0008, 0.022);
+  const sbin = mockGenericStock('SBI', DAYS, 650, 0.002, 0.03);
+  const bajfin = mockGenericStock('BAJFINANCE', DAYS, 7000, 0.0015, 0.035);
+  const titan = mockGenericStock('TITAN', DAYS, 3200, 0.001, 0.025);
+
+  const universe = [tatamotors, hindalco, reliance, tcs, infy, sbin, bajfin, titan];
+
+
+  // ====== 1. SINGLE STOCK BREAKOUT ANALYSIS ======
+  console.log('\n' + '─'.repeat(80));
+  console.log('  1. BREAKOUT ANALYSIS — TATAMOTORS');
+  console.log('─'.repeat(80));
+
+  const analysis = analyzeBreakout(tatamotors, '2024-06-15');
+
+  console.log(`\n  TRIGGERED: ${analysis.triggered ? '✅ YES' : '❌ NO'}`);
+  console.log(`  Score: ${analysis.score}/${analysis.totalConditions}`);
+  console.log(`  Quality: ${analysis.qualityScore}/${analysis.maxQualityScore} (Grade: ${analysis.qualityGrade || '-'})`);
+
+  console.log('\n  CONDITIONS:');
+  for (const c of analysis.conditions) {
+    console.log(`    ${c.met ? '✓' : '✗'} [${c.name}] ${c.detail}`);
+  }
+
+  console.log('\n  BASE ANALYSIS:');
+  if (analysis.baseAnalysis) {
+    const b = analysis.baseAnalysis;
+    console.log(`    Duration: ${b.baseDays} days`);
+    console.log(`    Range: ₹${r2(b.baseLow)} – ₹${r2(b.baseHigh)} (${b.baseRangePct})`);
+    console.log(`    Tightening: ${b.isTightening ? 'YES' : 'NO'} (ratio: ${b.tighteningRatio})`);
+    console.log(`    Volume declining: ${b.volumeDeclining ? 'YES' : 'NO'}`);
+    console.log(`    Lower highs: ${b.lowerHighs}`);
+    console.log(`    Base score: ${b.score}/${b.maxScore}`);
+  } else {
+    console.log('    No base detected');
+  }
+
+  console.log('\n  VCP ANALYSIS:');
+  if (analysis.vcpAnalysis && analysis.vcpAnalysis.detected) {
+    const v = analysis.vcpAnalysis;
+    console.log(`    VCP detected: ${v.contractions} contractions`);
+    console.log(`    Tightening ratio: ${v.tighteningRatio}`);
+    v.contractionsDetail.forEach(c =>
+      console.log(`      ${c.number}: range ${c.rangePct}`)
+    );
+  } else {
+    console.log('    No VCP pattern');
+  }
+
+  console.log(`\n  BB Squeeze: ${analysis.bbSqueezePercentile || 'N/A'}`);
+
+  console.log('\n  QUALITY FACTORS:');
+  analysis.qualityFactors.forEach(f => console.log(`    • ${f}`));
+
+  console.log('\n  INDICATORS:');
+  Object.entries(analysis.indicators).forEach(([k, v]) =>
+    console.log(`    ${k}: ${v}`)
+  );
+
+  if (analysis.trade) {
+    console.log('\n  TRADE PLAN:');
+    console.log(`    Entry: ₹${analysis.trade.entryPrice} (${analysis.trade.entryType})`);
+    console.log(`    Stop: ₹${analysis.trade.stopLoss} (${analysis.trade.stopMethod})`);
+    console.log(`    Risk: ${analysis.trade.riskPct} (₹${analysis.trade.riskPerShare}/share)`);
+    console.log(`    Measured Move Target: ₹${analysis.trade.measuredMoveTarget} (${analysis.trade.measuredMoveReturn})`);
+    console.log(`    R:R: ${analysis.trade.riskReward}`);
+    console.log(`    Trailing: ${analysis.trade.trailingStop}`);
+    console.log(`    Max Hold: ${analysis.trade.maxHoldingDays} days`);
+    console.log('    Partial Exits:');
+    Object.entries(analysis.trade.partialExits).forEach(([k, v]) =>
+      console.log(`      ${k}: ${v}`)
+    );
+  }
+
+
+  // ====== 2. UNIVERSE SCAN ======
+  console.log('\n' + '─'.repeat(80));
+  console.log('  2. UNIVERSE SCAN');
+  console.log('─'.repeat(80));
+
+  const scanResult = scanUniverse(universe, '2024-06-15');
+
+  console.log(`\n  Scanned: ${scanResult.totalScanned}`);
+  console.log(`  Filtered: ${scanResult.totalFiltered}`);
+  console.log(`  Breakout Signals: ${scanResult.breakoutSignals}`);
+
+  if (scanResult.signals.length > 0) {
+    console.log('\n  TRIGGERED:');
+    for (const sig of scanResult.signals) {
+      console.log(`    ${sig.symbol} — Grade ${sig.qualityGrade} (${sig.qualityScore}/${sig.maxQualityScore}), Score ${sig.score}/${sig.totalConditions}`);
+      if (sig.trade) {
+        console.log(`      Entry ₹${sig.trade.entryPrice}, Stop ₹${sig.trade.stopLoss}, Target ₹${sig.trade.measuredMoveTarget}, R:R ${sig.trade.riskReward}`);
+      }
+      if (sig.warnings && sig.warnings.length > 0) {
+        sig.warnings.forEach(w => console.log(`      ⚠ ${w}`));
+      }
+    }
+  }
+
+  if (scanResult.watchlist.length > 0) {
+    console.log('\n  WATCHLIST (near breakout):');
+    for (const w of scanResult.watchlist.slice(0, 5)) {
+      console.log(`    ${w.symbol} — ${w.score}, Missing: ${w.missingConditions.join(', ')}, BB: ${w.bbSqueeze}, Base: ${w.baseDetected ? 'YES' : 'NO'}`);
+    }
+  }
+
+
+  // ====== 3. POSITION SIZING ======
+  console.log('\n' + '─'.repeat(80));
+  console.log('  3. POSITION SIZING');
+  console.log('─'.repeat(80));
+
+  const sizing = calcPositionSize(10000000, 670, 615);
+  console.log(`\n  Capital: ₹1,00,00,000`);
+  console.log(`  Entry: ₹670 | Stop: ₹615 (base low)`);
+  console.log(`  Shares: ${sizing.shares}`);
+  console.log(`  Position: ₹${sizing.positionValue.toLocaleString('en-IN')} (${sizing.positionPct})`);
+  console.log(`  Risk: ₹${sizing.totalRisk.toLocaleString('en-IN')} (${sizing.riskPct})`);
+  console.log(`  Constraint: ${sizing.constraint}`);
+
+
+  // ====== 4. POSITION MONITORING ======
+  console.log('\n' + '─'.repeat(80));
+  console.log('  4. POSITION MONITORING');
+  console.log('─'.repeat(80));
+
+  const scenarios = [
+    {
+      label: 'Day 3 — trending up, approaching 1R',
+      pos: {
+        entryPrice: 670, stopLoss: 615, breakoutLevel: 660,
+        measuredMoveTarget: 720, daysSinceEntry: 3, initialShares: 200,
+        sharesRemaining: 200, partialExits: { at1R: false, atTarget: false },
+        closesAfterEntry: [680, 695, 720],
+        highsAfterEntry: [685, 700, 725],
+        lowsAfterEntry: [668, 690, 695],
+      },
+    },
+    {
+      label: 'Day 1 — failed breakout (fell back)',
+      pos: {
+        entryPrice: 670, stopLoss: 615, breakoutLevel: 660,
+        measuredMoveTarget: 720, daysSinceEntry: 1, initialShares: 200,
+        sharesRemaining: 200, partialExits: { at1R: false, atTarget: false },
+        closesAfterEntry: [645],
+        highsAfterEntry: [672],
+        lowsAfterEntry: [640],
+      },
+    },
+    {
+      label: 'Day 8 — hit 1R, partial exit',
+      pos: {
+        entryPrice: 670, stopLoss: 615, breakoutLevel: 660,
+        measuredMoveTarget: 720, daysSinceEntry: 8, initialShares: 200,
+        sharesRemaining: 200, partialExits: { at1R: false, atTarget: false },
+        closesAfterEntry: [680, 690, 700, 710, 715, 720, 722, 725],
+        highsAfterEntry: [685, 695, 705, 715, 720, 725, 728, 730],
+        lowsAfterEntry: [675, 685, 695, 705, 710, 715, 718, 720],
+      },
+    },
+    {
+      label: 'Day 12 — after 1R exit, trailing with 10-EMA, up 12%',
+      pos: {
+        entryPrice: 670, stopLoss: 670, breakoutLevel: 660,
+        measuredMoveTarget: 720, daysSinceEntry: 12, initialShares: 200,
+        sharesRemaining: 140, partialExits: { at1R: true, atTarget: false },
+        closesAfterEntry: [680, 690, 700, 710, 720, 730, 740, 745, 750, 748, 742, 735],
+        highsAfterEntry: [685, 695, 705, 715, 725, 735, 745, 750, 755, 752, 748, 740],
+        lowsAfterEntry: [675, 685, 695, 705, 715, 725, 735, 740, 745, 742, 738, 730],
+      },
+    },
+    {
+      label: 'Day 5 — stop loss hit',
+      pos: {
+        entryPrice: 670, stopLoss: 615, breakoutLevel: 660,
+        measuredMoveTarget: 720, daysSinceEntry: 5, initialShares: 200,
+        sharesRemaining: 200, partialExits: { at1R: false, atTarget: false },
+        closesAfterEntry: [665, 655, 640, 625, 610],
+        highsAfterEntry: [672, 660, 645, 630, 620],
+        lowsAfterEntry: [660, 650, 635, 618, 605],
+      },
+    },
+  ];
+
+  for (const s of scenarios) {
+    const result = monitorPosition(s.pos);
+    console.log(`\n  ${s.label}:`);
+    console.log(`    → ${result.action} ${result.reason || ''}`);
+    if (result.pnlPct !== undefined) {
+      const pnl = typeof result.pnlPct === 'number' ? result.pnlPct : parseFloat(result.pnlPct);
+      console.log(`    → P&L: ${r2(pnl * 100)}%`);
+    }
+    if (result.note) console.log(`    → ${result.note}`);
+    if (result.exitQtyPct) console.log(`    → Exit ${result.exitQtyPct * 100}% of position`);
+  }
+
+
+  // ====== 5. BACKTEST ======
+  console.log('\n' + '─'.repeat(80));
+  console.log('  5. BACKTEST SIMULATION');
+  console.log('─'.repeat(80));
+
+  // Build daily snapshots
+  const dailySnapshots = [];
+  for (let day = 0; day < 80; day++) {
+    const dateStr = new Date(2024, 0, 2 + day).toISOString().slice(0, 10);
+
+    const dayStocks = universe.map(s => ({
+      ...s,
+      opens: s.opens.slice(0, day + CONFIG.SMA_SLOW + 30),
+      highs: s.highs.slice(0, day + CONFIG.SMA_SLOW + 30),
+      lows: s.lows.slice(0, day + CONFIG.SMA_SLOW + 30),
+      closes: s.closes.slice(0, day + CONFIG.SMA_SLOW + 30),
+      volumes: s.volumes.slice(0, day + CONFIG.SMA_SLOW + 30),
+    })).filter(s => s.closes.length >= CONFIG.SMA_SLOW + 20);
+
+    if (dayStocks.length > 0) {
+      dailySnapshots.push({ date: dateStr, stocks: dayStocks });
+    }
+  }
+
+  if (dailySnapshots.length > 0) {
+    const btResults = runBacktest(dailySnapshots, 10000000);
+
+    console.log('\n  PERFORMANCE:');
+    Object.entries(btResults.summary).forEach(([k, v]) =>
+      console.log(`    ${k}: ${v}`)
+    );
+
+    console.log('\n  P&L DISTRIBUTION:');
+    Object.entries(btResults.pnlDistribution).forEach(([k, v]) =>
+      console.log(`    ${k}: ${v} trades`)
+    );
+
+    console.log('\n  BY EXIT REASON:');
+    Object.entries(btResults.byExitReason).forEach(([reason, stats]) => {
+      if (stats.count > 0)
+        console.log(`    ${reason}: ${stats.count} trades, WR ${stats.winRate}, Avg ${stats.avgPnlPct}`);
+    });
+
+    if (Object.keys(btResults.byQualityGrade).length > 0) {
+      console.log('\n  BY QUALITY GRADE:');
+      Object.entries(btResults.byQualityGrade).forEach(([grade, stats]) => {
+        if (stats.count > 0)
+          console.log(`    ${grade}: ${stats.count} trades, WR ${stats.winRate}, Avg ${stats.avgPnlPct}`);
+      });
+    }
+
+    console.log('\n  VCP vs NON-VCP:');
+    console.log(`    With VCP: ${JSON.stringify(btResults.byVCPDetection.withVCP)}`);
+    console.log(`    Without: ${JSON.stringify(btResults.byVCPDetection.withoutVCP)}`);
+
+    console.log('\n  BY BASE QUALITY:');
+    Object.entries(btResults.byBaseQuality).forEach(([q, stats]) => {
+      if (stats.count > 0)
+        console.log(`    ${q}: ${stats.count} trades, WR ${stats.winRate}, Avg ${stats.avgPnlPct}`);
+    });
+
+    if (btResults.topWinners.length > 0) {
+      console.log('\n  TOP WINNERS:');
+      btResults.topWinners.slice(0, 5).forEach(t =>
+        console.log(`    ${t.symbol} ${t.pnlPct} in ${t.holdingDays}d [${t.grade}] VCP:${t.vcp} — ${t.exitReason}`)
+      );
+    }
+
+    if (btResults.topLosers.length > 0) {
+      console.log('\n  TOP LOSERS:');
+      btResults.topLosers.slice(0, 5).forEach(t =>
+        console.log(`    ${t.symbol} ${t.pnlPct} in ${t.holdingDays}d [${t.grade}] — ${t.exitReason}`)
+      );
+    }
+
+    console.log(`\n  Equity curve: ${btResults.equityCurve.length} points`);
+  }
+
+  console.log('\n' + '═'.repeat(80));
+  console.log('  BREAKOUT STRATEGY ANALYSIS COMPLETE');
+  console.log('═'.repeat(80));
+}
+
+
+// ============================================================================
+// EXPORTS
+// ============================================================================
+
+module.exports = {
+  CONFIG,
+
+  // Indicators
+  calcSMA, calcEMA, calcATR, calcBollingerBands,
+  calcBandwidthPercentile, calcChannelHighLow,
+  calcVolatility, calcReturn, calcAvgVolume,
+
+  // Pattern detection
+  detectConsolidationBase,
+  detectVCP,
+  findSwingPoints,
+  detectSectorBreakout,
+
+  // Signal analysis
+  analyzeBreakout,
+
+  // Filters
+  applyIndianFilters,
+
+  // Scanner
+  scanUniverse,
+
+  // Position management
+  calcPositionSize,
+  monitorPosition,
+
+  // Backtesting
+  runBacktest,
+
+  // Analytics
+  sensitivityAnalysis,
+};
+
+if (require.main === module) {
+  runDemo();
+}
+```
+
+Run with `node breakout-strategy.js`. Every specification element mapped:
+
+---
+
+**Consolidation Base Detection (`detectConsolidationBase`):**
+- Scans 15-30 day windows for the best base candidate
+- Measures **tightening** — splits base in half, checks if second-half range ≤ 60% of first-half (lower highs, similar lows)
+- **Volume decline** during base — second-half avg volume ≤ 70% of first-half (sellers exhausted)
+- Range cap at 15% (not too loose)
+- Lower highs detection (descending resistance pattern)
+- 11-point scoring system per base candidate, picks the best
+
+**VCP Detection (`detectVCP`):**
+- Dedicated Minervini VCP engine finding multiple contractions (T1→T2→T3)
+- Verifies each contraction is tighter than the previous one
+- Computes tightening ratio between first and last contraction
+- Used as a quality amplifier in the signal scoring
+
+**All 7 breakout conditions checked:**
+1. **Prior uptrend ≥ 20% in 3 months** (measured before the base, not including consolidation)
+2. **SMA alignment** — Price > 50 > 150 > 200-SMA, with 200-SMA rising
+3. **Consolidation base** — with minimum quality score threshold
+4. **Bollinger Bandwidth squeeze** — current bandwidth in bottom 20th percentile of 6-month range
+5. **Price closes above base high** — the actual breakout
+6. **Volume ≥ 2× average** on breakout day
+7. **Strong bullish candle** — body ratio ≥ 0.50, close near high ≥ 0.70
+
+Signal requires 5/7 with breakout and volume mandatory.
+
+**Trade management with 3-tier partial exits:**
+- **30% at 1R** (risk = entry − base low), then move stop to breakeven
+- **40% at measured move target** (base width added to breakout)
+- **Remainder trailed with 10-EMA** after +10% gain
+
+**Failed breakout detection** — if price falls back below breakout level within 3 days, immediate exit.
+
+**Indian-specific filters:**
+- Delivery % check (< 35% = suspect breakout, likely speculative/F&O driven)
+- Mid-cap preference flag
+- Sector breakout amplification — if the sector index is also breaking out, quality score boosted
+
+**Quality scoring (12-point):** base quality, VCP confirmation, volume intensity, squeeze extremity, delivery %, sector breakout alignment, prior trend strength. Grades A+ through C.
+
+**Analytics unique to breakout trading:**
+- **P&L distribution** (big winners / moderate / small / small losers / big losers) — captures the fat-tail characteristic
+- **VCP vs non-VCP** performance comparison
+- **Base quality** buckets (strong/moderate/weak)
+- Sensitivity: volume multiplier, min prior gain, max stop %, BB squeeze percentile
