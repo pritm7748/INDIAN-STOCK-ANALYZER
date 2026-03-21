@@ -174,6 +174,14 @@ export default function StrategyAnalysisPage() {
     const [vwapStatusMsg, setVwapStatusMsg] = useState('')
     const vwapAbortRef = useRef<AbortController | null>(null)
 
+    // Gap Trading (Intraday) state
+    const [gapScanning, setGapScanning] = useState(false)
+    const [gapResult, setGapResult] = useState<any>(null)
+    const [gapError, setGapError] = useState('')
+    const [gapProgress, setGapProgress] = useState<ScanProgress | null>(null)
+    const [gapStatusMsg, setGapStatusMsg] = useState('')
+    const gapAbortRef = useRef<AbortController | null>(null)
+
     const timeframes = [
         { id: '1D', label: 'Intraday', available: true },
         { id: '1W', label: '1 Week', available: false },
@@ -300,6 +308,77 @@ export default function StrategyAnalysisPage() {
         vwapAbortRef.current?.abort()
         setVwapScanning(false)
         setVwapStatusMsg('Scan stopped')
+    }, [])
+
+    const runGap = useCallback(async () => {
+        setGapScanning(true)
+        setGapError('')
+        setGapResult(null)
+        setGapProgress(null)
+        setGapStatusMsg('Connecting...')
+
+        const abort = new AbortController()
+        gapAbortRef.current = abort
+
+        try {
+            const res = await fetch('/api/strategy/gap', { signal: abort.signal })
+            if (!res.ok || !res.body) throw new Error('Failed to connect')
+
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+            let currentEvent = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        currentEvent = line.slice(7).trim()
+                    } else if (line.startsWith('data: ') && currentEvent) {
+                        try {
+                            const data = JSON.parse(line.slice(6))
+                            switch (currentEvent) {
+                                case 'status':
+                                    setGapStatusMsg(data.message || '')
+                                    break
+                                case 'progress':
+                                    setGapProgress(data)
+                                    setGapStatusMsg(`Scanning... ${data.scanned}/${data.total} stocks (${data.pct}%)`)
+                                    break
+                                case 'result':
+                                    setGapResult(data)
+                                    setGapStatusMsg('Analysis complete!')
+                                    break
+                                case 'error':
+                                    setGapError(data.message)
+                                    break
+                                case 'done':
+                                    break
+                            }
+                        } catch { /* skip */ }
+                        currentEvent = ''
+                    }
+                }
+            }
+        } catch (err: any) {
+            if (err.name !== 'AbortError') {
+                setGapError(err.message || 'Something went wrong')
+            }
+        } finally {
+            setGapScanning(false)
+        }
+    }, [])
+
+    const stopGapScan = useCallback(() => {
+        gapAbortRef.current?.abort()
+        setGapScanning(false)
+        setGapStatusMsg('Scan stopped')
     }, [])
 
     const runSectorRotation = useCallback(async () => {
@@ -3136,6 +3215,240 @@ export default function StrategyAnalysisPage() {
                                             <span>❌ Errors: {vwapResult.fetchStats.failedFetches}</span>
                                             <span>📊 Backtests: {vwapResult.totalWithBacktest}</span>
                                             <span>⚡ Signals: {vwapResult.totalWithSignals}</span>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Strategy 3: Gap Trading */}
+                    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-6 hover:border-amber-500/30 transition-all">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-gradient-to-br from-amber-500/20 to-orange-500/20 rounded-xl flex items-center justify-center">
+                                    <TrendingUp size={20} className="text-amber-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-bold text-[var(--foreground)]">Gap Trading</h3>
+                                    <p className="text-[10px] text-[var(--foreground-muted)]">Gap &amp; Go + Gap Fill · Catalyst Scoring · ORB Breakout · All 500+ stocks</p>
+                                </div>
+                            </div>
+                            {gapScanning ? (
+                                <button onClick={stopGapScan} className="flex items-center gap-1.5 bg-red-500/10 text-red-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-all">
+                                    <StopCircle size={14} /> Stop
+                                </button>
+                            ) : (
+                                <button onClick={runGap} className="flex items-center gap-1.5 bg-amber-500/10 text-amber-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-amber-500/20 transition-all">
+                                    <Play size={14} /> Scan
+                                </button>
+                            )}
+                        </div>
+
+                        {gapScanning && (
+                            <div className="mb-4">
+                                <p className="text-xs text-amber-300 mb-2">{gapStatusMsg}</p>
+                                {gapProgress && (
+                                    <div className="w-full bg-[var(--background)] rounded-full h-1.5">
+                                        <div className="bg-gradient-to-r from-amber-500 to-orange-500 h-1.5 rounded-full transition-all" style={{ width: `${gapProgress.pct}%` }} />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {gapError && (
+                            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-4">
+                                <p className="text-xs text-red-400">{gapError}</p>
+                            </div>
+                        )}
+
+                        {gapResult && (
+                            <div className="space-y-4">
+                                {/* Summary Stats */}
+                                <div className="grid grid-cols-5 gap-3">
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-amber-400">{gapResult.totalSuccessful || 0}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Fetched</p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-orange-400">{gapResult.totalGapsToday || 0}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Gaps Today</p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-green-400">{gapResult.totalWithSignals || 0}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Signals</p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-yellow-400">{gapResult.totalWithBacktest || 0}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Backtests</p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-red-400">{gapResult.fetchStats?.failedFetches || 0}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Errors</p>
+                                    </div>
+                                </div>
+
+                                {/* Today's Gap Signals */}
+                                {gapResult.activeSignals && gapResult.activeSignals.length > 0 ? (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-amber-400 mb-3 flex items-center gap-1.5">
+                                            <Sparkles size={14} /> Today&apos;s Gap Signals
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="pb-2 pr-3">Symbol</th>
+                                                        <th className="pb-2 pr-3">Strategy</th>
+                                                        <th className="pb-2 pr-3">Gap</th>
+                                                        <th className="pb-2 pr-3">Dir</th>
+                                                        <th className="pb-2 pr-3">Entry</th>
+                                                        <th className="pb-2 pr-3">SL</th>
+                                                        <th className="pb-2 pr-3">Fill Target</th>
+                                                        <th className="pb-2 pr-3">P&L</th>
+                                                        <th className="pb-2">Exit</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {gapResult.activeSignals.map((s: any, idx: number) => (
+                                                        s.todaySignals?.map((sig: any, sIdx: number) => (
+                                                            <tr key={`${idx}-${sIdx}`} className="border-b border-[var(--card-border)]/30">
+                                                                <td className="py-2 pr-3 font-medium text-[var(--foreground)]">
+                                                                    {s.symbol}
+                                                                    {s.isHighBeta && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300">F&O</span>}
+                                                                </td>
+                                                                <td className="py-2 pr-3">
+                                                                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${sig.strategy === 'GAP_AND_GO' ? 'bg-green-500/15 text-green-400' : 'bg-blue-500/15 text-blue-400'}`}>
+                                                                        {sig.strategy === 'GAP_AND_GO' ? 'Gap&Go' : 'Gap Fill'}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="py-2 pr-3">
+                                                                    <span className={`text-[9px] px-1.5 py-0.5 rounded ${sig.gapType?.includes('UP') ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                                                                        {sig.gapSizeLabel}
+                                                                    </span>
+                                                                </td>
+                                                                <td className={`py-2 pr-3 font-medium ${sig.direction === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>
+                                                                    {sig.direction}
+                                                                </td>
+                                                                <td className="py-2 pr-3 text-[var(--foreground)]">₹{sig.entryPrice}</td>
+                                                                <td className="py-2 pr-3 text-red-400">₹{sig.sl}</td>
+                                                                <td className="py-2 pr-3 text-amber-400">{sig.gapFillTarget ? `₹${sig.gapFillTarget}` : '—'}</td>
+                                                                <td className={`py-2 pr-3 font-medium ${sig.pnlPct != null ? (sig.pnlPct >= 0 ? 'text-green-400' : 'text-red-400') : 'text-[var(--foreground-muted)]'}`}>
+                                                                    {sig.pnlPct != null ? `${sig.pnlPct > 0 ? '+' : ''}${sig.pnlPct}%` : '—'}
+                                                                </td>
+                                                                <td className="py-2 text-[var(--foreground-muted)] text-[10px]">
+                                                                    {sig.exitReason?.replace(/_/g, ' ') || '—'}
+                                                                </td>
+                                                            </tr>
+                                                        ))
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <p className="text-xs text-[var(--foreground-muted)] text-center">
+                                            No gap signals today. Gap fills are most common on small/medium gaps (0.3–1.5%) without catalysts.
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* Today's Gaps (Top 30) */}
+                                {gapResult.todayGaps && gapResult.todayGaps.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-orange-400 mb-3 flex items-center gap-1.5">
+                                            <TrendingUp size={14} /> Today&apos;s Gaps (Top 30)
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="pb-2 pr-3">Symbol</th>
+                                                        <th className="pb-2 pr-3">Type</th>
+                                                        <th className="pb-2 pr-3">Size</th>
+                                                        <th className="pb-2 pr-3">Gap%</th>
+                                                        <th className="pb-2">Fill Target</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {gapResult.todayGaps.map((s: any, idx: number) => (
+                                                        <tr key={idx} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">
+                                                                {s.symbol}
+                                                                {s.isHighBeta && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300">F&O</span>}
+                                                            </td>
+                                                            <td className="py-1.5 pr-3">
+                                                                <span className={`text-[9px] px-1 py-0.5 rounded ${s.todayGap?.direction === 'UP' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                                                                    {s.todayGap?.type?.replace(/_/g, ' ')}
+                                                                </span>
+                                                            </td>
+                                                            <td className="py-1.5 pr-3 text-amber-400 text-[10px]">{s.todayGap?.size}</td>
+                                                            <td className={`py-1.5 pr-3 font-medium ${s.todayGap?.direction === 'UP' ? 'text-green-400' : 'text-red-400'}`}>
+                                                                {s.todayGap?.direction === 'UP' ? '+' : '-'}{s.todayGap?.pct}%
+                                                            </td>
+                                                            <td className="py-1.5 text-[var(--foreground-muted)]">₹{s.todayGap?.fillTarget}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Backtest Ranking */}
+                                {gapResult.backtestRanking && gapResult.backtestRanking.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-yellow-400 mb-3 flex items-center gap-1.5">
+                                            <BarChart3 size={14} /> Gap Backtest Ranking (Top 30)
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="pb-2 pr-3">Symbol</th>
+                                                        <th className="pb-2 pr-3">Trades</th>
+                                                        <th className="pb-2 pr-3">Win%</th>
+                                                        <th className="pb-2 pr-3">Fill%</th>
+                                                        <th className="pb-2 pr-3">Return%</th>
+                                                        <th className="pb-2 pr-3">PF</th>
+                                                        <th className="pb-2">Sharpe</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {gapResult.backtestRanking.map((s: any, idx: number) => (
+                                                        <tr key={idx} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-2 pr-3 font-medium text-[var(--foreground)]">
+                                                                {s.symbol}
+                                                                {s.isHighBeta && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300">F&O</span>}
+                                                            </td>
+                                                            <td className="py-2 pr-3 text-[var(--foreground)]">{s.backtest?.totalTrades}</td>
+                                                            <td className={`py-2 pr-3 font-medium ${(s.backtest?.winRatePct || 0) >= 55 ? 'text-green-400' : (s.backtest?.winRatePct || 0) >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>
+                                                                {s.backtest?.winRatePct}%
+                                                            </td>
+                                                            <td className="py-2 pr-3 text-amber-400">{s.backtest?.gapFillRatePct}%</td>
+                                                            <td className={`py-2 pr-3 ${(s.backtest?.totalReturnPct || 0) > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                                {s.backtest?.totalReturnPct}%
+                                                            </td>
+                                                            <td className="py-2 pr-3 text-[var(--foreground)]">{s.backtest?.profitFactor}</td>
+                                                            <td className="py-2 text-[var(--foreground)]">{s.backtest?.sharpeRatio}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Fetch Stats */}
+                                {gapResult.fetchStats && (
+                                    <div className="bg-[var(--background)] rounded-lg p-3">
+                                        <div className="text-[10px] text-[var(--foreground-muted)] flex items-center gap-4 flex-wrap">
+                                            <span>📡 Fetched: {gapResult.fetchStats.successfulFetches}/{gapResult.fetchStats.totalSymbols} stocks</span>
+                                            <span>❌ Errors: {gapResult.fetchStats.failedFetches}</span>
+                                            <span>📊 Backtests: {gapResult.totalWithBacktest}</span>
+                                            <span>⚡ Signals: {gapResult.totalWithSignals}</span>
+                                            <span>📈 Gaps Today: {gapResult.totalGapsToday}</span>
                                         </div>
                                     </div>
                                 )}
