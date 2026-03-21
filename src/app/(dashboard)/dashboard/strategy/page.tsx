@@ -7,7 +7,7 @@ import {
     ChevronRight, Activity, Clock, Filter, Info, StopCircle,
     CalendarDays, ArrowRightLeft, ShieldCheck, Play,
     Crosshair, Eye, GitPullRequestArrow, PieChart, Repeat,
-    Newspaper, Sparkles, ArrowUpRight, Layers
+    Newspaper, Sparkles, ArrowUpRight, Layers, Timer
 } from 'lucide-react'
 
 interface Holding {
@@ -158,7 +158,16 @@ export default function StrategyAnalysisPage() {
     const [fcStatusMsg, setFcStatusMsg] = useState('')
     const fcAbortRef = useRef<AbortController | null>(null)
 
+    // ORB (Intraday) state
+    const [orbScanning, setOrbScanning] = useState(false)
+    const [orbResult, setOrbResult] = useState<any>(null)
+    const [orbError, setOrbError] = useState('')
+    const [orbProgress, setOrbProgress] = useState<ScanProgress | null>(null)
+    const [orbStatusMsg, setOrbStatusMsg] = useState('')
+    const orbAbortRef = useRef<AbortController | null>(null)
+
     const timeframes = [
+        { id: '1D', label: 'Intraday', available: true },
         { id: '1W', label: '1 Week', available: false },
         { id: '1M', label: '1 Month', available: true },
         { id: '3M', label: '3 Months', available: false },
@@ -206,6 +215,12 @@ export default function StrategyAnalysisPage() {
         fcAbortRef.current?.abort()
         setFcScanning(false)
         setFcStatusMsg('Scan stopped')
+    }, [])
+
+    const stopOrbScan = useCallback(() => {
+        orbAbortRef.current?.abort()
+        setOrbScanning(false)
+        setOrbStatusMsg('Scan stopped')
     }, [])
 
     const runSectorRotation = useCallback(async () => {
@@ -465,6 +480,71 @@ export default function StrategyAnalysisPage() {
             }
         } finally {
             setFcScanning(false)
+        }
+    }, [])
+
+    const runOrb = useCallback(async () => {
+        setOrbScanning(true)
+        setOrbError('')
+        setOrbResult(null)
+        setOrbProgress(null)
+        setOrbStatusMsg('Connecting...')
+
+        const abort = new AbortController()
+        orbAbortRef.current = abort
+
+        try {
+            const res = await fetch('/api/strategy/orb', { signal: abort.signal })
+            if (!res.ok || !res.body) throw new Error('Failed to connect')
+
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+
+                let currentEvent = ''
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        currentEvent = line.slice(7).trim()
+                    } else if (line.startsWith('data: ') && currentEvent) {
+                        try {
+                            const data = JSON.parse(line.slice(6))
+                            switch (currentEvent) {
+                                case 'status':
+                                    setOrbStatusMsg(data.message || '')
+                                    break
+                                case 'progress':
+                                    setOrbProgress(data)
+                                    setOrbStatusMsg(`Scanning... ${data.scanned}/${data.total} stocks (${data.pct}%)`)
+                                    break
+                                case 'result':
+                                    setOrbResult(data)
+                                    setOrbStatusMsg('Analysis complete!')
+                                    break
+                                case 'error':
+                                    setOrbError(data.message)
+                                    break
+                                case 'done':
+                                    break
+                            }
+                        } catch { /* skip */ }
+                        currentEvent = ''
+                    }
+                }
+            }
+        } catch (err: any) {
+            if (err.name !== 'AbortError') {
+                setOrbError(err.message || 'Something went wrong')
+            }
+        } finally {
+            setOrbScanning(false)
         }
     }, [])
 
@@ -2536,8 +2616,184 @@ export default function StrategyAnalysisPage() {
                 </div>
             )}
 
+            {/* 1D Intraday Strategies */}
+            {activeTimeframe === '1D' && (
+                <div className="space-y-6">
+                    {/* Strategy 1: Opening Range Breakout (ORB) */}
+                    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-6 hover:border-orange-500/30 transition-all">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-gradient-to-br from-orange-500/20 to-amber-500/20 rounded-xl flex items-center justify-center">
+                                    <Timer size={20} className="text-orange-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-bold text-[var(--foreground)]">Opening Range Breakout (ORB)</h3>
+                                    <p className="text-[10px] text-[var(--foreground-muted)]">15-min ORB · VWAP + Volume filters · Partial exits T1/T2/Trail · All 500+ stocks</p>
+                                </div>
+                            </div>
+                            {orbScanning ? (
+                                <button onClick={stopOrbScan} className="flex items-center gap-1.5 bg-red-500/10 text-red-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-all">
+                                    <StopCircle size={14} /> Stop
+                                </button>
+                            ) : (
+                                <button onClick={runOrb} className="flex items-center gap-1.5 bg-orange-500/10 text-orange-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-orange-500/20 transition-all">
+                                    <Play size={14} /> Scan
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Progress */}
+                        {orbScanning && (
+                            <div className="mb-4">
+                                <div className="flex items-center gap-2 text-xs text-orange-400 mb-2">
+                                    <Loader2 size={14} className="animate-spin" />
+                                    <span>{orbStatusMsg}</span>
+                                </div>
+                                {orbProgress && (
+                                    <div className="w-full bg-[var(--background)] rounded-full h-1.5">
+                                        <div className="bg-gradient-to-r from-orange-500 to-amber-500 h-1.5 rounded-full transition-all" style={{ width: `${orbProgress.pct}%` }} />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Error */}
+                        {orbError && (
+                            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-4">
+                                <p className="text-xs text-red-400"><AlertTriangle size={12} className="inline mr-1" />{orbError}</p>
+                            </div>
+                        )}
+
+                        {/* Results */}
+                        {orbResult && (
+                            <div className="space-y-4">
+                                {/* Summary */}
+                                <div className="grid grid-cols-3 gap-3">
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-orange-400">{orbResult.totalScanned}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Stocks Scanned</p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-amber-400">{orbResult.totalWithSignals}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Active Signals{orbResult.highBetaSignals > 0 && <span className="text-orange-400"> ({orbResult.highBetaSignals} F&O)</span>}</p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-yellow-400">{orbResult.totalWithBacktest}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">With Backtest</p>
+                                    </div>
+                                </div>
+
+                                {/* Active Signals Table */}
+                                {orbResult.activeSignals && orbResult.activeSignals.length > 0 && (
+                                    <div>
+                                        <h4 className="text-xs font-bold text-orange-400 mb-2 flex items-center gap-1"><Zap size={12} /> Today's ORB Signals</h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-xs">
+                                                <thead>
+                                                    <tr className="text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="text-left py-2 pr-3">Symbol</th>
+                                                        <th className="text-center py-2 px-2">Dir</th>
+                                                        <th className="text-right py-2 px-2">Entry</th>
+                                                        <th className="text-right py-2 px-2">SL</th>
+                                                        <th className="text-right py-2 px-2">T1</th>
+                                                        <th className="text-right py-2 px-2">T2</th>
+                                                        <th className="text-center py-2 px-2">Range%</th>
+                                                        <th className="text-right py-2 pl-2">VWAP</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {orbResult.activeSignals.map((s: any, i: number) => (
+                                                        <tr key={i} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-2 pr-3 font-medium text-[var(--foreground)]">
+                                                                {s.symbol}
+                                                                {s.isHighBeta && <span className="ml-1 px-1 py-0.5 rounded text-[8px] bg-orange-500/20 text-orange-400 font-bold">F&O</span>}
+                                                            </td>
+                                                            <td className="py-2 px-2 text-center">
+                                                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                                                    s.todaySignal.direction === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
+                                                                }`}>
+                                                                    {s.todaySignal.direction}
+                                                                </span>
+                                                            </td>
+                                                            <td className="py-2 px-2 text-right">₹{s.todaySignal.entryPrice}</td>
+                                                            <td className="py-2 px-2 text-right text-red-400">₹{s.todaySignal.sl}</td>
+                                                            <td className="py-2 px-2 text-right text-emerald-400">₹{s.todaySignal.t1 || '—'}</td>
+                                                            <td className="py-2 px-2 text-right text-cyan-400">₹{s.todaySignal.t2 || '—'}</td>
+                                                            <td className="py-2 px-2 text-center text-orange-400">{s.todaySignal.rangeWidthPct}%</td>
+                                                            <td className="py-2 pl-2 text-right text-[var(--foreground-muted)]">{s.todaySignal.vwap ? `₹${s.todaySignal.vwap}` : '—'}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {orbResult.activeSignals && orbResult.activeSignals.length === 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4 text-center">
+                                        <p className="text-xs text-[var(--foreground-muted)]">No ORB breakout signals detected today. Market may be range-bound or signals haven't triggered yet.</p>
+                                    </div>
+                                )}
+
+                                {/* Top Backtested Stocks */}
+                                {orbResult.backtestRanking && orbResult.backtestRanking.length > 0 && (
+                                    <div>
+                                        <h4 className="text-xs font-bold text-amber-400 mb-2 flex items-center gap-1"><BarChart3 size={12} /> Backtest Rankings (55-day)</h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-xs">
+                                                <thead>
+                                                    <tr className="text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="text-left py-2 pr-3">Symbol</th>
+                                                        <th className="text-center py-2 px-2">Trades</th>
+                                                        <th className="text-center py-2 px-2">Win%</th>
+                                                        <th className="text-center py-2 px-2">W:L</th>
+                                                        <th className="text-center py-2 px-2">Expect%</th>
+                                                        <th className="text-center py-2 px-2">PF</th>
+                                                        <th className="text-center py-2 px-2">Sharpe</th>
+                                                        <th className="text-right py-2 pl-2">MaxDD%</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {orbResult.backtestRanking.map((s: any, i: number) => (
+                                                        <tr key={i} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-2 pr-3 font-medium text-[var(--foreground)]">
+                                                                {s.symbol}
+                                                                {s.isHighBeta && <span className="ml-1 px-1 py-0.5 rounded text-[8px] bg-orange-500/20 text-orange-400 font-bold">F&O</span>}
+                                                            </td>
+                                                            <td className="py-2 px-2 text-center">{s.backtest?.totalTrades || 0}</td>
+                                                            <td className={`py-2 px-2 text-center font-medium ${(s.backtest?.winRatePct || 0) >= 50 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                                                {s.backtest?.winRatePct || 0}%
+                                                            </td>
+                                                            <td className="py-2 px-2 text-center">{s.backtest?.avgWinLossRatio || '—'}</td>
+                                                            <td className={`py-2 px-2 text-center ${(s.backtest?.expectancyPct || 0) > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                                                {s.backtest?.expectancyPct || 0}%
+                                                            </td>
+                                                            <td className="py-2 px-2 text-center text-amber-400">{s.backtest?.profitFactor || '—'}</td>
+                                                            <td className="py-2 px-2 text-center">{s.backtest?.sharpeRatio || '—'}</td>
+                                                            <td className="py-2 pl-2 text-right text-red-400">{s.backtest?.maxDrawdownPct || 0}%</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Fetch Stats */}
+                                {orbResult.fetchStats && (
+                                    <div className="text-[10px] text-[var(--foreground-muted)] flex items-center gap-4">
+                                        <span>Stocks: {orbResult.fetchStats.successfulFetches}/{orbResult.fetchStats.totalSymbols}</span>
+                                        <span>Errors: {orbResult.fetchStats.failedFetches}</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {/* Other Timeframes — Coming Soon */}
-            {activeTimeframe !== '1M' && (
+            {activeTimeframe !== '1M' && activeTimeframe !== '1D' && (
                 <div className="flex flex-col items-center justify-center py-20 text-center">
                     <div className="w-20 h-20 bg-gradient-to-br from-cyan-500/10 to-blue-500/10 rounded-2xl flex items-center justify-center mb-6">
                         <Clock size={40} className="text-cyan-400/60" />

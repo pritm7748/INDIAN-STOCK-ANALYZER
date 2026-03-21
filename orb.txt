@@ -1,0 +1,1710 @@
+
+
+
+# Opening Range Breakout (ORB) Strategy — JavaScript Implementation
+
+## File Structure
+```
+orb/
+├── orb-config.js        # All constants & configuration
+├── orb-core.js          # Range detection, signal generation, trade management
+├── orb-filters.js       # Pre-trade filters (range width, volume, VWAP, stock screening)
+├── orb-analyzer.js      # Backtest engine & performance metrics
+└── orb-runner.js        # Ties it all together, runs analysis on candle arrays
+```
+
+---
+
+## `orb-config.js`
+
+```javascript
+/**
+ * ORB Strategy Configuration
+ * All tunables live here. Nothing is magic-numbered in strategy files.
+ */
+
+export const ORB_VARIANT = Object.freeze({
+  ORB_15: '15min',
+  ORB_5: '5min',
+});
+
+export const TRADE_DIRECTION = Object.freeze({
+  LONG: 'LONG',
+  SHORT: 'SHORT',
+  NONE: 'NONE',
+});
+
+export const EXIT_REASON = Object.freeze({
+  TARGET_1: 'TARGET_1',
+  TARGET_2: 'TARGET_2',
+  TARGET_3_TRAIL: 'TARGET_3_TRAIL',
+  STOP_LOSS: 'STOP_LOSS',
+  TIME_STOP_NOON: 'TIME_STOP_NOON',
+  TIME_STOP_EOD: 'TIME_STOP_EOD',
+  TRAIL_STOP: 'TRAIL_STOP',
+  RE_ENTRY_RANGE: 'RE_ENTRY_RANGE', // 5-min candle closes back inside range
+});
+
+export const CONFIG = Object.freeze({
+
+  // ── Market timings (IST, 24-hr, as hours + minutes fraction) ──
+  MARKET_OPEN_H: 9,
+  MARKET_OPEN_M: 15,
+  MARKET_CLOSE_H: 15,
+  MARKET_CLOSE_M: 30,
+  MIS_EXIT_H: 15,
+  MIS_EXIT_M: 15,
+
+  // ── ORB range window ──
+  ORB_15_END_M: 30,         // 9:30 AM
+  ORB_5_END_M: 20,          // 9:20 AM
+  CANDLE_INTERVAL_MIN: 5,   // we operate on 5-min candles
+
+  // ── Range width filter (as fraction of price, not %) ──
+  RANGE_WIDTH_MIN: 0.002,   // 0.2%
+  RANGE_WIDTH_MAX: 0.015,   // 1.5%
+  RANGE_WIDTH_SKIP: 0.02,   // 2% → too wide, skip
+
+  // ── Volume filter ──
+  // Breakout candle volume must exceed average of first N candles by this factor
+  VOLUME_BREAKOUT_FACTOR: 1.0,  // > 1× average of first 3 candles
+  VOLUME_AVG_CANDLE_COUNT: 3,
+
+  // ── Stop-loss ──
+  MAX_SL_PCT: 0.007,        // 0.7% of capital max
+  USE_MIDPOINT_SL_WHEN_WIDE: true,
+  WIDE_RANGE_THRESHOLD: 0.01, // if range > 1%, use midpoint SL
+
+  // ── Targets (multiples of range width) ──
+  TARGET_1_MULTIPLE: 1.0,
+  TARGET_2_MULTIPLE: 2.0,
+  // Allocation per target
+  TARGET_1_QTY_PCT: 0.50,   // book 50%
+  TARGET_2_QTY_PCT: 0.30,   // book 30%
+  TRAIL_QTY_PCT: 0.20,      // trail remaining 20%
+
+  // ── Time stops ──
+  NOON_DEADLINE_H: 12,
+  NOON_DEADLINE_M: 0,
+
+  // ── Options (for index ORB) ──
+  OPTION_SL_PCT: 0.30,      // 30% of premium
+  OPTION_TARGET_PCT_LO: 0.50,
+  OPTION_TARGET_PCT_HI: 0.80,
+
+  // ── Stock screening thresholds ──
+  MIN_AVG_DAILY_VOLUME: 5_000_000,  // 50 lakh
+  MIN_ATR_PCT: 0.015,               // 1.5%
+  MAX_SPREAD_PCT: 0.0005,           // 0.05%
+
+  // ── Backtest defaults ──
+  DEFAULT_CAPITAL: 100_000,
+  DEFAULT_RISK_PER_TRADE: 0.01,     // 1% risk per trade
+  SLIPPAGE_PER_SIDE: 0.0003,        // 0.03% slippage assumption
+  COMMISSION_PER_SIDE: 20,          // ₹20 flat per order
+});
+```
+
+---
+
+## `orb-filters.js`
+
+```javascript
+/**
+ * ORB Pre-Trade Filters
+ * 
+ * Every filter returns { pass: boolean, reason?: string }
+ * Composable — stack them in any order.
+ */
+
+import { CONFIG, TRADE_DIRECTION } from './orb-config.js';
+
+// ─────────────────────────────────────────────
+// Candle / time helpers
+// ─────────────────────────────────────────────
+
+/**
+ * Extract hours & minutes from a Date object (assumes IST or local tz matches market).
+ */
+export function timeOfDay(date) {
+  return { h: date.getHours(), m: date.getMinutes() };
+}
+
+/**
+ * Convert h:m to minutes-since-midnight for easy comparison.
+ */
+export function toMinutes(h, m) {
+  return h * 60 + m;
+}
+
+/**
+ * Is a candle timestamp within the ORB formation window?
+ */
+export function isInORBWindow(candleDate, variant) {
+  const { h, m } = timeOfDay(candleDate);
+  const t = toMinutes(h, m);
+  const open = toMinutes(CONFIG.MARKET_OPEN_H, CONFIG.MARKET_OPEN_M);
+
+  const endMin = variant === '15min' ? CONFIG.ORB_15_END_M : CONFIG.ORB_5_END_M;
+  const end = toMinutes(CONFIG.MARKET_OPEN_H, endMin);
+
+  // candle open time must be >= market open and < end of ORB window
+  return t >= open && t < end;
+}
+
+// ─────────────────────────────────────────────
+// Filter 1: Range Width
+// ─────────────────────────────────────────────
+
+export function filterRangeWidth(orbHigh, orbLow, refPrice) {
+  const rangeWidth = orbHigh - orbLow;
+  const rangePct = rangeWidth / refPrice;
+
+  if (rangePct < CONFIG.RANGE_WIDTH_MIN) {
+    return { pass: false, reason: `Range too narrow: ${(rangePct * 100).toFixed(3)}% < ${CONFIG.RANGE_WIDTH_MIN * 100}%` };
+  }
+  if (rangePct > CONFIG.RANGE_WIDTH_SKIP) {
+    return { pass: false, reason: `Range too wide: ${(rangePct * 100).toFixed(3)}% > ${CONFIG.RANGE_WIDTH_SKIP * 100}%` };
+  }
+  if (rangePct > CONFIG.RANGE_WIDTH_MAX) {
+    return { pass: true, reason: `Range wide but tradeable: ${(rangePct * 100).toFixed(3)}% (use midpoint SL)`, wide: true };
+  }
+  return { pass: true, wide: false };
+}
+
+// ─────────────────────────────────────────────
+// Filter 2: Breakout Volume Confirmation
+// ─────────────────────────────────────────────
+
+/**
+ * @param {number} breakoutVolume   - volume of the breakout candle
+ * @param {number[]} orbCandles     - volumes of candles during ORB formation
+ */
+export function filterBreakoutVolume(breakoutVolume, orbCandleVolumes) {
+  const count = Math.min(orbCandleVolumes.length, CONFIG.VOLUME_AVG_CANDLE_COUNT);
+  if (count === 0) return { pass: false, reason: 'No ORB candles to average volume' };
+
+  const avgVol = orbCandleVolumes.slice(0, count).reduce((a, b) => a + b, 0) / count;
+  const required = avgVol * CONFIG.VOLUME_BREAKOUT_FACTOR;
+
+  if (breakoutVolume >= required) {
+    return { pass: true, ratio: breakoutVolume / avgVol };
+  }
+  return {
+    pass: false,
+    reason: `Breakout vol ${breakoutVolume} < required ${required.toFixed(0)} (avg × ${CONFIG.VOLUME_BREAKOUT_FACTOR})`,
+  };
+}
+
+// ─────────────────────────────────────────────
+// Filter 3: VWAP Alignment
+// ─────────────────────────────────────────────
+
+/**
+ * For LONG: price must be above VWAP
+ * For SHORT: price must be below VWAP
+ *
+ * @param {number} price        - breakout candle close
+ * @param {number} vwap         - running VWAP at that candle
+ * @param {string} direction    - TRADE_DIRECTION.LONG | SHORT
+ */
+export function filterVWAP(price, vwap, direction) {
+  if (direction === TRADE_DIRECTION.LONG && price > vwap) {
+    return { pass: true };
+  }
+  if (direction === TRADE_DIRECTION.SHORT && price < vwap) {
+    return { pass: true };
+  }
+  return {
+    pass: false,
+    reason: `VWAP misaligned: price=${price}, vwap=${vwap}, dir=${direction}`,
+  };
+}
+
+// ─────────────────────────────────────────────
+// Filter 4: Pre-market / Gap Direction (for 5-min ORB)
+// ─────────────────────────────────────────────
+
+/**
+ * Only take trades aligned with gap direction.
+ * @param {string} direction     - proposed trade direction
+ * @param {number} todayOpen     - today's opening price
+ * @param {number} prevClose     - previous day close
+ */
+export function filterGapAlignment(direction, todayOpen, prevClose) {
+  const gapPct = (todayOpen - prevClose) / prevClose;
+
+  if (direction === TRADE_DIRECTION.LONG && gapPct > 0) {
+    return { pass: true, gapPct };
+  }
+  if (direction === TRADE_DIRECTION.SHORT && gapPct < 0) {
+    return { pass: true, gapPct };
+  }
+  // Neutral gap (< 0.1% either way) — allow both
+  if (Math.abs(gapPct) < 0.001) {
+    return { pass: true, gapPct, note: 'Flat open — gap filter neutral' };
+  }
+  return {
+    pass: false,
+    reason: `Gap direction (${(gapPct * 100).toFixed(2)}%) conflicts with ${direction}`,
+  };
+}
+
+// ─────────────────────────────────────────────
+// Filter 5: Stock-Level Daily Screening
+// ─────────────────────────────────────────────
+
+/**
+ * @param {object} stockMeta
+ *   { avgDailyVolume, atr14, atr14Pct, avgSpreadPct }
+ */
+export function filterStockEligibility(stockMeta) {
+  const reasons = [];
+
+  if (stockMeta.avgDailyVolume < CONFIG.MIN_AVG_DAILY_VOLUME) {
+    reasons.push(`Volume ${stockMeta.avgDailyVolume} < ${CONFIG.MIN_AVG_DAILY_VOLUME}`);
+  }
+  if (stockMeta.atr14Pct < CONFIG.MIN_ATR_PCT) {
+    reasons.push(`ATR% ${(stockMeta.atr14Pct * 100).toFixed(2)}% < ${CONFIG.MIN_ATR_PCT * 100}%`);
+  }
+  if (stockMeta.avgSpreadPct > CONFIG.MAX_SPREAD_PCT) {
+    reasons.push(`Spread ${(stockMeta.avgSpreadPct * 100).toFixed(4)}% > ${CONFIG.MAX_SPREAD_PCT * 100}%`);
+  }
+
+  return reasons.length === 0
+    ? { pass: true }
+    : { pass: false, reason: reasons.join('; ') };
+}
+
+// ─────────────────────────────────────────────
+// Composite: Run all entry filters
+// ─────────────────────────────────────────────
+
+/**
+ * @param {object} ctx  — everything needed for filtering:
+ *   { orbHigh, orbLow, refPrice, breakoutVolume, orbCandleVolumes,
+ *     breakoutClose, vwap, direction, todayOpen, prevClose,
+ *     variant, useGapFilter }
+ * @returns {{ pass: boolean, filters: object[] }}
+ */
+export function runAllFilters(ctx) {
+  const results = [];
+
+  results.push({ name: 'RangeWidth', ...filterRangeWidth(ctx.orbHigh, ctx.orbLow, ctx.refPrice) });
+  results.push({ name: 'Volume', ...filterBreakoutVolume(ctx.breakoutVolume, ctx.orbCandleVolumes) });
+  results.push({ name: 'VWAP', ...filterVWAP(ctx.breakoutClose, ctx.vwap, ctx.direction) });
+
+  if (ctx.useGapFilter) {
+    results.push({ name: 'GapAlign', ...filterGapAlignment(ctx.direction, ctx.todayOpen, ctx.prevClose) });
+  }
+
+  const allPassed = results.every(r => r.pass);
+  return { pass: allPassed, filters: results };
+}
+```
+
+---
+
+## `orb-core.js`
+
+```javascript
+/**
+ * ORB Core Engine
+ *
+ * Responsibilities:
+ *  1. Build the ORB range from candle array
+ *  2. Detect breakout signals
+ *  3. Compute SL / targets
+ *  4. Walk forward through candles to manage a trade (partial exits, trail, time stops)
+ *
+ * Data contract — a "candle" object:
+ * {
+ *   time: Date,           // candle open time
+ *   open: number,
+ *   high: number,
+ *   low: number,
+ *   close: number,
+ *   volume: number,
+ *   vwap?: number         // running VWAP at candle close (optional, can be computed)
+ * }
+ */
+
+import {
+  CONFIG, ORB_VARIANT, TRADE_DIRECTION, EXIT_REASON,
+} from './orb-config.js';
+import {
+  isInORBWindow, toMinutes, timeOfDay, runAllFilters,
+} from './orb-filters.js';
+
+// ═══════════════════════════════════════════════
+// SECTION 1: ORB RANGE CONSTRUCTION
+// ═══════════════════════════════════════════════
+
+/**
+ * Given a full day of 5-min candles, extract the ORB range.
+ *
+ * @param {object[]} candles   – sorted ascending by time, one trading day
+ * @param {string}   variant   – '15min' | '5min'
+ * @returns {object|null}
+ *   { orbHigh, orbLow, rangeWidth, orbCandles, rangeWidthPct, midpoint }
+ */
+export function buildORBRange(candles, variant = ORB_VARIANT.ORB_15) {
+  const orbCandles = candles.filter(c => isInORBWindow(c.time, variant));
+
+  if (orbCandles.length === 0) return null;
+
+  let orbHigh = -Infinity;
+  let orbLow = Infinity;
+
+  for (const c of orbCandles) {
+    if (c.high > orbHigh) orbHigh = c.high;
+    if (c.low < orbLow) orbLow = c.low;
+  }
+
+  const rangeWidth = orbHigh - orbLow;
+  const midpoint = (orbHigh + orbLow) / 2;
+  const refPrice = orbCandles[0].open; // first candle open ≈ day open
+  const rangeWidthPct = rangeWidth / refPrice;
+
+  return {
+    orbHigh,
+    orbLow,
+    rangeWidth,
+    rangeWidthPct,
+    midpoint,
+    orbCandles,
+    refPrice,
+    todayOpen: refPrice,
+  };
+}
+
+
+// ═══════════════════════════════════════════════
+// SECTION 2: VWAP COMPUTATION (if not pre-supplied)
+// ═══════════════════════════════════════════════
+
+/**
+ * Compute running VWAP across ordered candles.
+ * Mutates candle objects by setting `candle.vwap`.
+ * Typical price = (H+L+C)/3, weighted by volume.
+ */
+export function computeVWAP(candles) {
+  let cumTPV = 0;  // cumulative (typical_price × volume)
+  let cumVol = 0;
+
+  for (const c of candles) {
+    const tp = (c.high + c.low + c.close) / 3;
+    cumTPV += tp * c.volume;
+    cumVol += c.volume;
+    c.vwap = cumVol > 0 ? cumTPV / cumVol : c.close;
+  }
+}
+
+
+// ═══════════════════════════════════════════════
+// SECTION 3: SIGNAL DETECTION
+// ═══════════════════════════════════════════════
+
+/**
+ * Scan post-ORB candles for the FIRST valid breakout signal.
+ *
+ * @param {object[]} candles        – full day candles (time-sorted)
+ * @param {object}   orb            – output from buildORBRange()
+ * @param {object}   opts
+ *   { variant, prevClose, useGapFilter }
+ *
+ * @returns {object|null}
+ *   { direction, entryPrice, entryTime, entryIndex, sl, targets[], orbData, filterResults }
+ */
+export function detectBreakoutSignal(candles, orb, opts = {}) {
+  const {
+    variant = ORB_VARIANT.ORB_15,
+    prevClose = null,
+    useGapFilter = variant === ORB_VARIANT.ORB_5,
+  } = opts;
+
+  if (!orb) return null;
+
+  // Determine where post-ORB candles start
+  const orbEndMin = variant === '15min' ? CONFIG.ORB_15_END_M : CONFIG.ORB_5_END_M;
+  const orbEndT = toMinutes(CONFIG.MARKET_OPEN_H, orbEndMin);
+
+  const orbCandleVolumes = orb.orbCandles.map(c => c.volume);
+
+  // Walk through candles after ORB window
+  for (let i = 0; i < candles.length; i++) {
+    const candle = candles[i];
+    const { h, m } = timeOfDay(candle.time);
+    const t = toMinutes(h, m);
+
+    // Skip candles inside or before ORB window
+    if (t < orbEndT) continue;
+
+    // Time cutoff: no new entries after noon (configurable)
+    const noonT = toMinutes(CONFIG.NOON_DEADLINE_H, CONFIG.NOON_DEADLINE_M);
+    if (t >= noonT) break;
+
+    // ── Check for LONG breakout ──
+    if (candle.close > orb.orbHigh) {
+      const direction = TRADE_DIRECTION.LONG;
+      const filterCtx = {
+        orbHigh: orb.orbHigh,
+        orbLow: orb.orbLow,
+        refPrice: orb.refPrice,
+        breakoutVolume: candle.volume,
+        orbCandleVolumes,
+        breakoutClose: candle.close,
+        vwap: candle.vwap ?? candle.close,
+        direction,
+        todayOpen: orb.todayOpen,
+        prevClose: prevClose ?? orb.refPrice,
+        variant,
+        useGapFilter,
+      };
+
+      const filterResult = runAllFilters(filterCtx);
+      if (filterResult.pass) {
+        const entryPrice = Math.max(candle.close, orb.orbHigh + 1);
+        const { sl, targets } = computeSLAndTargets(direction, entryPrice, orb);
+        return {
+          direction,
+          entryPrice,
+          entryTime: candle.time,
+          entryIndex: i,
+          sl,
+          targets,
+          orbData: orb,
+          filterResults: filterResult.filters,
+          breakoutCandle: candle,
+        };
+      }
+    }
+
+    // ── Check for SHORT breakdown ──
+    if (candle.close < orb.orbLow) {
+      const direction = TRADE_DIRECTION.SHORT;
+      const filterCtx = {
+        orbHigh: orb.orbHigh,
+        orbLow: orb.orbLow,
+        refPrice: orb.refPrice,
+        breakoutVolume: candle.volume,
+        orbCandleVolumes,
+        breakoutClose: candle.close,
+        vwap: candle.vwap ?? candle.close,
+        direction,
+        todayOpen: orb.todayOpen,
+        prevClose: prevClose ?? orb.refPrice,
+        variant,
+        useGapFilter,
+      };
+
+      const filterResult = runAllFilters(filterCtx);
+      if (filterResult.pass) {
+        const entryPrice = Math.min(candle.close, orb.orbLow - 1);
+        const { sl, targets } = computeSLAndTargets(direction, entryPrice, orb);
+        return {
+          direction,
+          entryPrice,
+          entryTime: candle.time,
+          entryIndex: i,
+          sl,
+          targets,
+          orbData: orb,
+          filterResults: filterResult.filters,
+          breakoutCandle: candle,
+        };
+      }
+    }
+  }
+
+  return null; // no valid signal today
+}
+
+
+// ═══════════════════════════════════════════════
+// SECTION 4: STOP-LOSS & TARGET COMPUTATION
+// ═══════════════════════════════════════════════
+
+/**
+ * @param {string} direction
+ * @param {number} entryPrice
+ * @param {object} orb  – from buildORBRange()
+ * @returns {{ sl: number, targets: { price: number, qtyPct: number, label: string }[] }}
+ */
+export function computeSLAndTargets(direction, entryPrice, orb) {
+  const { orbHigh, orbLow, rangeWidth, midpoint, rangeWidthPct } = orb;
+  const isWide = rangeWidthPct > CONFIG.WIDE_RANGE_THRESHOLD;
+  const useMid = CONFIG.USE_MIDPOINT_SL_WHEN_WIDE && isWide;
+
+  let sl;
+  const targets = [];
+
+  if (direction === TRADE_DIRECTION.LONG) {
+    sl = useMid ? midpoint : orbLow;
+
+    // Enforce max SL %
+    const slPct = (entryPrice - sl) / entryPrice;
+    if (slPct > CONFIG.MAX_SL_PCT) {
+      sl = entryPrice * (1 - CONFIG.MAX_SL_PCT);
+    }
+
+    targets.push({
+      price: entryPrice + rangeWidth * CONFIG.TARGET_1_MULTIPLE,
+      qtyPct: CONFIG.TARGET_1_QTY_PCT,
+      label: 'T1',
+    });
+    targets.push({
+      price: entryPrice + rangeWidth * CONFIG.TARGET_2_MULTIPLE,
+      qtyPct: CONFIG.TARGET_2_QTY_PCT,
+      label: 'T2',
+    });
+    targets.push({
+      price: null, // trail — no fixed price
+      qtyPct: CONFIG.TRAIL_QTY_PCT,
+      label: 'TRAIL',
+    });
+
+  } else {
+    // SHORT
+    sl = useMid ? midpoint : orbHigh;
+
+    const slPct = (sl - entryPrice) / entryPrice;
+    if (slPct > CONFIG.MAX_SL_PCT) {
+      sl = entryPrice * (1 + CONFIG.MAX_SL_PCT);
+    }
+
+    targets.push({
+      price: entryPrice - rangeWidth * CONFIG.TARGET_1_MULTIPLE,
+      qtyPct: CONFIG.TARGET_1_QTY_PCT,
+      label: 'T1',
+    });
+    targets.push({
+      price: entryPrice - rangeWidth * CONFIG.TARGET_2_MULTIPLE,
+      qtyPct: CONFIG.TARGET_2_QTY_PCT,
+      label: 'T2',
+    });
+    targets.push({
+      price: null,
+      qtyPct: CONFIG.TRAIL_QTY_PCT,
+      label: 'TRAIL',
+    });
+  }
+
+  return { sl, targets };
+}
+
+
+// ═══════════════════════════════════════════════
+// SECTION 5: TRADE SIMULATION (walk-forward)
+// ═══════════════════════════════════════════════
+
+/**
+ * Given a signal, walk forward candle-by-candle to simulate
+ * partial exits, stop-loss, trailing stop, and time stops.
+ *
+ * @param {object[]} candles   – full day candles
+ * @param {object}   signal    – from detectBreakoutSignal()
+ * @returns {object}           – completed trade record
+ */
+export function simulateTrade(candles, signal) {
+  const {
+    direction, entryPrice, entryIndex, sl, targets, orbData,
+  } = signal;
+
+  const isLong = direction === TRADE_DIRECTION.LONG;
+
+  // Position state
+  let remainingQtyPct = 1.0;    // 100% at entry
+  const partialExits = [];       // { time, price, qtyPct, reason }
+  let currentSL = sl;
+  let t1Hit = false;
+  let t2Hit = false;
+  let trailActive = false;
+  let trailStop = null;
+  let finalExit = null;
+
+  const noonT = toMinutes(CONFIG.NOON_DEADLINE_H, CONFIG.NOON_DEADLINE_M);
+  const eodT = toMinutes(CONFIG.MIS_EXIT_H, CONFIG.MIS_EXIT_M);
+
+  for (let i = entryIndex + 1; i < candles.length; i++) {
+    const c = candles[i];
+    const { h, m } = timeOfDay(c.time);
+    const t = toMinutes(h, m);
+
+    if (remainingQtyPct <= 0) break;
+
+    // ── TIME STOP: EOD ──
+    if (t >= eodT) {
+      partialExits.push({
+        time: c.time,
+        price: c.close,
+        qtyPct: remainingQtyPct,
+        reason: EXIT_REASON.TIME_STOP_EOD,
+      });
+      remainingQtyPct = 0;
+      break;
+    }
+
+    // ── STOP-LOSS CHECK ──
+    const hitSL = isLong ? c.low <= currentSL : c.high >= currentSL;
+    if (hitSL) {
+      partialExits.push({
+        time: c.time,
+        price: currentSL,
+        qtyPct: remainingQtyPct,
+        reason: trailActive ? EXIT_REASON.TRAIL_STOP : EXIT_REASON.STOP_LOSS,
+      });
+      remainingQtyPct = 0;
+      break;
+    }
+
+    // ── TARGET 1 ──
+    if (!t1Hit && targets[0]) {
+      const hitT1 = isLong
+        ? c.high >= targets[0].price
+        : c.low <= targets[0].price;
+
+      if (hitT1) {
+        t1Hit = true;
+        const exitQty = Math.min(targets[0].qtyPct, remainingQtyPct);
+        partialExits.push({
+          time: c.time,
+          price: targets[0].price,
+          qtyPct: exitQty,
+          reason: EXIT_REASON.TARGET_1,
+        });
+        remainingQtyPct -= exitQty;
+
+        // Move SL to breakeven after T1
+        currentSL = entryPrice;
+      }
+    }
+
+    // ── TARGET 2 ──
+    if (t1Hit && !t2Hit && targets[1]) {
+      const hitT2 = isLong
+        ? c.high >= targets[1].price
+        : c.low <= targets[1].price;
+
+      if (hitT2) {
+        t2Hit = true;
+        const exitQty = Math.min(targets[1].qtyPct, remainingQtyPct);
+        partialExits.push({
+          time: c.time,
+          price: targets[1].price,
+          qtyPct: exitQty,
+          reason: EXIT_REASON.TARGET_2,
+        });
+        remainingQtyPct -= exitQty;
+
+        // Activate trailing stop for remaining
+        trailActive = true;
+        // Trail SL = T1 level
+        trailStop = targets[0].price;
+        currentSL = trailStop;
+      }
+    }
+
+    // ── TRAILING STOP UPDATE ──
+    if (trailActive && remainingQtyPct > 0) {
+      // Trail using previous 5-min candle close
+      // If candle closes back inside ORB range → exit
+      const backInRange = c.close >= orbData.orbLow && c.close <= orbData.orbHigh;
+      if (backInRange) {
+        partialExits.push({
+          time: c.time,
+          price: c.close,
+          qtyPct: remainingQtyPct,
+          reason: EXIT_REASON.RE_ENTRY_RANGE,
+        });
+        remainingQtyPct = 0;
+        break;
+      }
+
+      // Update trailing stop: for longs, trail below previous candle low
+      if (isLong) {
+        const newTrail = candles[i - 1].low;
+        if (newTrail > currentSL) currentSL = newTrail;
+      } else {
+        const newTrail = candles[i - 1].high;
+        if (newTrail < currentSL) currentSL = newTrail;
+      }
+    }
+
+    // ── TIME STOP: NOON (if T1 not hit) ──
+    if (!t1Hit && t >= noonT) {
+      partialExits.push({
+        time: c.time,
+        price: c.close,
+        qtyPct: remainingQtyPct,
+        reason: EXIT_REASON.TIME_STOP_NOON,
+      });
+      remainingQtyPct = 0;
+      break;
+    }
+  }
+
+  // ── Compute blended exit price & PnL ──
+  const trade = buildTradeRecord(signal, partialExits);
+  return trade;
+}
+
+
+// ═══════════════════════════════════════════════
+// SECTION 6: TRADE RECORD BUILDER
+// ═══════════════════════════════════════════════
+
+function buildTradeRecord(signal, partialExits) {
+  const { direction, entryPrice, entryTime, orbData } = signal;
+  const isLong = direction === TRADE_DIRECTION.LONG;
+
+  let weightedExitPrice = 0;
+  let totalQtyExited = 0;
+
+  for (const exit of partialExits) {
+    weightedExitPrice += exit.price * exit.qtyPct;
+    totalQtyExited += exit.qtyPct;
+  }
+
+  // Normalize (should be ~1.0, but guard against float drift)
+  const avgExitPrice = totalQtyExited > 0 ? weightedExitPrice / totalQtyExited : entryPrice;
+
+  const grossPnlPct = isLong
+    ? (avgExitPrice - entryPrice) / entryPrice
+    : (entryPrice - avgExitPrice) / entryPrice;
+
+  const netPnlPct = grossPnlPct - (CONFIG.SLIPPAGE_PER_SIDE * 2);
+
+  const lastExit = partialExits[partialExits.length - 1];
+  const primaryExitReason = determinePrimaryExitReason(partialExits);
+
+  return {
+    direction,
+    entryPrice,
+    entryTime,
+    avgExitPrice,
+    exitTime: lastExit?.time ?? null,
+    grossPnlPct,
+    netPnlPct,
+    partialExits,
+    primaryExitReason,
+    orbHigh: orbData.orbHigh,
+    orbLow: orbData.orbLow,
+    rangeWidth: orbData.rangeWidth,
+    rangeWidthPct: orbData.rangeWidthPct,
+    isWinner: netPnlPct > 0,
+  };
+}
+
+function determinePrimaryExitReason(partialExits) {
+  // The reason that closed out the majority of position
+  if (partialExits.length === 0) return 'NONE';
+
+  const byReason = {};
+  for (const e of partialExits) {
+    byReason[e.reason] = (byReason[e.reason] || 0) + e.qtyPct;
+  }
+
+  let maxReason = '';
+  let maxQty = 0;
+  for (const [reason, qty] of Object.entries(byReason)) {
+    if (qty > maxQty) { maxQty = qty; maxReason = reason; }
+  }
+  return maxReason;
+}
+
+
+// ═══════════════════════════════════════════════
+// SECTION 7: SINGLE-DAY ORCHESTRATOR
+// ═══════════════════════════════════════════════
+
+/**
+ * Run the full ORB strategy on one day of candles.
+ *
+ * @param {object[]} dayCandlesRaw – one day of 5-min OHLCV candles (sorted by time)
+ * @param {object}   opts
+ *   { variant, prevClose, prevHigh, prevLow, useGapFilter }
+ * @returns {object|null} – trade record, or null if no signal
+ */
+export function runORBForDay(dayCandlesRaw, opts = {}) {
+  const {
+    variant = ORB_VARIANT.ORB_15,
+    prevClose = null,
+    useGapFilter,
+  } = opts;
+
+  // Deep copy to avoid mutating caller's data
+  const candles = dayCandlesRaw.map(c => ({
+    ...c,
+    time: c.time instanceof Date ? c.time : new Date(c.time),
+  }));
+
+  // Step 0: Compute VWAP if not already present
+  if (candles[0]?.vwap == null) {
+    computeVWAP(candles);
+  }
+
+  // Step 1: Build ORB range
+  const orb = buildORBRange(candles, variant);
+  if (!orb) return null;
+
+  // Step 2: Detect breakout signal
+  const signal = detectBreakoutSignal(candles, orb, { variant, prevClose, useGapFilter });
+  if (!signal) return null;
+
+  // Step 3: Simulate trade
+  const trade = simulateTrade(candles, signal);
+  return trade;
+}
+```
+
+---
+
+## `orb-analyzer.js`
+
+```javascript
+/**
+ * ORB Backtest Analyzer
+ *
+ * Takes an array of trade records (one per day) and computes
+ * every metric a serious trader cares about.
+ */
+
+import { CONFIG, EXIT_REASON, TRADE_DIRECTION } from './orb-config.js';
+
+// ═══════════════════════════════════════════════
+// PERFORMANCE METRICS
+// ═══════════════════════════════════════════════
+
+/**
+ * @param {object[]} trades – array of trade records from simulateTrade()
+ * @param {number}   capital – starting capital
+ * @returns {object}  comprehensive stats
+ */
+export function analyzePerformance(trades, capital = CONFIG.DEFAULT_CAPITAL) {
+  if (trades.length === 0) {
+    return { error: 'No trades to analyze' };
+  }
+
+  const winners = trades.filter(t => t.isWinner);
+  const losers = trades.filter(t => !t.isWinner);
+  const longs = trades.filter(t => t.direction === TRADE_DIRECTION.LONG);
+  const shorts = trades.filter(t => t.direction === TRADE_DIRECTION.SHORT);
+
+  const pnlArray = trades.map(t => t.netPnlPct);
+  const winPnls = winners.map(t => t.netPnlPct);
+  const lossPnls = losers.map(t => t.netPnlPct);
+
+  // ── Core metrics ──
+  const totalTrades = trades.length;
+  const winRate = winners.length / totalTrades;
+  const avgWin = mean(winPnls);
+  const avgLoss = mean(lossPnls);
+  const avgWinLossRatio = Math.abs(avgLoss) > 0 ? avgWin / Math.abs(avgLoss) : Infinity;
+  const expectancy = (winRate * avgWin) + ((1 - winRate) * avgLoss);
+
+  // ── PnL curve ──
+  const equityCurve = buildEquityCurve(trades, capital);
+  const totalReturnPct = ((equityCurve[equityCurve.length - 1].equity - capital) / capital) * 100;
+  const maxDrawdown = computeMaxDrawdown(equityCurve);
+
+  // ── Streaks ──
+  const { maxWinStreak, maxLossStreak } = computeStreaks(trades);
+
+  // ── By exit reason ──
+  const exitReasonBreakdown = computeExitReasonBreakdown(trades);
+
+  // ── By direction ──
+  const longStats = computeDirectionStats(longs);
+  const shortStats = computeDirectionStats(shorts);
+
+  // ── Daily distribution ──
+  const pnlDistribution = computePnLDistribution(pnlArray);
+
+  // ── Risk-adjusted ──
+  const sharpe = computeSharpe(pnlArray);
+  const profitFactor = computeProfitFactor(trades);
+  const calmar = totalReturnPct / (Math.abs(maxDrawdown.pct) || 1);
+
+  // ── Consistency ──
+  const tradingDays = trades.length;
+  const profitableDays = winners.length;
+  const profitableDaysPct = (profitableDays / tradingDays) * 100;
+
+  return {
+    // Summary
+    totalTrades,
+    winners: winners.length,
+    losers: losers.length,
+    winRate: round4(winRate),
+    winRatePct: round2(winRate * 100),
+
+    // PnL
+    avgWinPct: round4(avgWin * 100),
+    avgLossPct: round4(avgLoss * 100),
+    avgWinLossRatio: round2(avgWinLossRatio),
+    expectancyPct: round4(expectancy * 100),
+    totalReturnPct: round2(totalReturnPct),
+    totalReturnAbs: round2(equityCurve[equityCurve.length - 1].equity - capital),
+
+    // Risk
+    maxDrawdownPct: round2(maxDrawdown.pct),
+    maxDrawdownAbs: round2(maxDrawdown.abs),
+    maxDrawdownDuration: maxDrawdown.duration,
+    sharpeRatio: round2(sharpe),
+    profitFactor: round2(profitFactor),
+    calmarRatio: round2(calmar),
+
+    // Streaks
+    maxWinStreak,
+    maxLossStreak,
+
+    // Direction breakdown
+    longTrades: longs.length,
+    shortTrades: shorts.length,
+    longWinRate: round2(longStats.winRate * 100),
+    shortWinRate: round2(shortStats.winRate * 100),
+    longAvgPnlPct: round4(longStats.avgPnl * 100),
+    shortAvgPnlPct: round4(shortStats.avgPnl * 100),
+
+    // Exit reasons
+    exitReasonBreakdown,
+
+    // Distribution
+    pnlDistribution,
+
+    // Consistency
+    profitableDaysPct: round2(profitableDaysPct),
+
+    // Raw data for plotting
+    equityCurve,
+    pnlArray: pnlArray.map(p => round4(p * 100)),
+  };
+}
+
+
+// ═══════════════════════════════════════════════
+// EQUITY CURVE
+// ═══════════════════════════════════════════════
+
+function buildEquityCurve(trades, startCapital) {
+  const curve = [{ tradeNum: 0, equity: startCapital, date: null }];
+  let equity = startCapital;
+
+  for (let i = 0; i < trades.length; i++) {
+    const t = trades[i];
+
+    // Position size: risk-based (risk 1% of current equity, SL determines qty)
+    const riskAmount = equity * CONFIG.DEFAULT_RISK_PER_TRADE;
+
+    // Absolute SL distance
+    const slDistance = Math.abs(t.entryPrice - (t.direction === TRADE_DIRECTION.LONG
+      ? t.orbLow : t.orbHigh));
+    const slDistanceSafe = Math.max(slDistance, t.entryPrice * 0.001); // guard div by zero
+
+    const qty = Math.floor(riskAmount / slDistanceSafe);
+    const positionValue = qty * t.entryPrice;
+
+    // PnL in absolute terms
+    const pnlAbs = positionValue * t.netPnlPct;
+
+    // Subtract commission
+    const commission = CONFIG.COMMISSION_PER_SIDE * 2; // entry + exit
+    equity += pnlAbs - commission;
+
+    curve.push({
+      tradeNum: i + 1,
+      equity: round2(equity),
+      date: t.entryTime,
+      pnlPct: round4(t.netPnlPct * 100),
+      direction: t.direction,
+    });
+  }
+
+  return curve;
+}
+
+
+// ═══════════════════════════════════════════════
+// DRAWDOWN
+// ═══════════════════════════════════════════════
+
+function computeMaxDrawdown(equityCurve) {
+  let peak = equityCurve[0].equity;
+  let maxDDPct = 0;
+  let maxDDAbs = 0;
+  let ddStart = 0;
+  let maxDDDuration = 0;
+  let currentDDStart = 0;
+
+  for (let i = 1; i < equityCurve.length; i++) {
+    const eq = equityCurve[i].equity;
+    if (eq > peak) {
+      peak = eq;
+      currentDDStart = i;
+    }
+
+    const dd = (peak - eq) / peak;
+    const ddAbs = peak - eq;
+
+    if (dd > maxDDPct) {
+      maxDDPct = dd;
+      maxDDAbs = ddAbs;
+      maxDDDuration = i - currentDDStart;
+    }
+  }
+
+  return {
+    pct: maxDDPct * 100,
+    abs: maxDDAbs,
+    duration: maxDDDuration, // in trades
+  };
+}
+
+
+// ═══════════════════════════════════════════════
+// STREAKS
+// ═══════════════════════════════════════════════
+
+function computeStreaks(trades) {
+  let maxWin = 0, maxLoss = 0;
+  let curWin = 0, curLoss = 0;
+
+  for (const t of trades) {
+    if (t.isWinner) {
+      curWin++;
+      curLoss = 0;
+      if (curWin > maxWin) maxWin = curWin;
+    } else {
+      curLoss++;
+      curWin = 0;
+      if (curLoss > maxLoss) maxLoss = curLoss;
+    }
+  }
+
+  return { maxWinStreak: maxWin, maxLossStreak: maxLoss };
+}
+
+
+// ═══════════════════════════════════════════════
+// EXIT REASON BREAKDOWN
+// ═══════════════════════════════════════════════
+
+function computeExitReasonBreakdown(trades) {
+  const breakdown = {};
+
+  for (const t of trades) {
+    const reason = t.primaryExitReason || 'UNKNOWN';
+    if (!breakdown[reason]) {
+      breakdown[reason] = { count: 0, totalPnlPct: 0, wins: 0 };
+    }
+    breakdown[reason].count++;
+    breakdown[reason].totalPnlPct += t.netPnlPct;
+    if (t.isWinner) breakdown[reason].wins++;
+  }
+
+  // Compute averages
+  for (const reason of Object.keys(breakdown)) {
+    const b = breakdown[reason];
+    b.avgPnlPct = round4((b.totalPnlPct / b.count) * 100);
+    b.winRate = round2((b.wins / b.count) * 100);
+    b.totalPnlPct = round4(b.totalPnlPct * 100);
+  }
+
+  return breakdown;
+}
+
+
+// ═══════════════════════════════════════════════
+// DIRECTION STATS
+// ═══════════════════════════════════════════════
+
+function computeDirectionStats(trades) {
+  if (trades.length === 0) return { winRate: 0, avgPnl: 0 };
+  const wins = trades.filter(t => t.isWinner).length;
+  const avgPnl = mean(trades.map(t => t.netPnlPct));
+  return { winRate: wins / trades.length, avgPnl };
+}
+
+
+// ═══════════════════════════════════════════════
+// PNL DISTRIBUTION
+// ═══════════════════════════════════════════════
+
+function computePnLDistribution(pnlArray) {
+  const pctArray = pnlArray.map(p => p * 100);
+
+  const buckets = {
+    'below -2%': 0,
+    '-2% to -1%': 0,
+    '-1% to -0.5%': 0,
+    '-0.5% to 0%': 0,
+    '0% to 0.5%': 0,
+    '0.5% to 1%': 0,
+    '1% to 2%': 0,
+    'above 2%': 0,
+  };
+
+  for (const p of pctArray) {
+    if (p < -2) buckets['below -2%']++;
+    else if (p < -1) buckets['-2% to -1%']++;
+    else if (p < -0.5) buckets['-1% to -0.5%']++;
+    else if (p < 0) buckets['-0.5% to 0%']++;
+    else if (p < 0.5) buckets['0% to 0.5%']++;
+    else if (p < 1) buckets['0.5% to 1%']++;
+    else if (p < 2) buckets['1% to 2%']++;
+    else buckets['above 2%']++;
+  }
+
+  return buckets;
+}
+
+
+// ═══════════════════════════════════════════════
+// SHARPE & PROFIT FACTOR
+// ═══════════════════════════════════════════════
+
+function computeSharpe(pnlArray) {
+  if (pnlArray.length < 2) return 0;
+  const avg = mean(pnlArray);
+  const std = stddev(pnlArray);
+  if (std === 0) return 0;
+  // Annualize: ~250 trading days
+  return (avg / std) * Math.sqrt(250);
+}
+
+function computeProfitFactor(trades) {
+  let grossProfit = 0;
+  let grossLoss = 0;
+
+  for (const t of trades) {
+    if (t.netPnlPct > 0) grossProfit += t.netPnlPct;
+    else grossLoss += Math.abs(t.netPnlPct);
+  }
+
+  return grossLoss > 0 ? grossProfit / grossLoss : Infinity;
+}
+
+
+// ═══════════════════════════════════════════════
+// MONTHLY / WEEKLY BREAKDOWN
+// ═══════════════════════════════════════════════
+
+/**
+ * Group trades by month and compute stats for each.
+ * @param {object[]} trades
+ * @returns {object[]} – [{ month, year, trades, winRate, netPnlPct, ... }]
+ */
+export function monthlyBreakdown(trades) {
+  const groups = {};
+
+  for (const t of trades) {
+    if (!t.entryTime) continue;
+    const d = t.entryTime instanceof Date ? t.entryTime : new Date(t.entryTime);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(t);
+  }
+
+  const result = [];
+  for (const [month, monthTrades] of Object.entries(groups).sort()) {
+    const wins = monthTrades.filter(t => t.isWinner).length;
+    const totalPnl = monthTrades.reduce((sum, t) => sum + t.netPnlPct, 0);
+
+    result.push({
+      month,
+      totalTrades: monthTrades.length,
+      wins,
+      losses: monthTrades.length - wins,
+      winRatePct: round2((wins / monthTrades.length) * 100),
+      netPnlPct: round4(totalPnl * 100),
+      avgPnlPct: round4((totalPnl / monthTrades.length) * 100),
+    });
+  }
+
+  return result;
+}
+
+
+/**
+ * Group trades by day-of-week to find if certain days perform better.
+ * @param {object[]} trades
+ * @returns {object}
+ */
+export function dayOfWeekBreakdown(trades) {
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const groups = {};
+
+  for (const t of trades) {
+    if (!t.entryTime) continue;
+    const d = t.entryTime instanceof Date ? t.entryTime : new Date(t.entryTime);
+    const dow = days[d.getDay()];
+
+    if (!groups[dow]) groups[dow] = [];
+    groups[dow].push(t);
+  }
+
+  const result = {};
+  for (const [dow, dayTrades] of Object.entries(groups)) {
+    const wins = dayTrades.filter(t => t.isWinner).length;
+    const totalPnl = dayTrades.reduce((sum, t) => sum + t.netPnlPct, 0);
+
+    result[dow] = {
+      totalTrades: dayTrades.length,
+      winRatePct: round2((wins / dayTrades.length) * 100),
+      avgPnlPct: round4((totalPnl / dayTrades.length) * 100),
+    };
+  }
+
+  return result;
+}
+
+
+// ═══════════════════════════════════════════════
+// RANGE WIDTH ANALYSIS
+// ═══════════════════════════════════════════════
+
+/**
+ * Analyze how range width correlates with trade outcome.
+ * Useful for tuning RANGE_WIDTH_MIN / MAX filters.
+ */
+export function rangeWidthAnalysis(trades) {
+  const buckets = {
+    '0.2-0.5%': [],
+    '0.5-0.8%': [],
+    '0.8-1.0%': [],
+    '1.0-1.5%': [],
+    '1.5%+': [],
+  };
+
+  for (const t of trades) {
+    const rwPct = (t.rangeWidthPct || 0) * 100;
+    if (rwPct < 0.5) buckets['0.2-0.5%'].push(t);
+    else if (rwPct < 0.8) buckets['0.5-0.8%'].push(t);
+    else if (rwPct < 1.0) buckets['0.8-1.0%'].push(t);
+    else if (rwPct < 1.5) buckets['1.0-1.5%'].push(t);
+    else buckets['1.5%+'].push(t);
+  }
+
+  const result = {};
+  for (const [bucket, bTrades] of Object.entries(buckets)) {
+    if (bTrades.length === 0) {
+      result[bucket] = { count: 0 };
+      continue;
+    }
+    const wins = bTrades.filter(t => t.isWinner).length;
+    const avgPnl = mean(bTrades.map(t => t.netPnlPct));
+    result[bucket] = {
+      count: bTrades.length,
+      winRatePct: round2((wins / bTrades.length) * 100),
+      avgPnlPct: round4(avgPnl * 100),
+    };
+  }
+
+  return result;
+}
+
+
+// ═══════════════════════════════════════════════
+// SUMMARY REPORT (pretty-print to console)
+// ═══════════════════════════════════════════════
+
+export function printReport(stats) {
+  const sep = '═'.repeat(55);
+
+  console.log(`\n${sep}`);
+  console.log(`  ORB STRATEGY BACKTEST REPORT`);
+  console.log(sep);
+
+  console.log(`\n  📊 OVERVIEW`);
+  console.log(`  Total Trades:          ${stats.totalTrades}`);
+  console.log(`  Winners:               ${stats.winners} (${stats.winRatePct}%)`);
+  console.log(`  Losers:                ${stats.losers}`);
+  console.log(`  Win Rate:              ${stats.winRatePct}%`);
+
+  console.log(`\n  💰 PNL`);
+  console.log(`  Total Return:          ${stats.totalReturnPct}% (₹${stats.totalReturnAbs})`);
+  console.log(`  Avg Winner:            ${stats.avgWinPct}%`);
+  console.log(`  Avg Loser:             ${stats.avgLossPct}%`);
+  console.log(`  Win/Loss Ratio:        ${stats.avgWinLossRatio}:1`);
+  console.log(`  Expectancy/Trade:      ${stats.expectancyPct}%`);
+
+  console.log(`\n  ⚠️  RISK`);
+  console.log(`  Max Drawdown:          ${stats.maxDrawdownPct}% (₹${stats.maxDrawdownAbs})`);
+  console.log(`  DD Duration:           ${stats.maxDrawdownDuration} trades`);
+  console.log(`  Sharpe Ratio:          ${stats.sharpeRatio}`);
+  console.log(`  Profit Factor:         ${stats.profitFactor}`);
+  console.log(`  Calmar Ratio:          ${stats.calmarRatio}`);
+
+  console.log(`\n  🔄 STREAKS`);
+  console.log(`  Max Win Streak:        ${stats.maxWinStreak}`);
+  console.log(`  Max Loss Streak:       ${stats.maxLossStreak}`);
+  console.log(`  Profitable Days:       ${stats.profitableDaysPct}%`);
+
+  console.log(`\n  📈 DIRECTION`);
+  console.log(`  Long Trades:           ${stats.longTrades} (WR: ${stats.longWinRate}%, Avg: ${stats.longAvgPnlPct}%)`);
+  console.log(`  Short Trades:          ${stats.shortTrades} (WR: ${stats.shortWinRate}%, Avg: ${stats.shortAvgPnlPct}%)`);
+
+  console.log(`\n  🚪 EXIT REASONS`);
+  for (const [reason, data] of Object.entries(stats.exitReasonBreakdown)) {
+    console.log(`  ${reason.padEnd(20)} Count: ${data.count}, WR: ${data.winRate}%, AvgPnL: ${data.avgPnlPct}%`);
+  }
+
+  console.log(`\n  📉 PNL DISTRIBUTION`);
+  for (const [bucket, count] of Object.entries(stats.pnlDistribution)) {
+    const bar = '█'.repeat(Math.min(count, 40));
+    console.log(`  ${bucket.padEnd(15)} ${String(count).padStart(4)} ${bar}`);
+  }
+
+  console.log(`\n${sep}\n`);
+}
+
+
+// ═══════════════════════════════════════════════
+// UTILITY FUNCTIONS
+// ═══════════════════════════════════════════════
+
+function mean(arr) {
+  if (arr.length === 0) return 0;
+  return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
+function stddev(arr) {
+  if (arr.length < 2) return 0;
+  const m = mean(arr);
+  const variance = arr.reduce((sum, v) => sum + (v - m) ** 2, 0) / (arr.length - 1);
+  return Math.sqrt(variance);
+}
+
+function round2(n) { return Math.round(n * 100) / 100; }
+function round4(n) { return Math.round(n * 10000) / 10000; }
+```
+
+---
+
+## `orb-runner.js`
+
+```javascript
+/**
+ * ORB Runner
+ * 
+ * Ties everything together.
+ * Feed it multi-day data, get back full analysis.
+ * 
+ * USAGE:
+ *   import { runFullBacktest } from './orb-runner.js';
+ *   const results = runFullBacktest(allDaysData, { variant: '15min' });
+ *   // results.report  → full stats object
+ *   // results.trades  → individual trade records
+ */
+
+import { ORB_VARIANT } from './orb-config.js';
+import { runORBForDay } from './orb-core.js';
+import { filterStockEligibility } from './orb-filters.js';
+import {
+  analyzePerformance,
+  monthlyBreakdown,
+  dayOfWeekBreakdown,
+  rangeWidthAnalysis,
+  printReport,
+} from './orb-analyzer.js';
+
+
+// ═══════════════════════════════════════════════
+// GROUP CANDLES BY DAY
+// ═══════════════════════════════════════════════
+
+/**
+ * Takes a flat array of 5-min candles (potentially spanning many days)
+ * and groups them by trading date.
+ * 
+ * @param {object[]} candles – sorted ascending by time
+ * @returns {Map<string, object[]>}  key = 'YYYY-MM-DD', value = day's candles
+ */
+export function groupByDay(candles) {
+  const days = new Map();
+
+  for (const c of candles) {
+    const d = c.time instanceof Date ? c.time : new Date(c.time);
+    const key = d.toISOString().slice(0, 10);
+
+    if (!days.has(key)) days.set(key, []);
+    days.get(key).push(c);
+  }
+
+  return days;
+}
+
+
+// ═══════════════════════════════════════════════
+// MULTI-DAY BACKTEST
+// ═══════════════════════════════════════════════
+
+/**
+ * Run ORB across multiple days and aggregate results.
+ *
+ * @param {object[]} allCandles – flat 5-min candle array, multi-day, sorted by time
+ * @param {object}   opts
+ *   { variant, capital, stockMeta, useGapFilter }
+ * 
+ * @returns {object}
+ *   { trades, report, monthly, dayOfWeek, rangeAnalysis, skippedDays, signals }
+ */
+export function runFullBacktest(allCandles, opts = {}) {
+  const {
+    variant = ORB_VARIANT.ORB_15,
+    capital = 100_000,
+    stockMeta = null,
+    useGapFilter,
+  } = opts;
+
+  // ── Stock-level eligibility (optional pre-check) ──
+  if (stockMeta) {
+    const eligible = filterStockEligibility(stockMeta);
+    if (!eligible.pass) {
+      return {
+        trades: [],
+        report: null,
+        skippedReason: eligible.reason,
+      };
+    }
+  }
+
+  const dayGroups = groupByDay(allCandles);
+  const sortedDates = [...dayGroups.keys()].sort();
+
+  const trades = [];
+  const skippedDays = [];
+  let prevClose = null;
+
+  for (let i = 0; i < sortedDates.length; i++) {
+    const dateKey = sortedDates[i];
+    const dayCandles = dayGroups.get(dateKey);
+
+    if (dayCandles.length < 6) {
+      // Need at least 6 candles (3 ORB + some post-ORB)
+      skippedDays.push({ date: dateKey, reason: 'Insufficient candles' });
+      // Still update prevClose
+      if (dayCandles.length > 0) {
+        prevClose = dayCandles[dayCandles.length - 1].close;
+      }
+      continue;
+    }
+
+    const trade = runORBForDay(dayCandles, {
+      variant,
+      prevClose,
+      useGapFilter,
+    });
+
+    if (trade) {
+      trade.date = dateKey;
+      trades.push(trade);
+    } else {
+      skippedDays.push({ date: dateKey, reason: 'No valid signal' });
+    }
+
+    // Update prevClose for next day's gap filter
+    prevClose = dayCandles[dayCandles.length - 1].close;
+  }
+
+  // ── Analysis ──
+  const report = trades.length > 0 ? analyzePerformance(trades, capital) : null;
+  const monthly = trades.length > 0 ? monthlyBreakdown(trades) : [];
+  const dayOfWeek = trades.length > 0 ? dayOfWeekBreakdown(trades) : {};
+  const rangeAnalysis = trades.length > 0 ? rangeWidthAnalysis(trades) : {};
+
+  return {
+    trades,
+    report,
+    monthly,
+    dayOfWeek,
+    rangeAnalysis,
+    skippedDays,
+    totalDays: sortedDates.length,
+    tradedDays: trades.length,
+    hitRate: trades.length > 0 ? round2((trades.length / sortedDates.length) * 100) : 0,
+  };
+}
+
+
+// ═══════════════════════════════════════════════
+// VARIANT COMPARISON
+// ═══════════════════════════════════════════════
+
+/**
+ * Run both 15-min and 5-min ORB on the same data and compare.
+ */
+export function compareVariants(allCandles, opts = {}) {
+  const result15 = runFullBacktest(allCandles, { ...opts, variant: ORB_VARIANT.ORB_15 });
+  const result5 = runFullBacktest(allCandles, { ...opts, variant: ORB_VARIANT.ORB_5 });
+
+  console.log('\n┌──────────────────────────────────────────────────┐');
+  console.log('│          ORB VARIANT COMPARISON                   │');
+  console.log('├──────────────────────────────────────────────────┤');
+
+  const metrics = [
+    ['Total Trades', result15.report?.totalTrades, result5.report?.totalTrades],
+    ['Win Rate %', result15.report?.winRatePct, result5.report?.winRatePct],
+    ['Avg Win/Loss', result15.report?.avgWinLossRatio, result5.report?.avgWinLossRatio],
+    ['Total Return %', result15.report?.totalReturnPct, result5.report?.totalReturnPct],
+    ['Max DD %', result15.report?.maxDrawdownPct, result5.report?.maxDrawdownPct],
+    ['Sharpe', result15.report?.sharpeRatio, result5.report?.sharpeRatio],
+    ['Profit Factor', result15.report?.profitFactor, result5.report?.profitFactor],
+    ['Expectancy %', result15.report?.expectancyPct, result5.report?.expectancyPct],
+  ];
+
+  console.log(`│ ${'Metric'.padEnd(18)} ${'15-Min ORB'.padStart(12)} ${'5-Min ORB'.padStart(12)} │`);
+  console.log('├──────────────────────────────────────────────────┤');
+  for (const [name, v15, v5] of metrics) {
+    const s15 = v15 != null ? String(v15) : 'N/A';
+    const s5 = v5 != null ? String(v5) : 'N/A';
+    console.log(`│ ${name.padEnd(18)} ${s15.padStart(12)} ${s5.padStart(12)} │`);
+  }
+  console.log('└──────────────────────────────────────────────────┘\n');
+
+  return { orb15: result15, orb5: result5 };
+}
+
+
+// ═══════════════════════════════════════════════
+// MULTI-STOCK SCANNER
+// ═══════════════════════════════════════════════
+
+/**
+ * Run ORB backtest across multiple stocks and rank them.
+ *
+ * @param {Map<string, object[]>} stockCandles – Map<symbol, candles[]>
+ * @param {Map<string, object>}   stockMetas   – Map<symbol, { avgDailyVolume, atr14Pct, avgSpreadPct }>
+ * @param {object} opts
+ * @returns {object[]} – sorted by expectancy descending
+ */
+export function multiStockScan(stockCandles, stockMetas = new Map(), opts = {}) {
+  const results = [];
+
+  for (const [symbol, candles] of stockCandles) {
+    const meta = stockMetas.get(symbol) || null;
+
+    const res = runFullBacktest(candles, { ...opts, stockMeta: meta });
+
+    if (res.report) {
+      results.push({
+        symbol,
+        totalTrades: res.report.totalTrades,
+        winRatePct: res.report.winRatePct,
+        expectancyPct: res.report.expectancyPct,
+        totalReturnPct: res.report.totalReturnPct,
+        maxDrawdownPct: res.report.maxDrawdownPct,
+        profitFactor: res.report.profitFactor,
+        sharpeRatio: res.report.sharpeRatio,
+      });
+    } else {
+      results.push({
+        symbol,
+        skipped: true,
+        reason: res.skippedReason || 'No trades',
+      });
+    }
+  }
+
+  // Sort by expectancy (best first), skipped at bottom
+  results.sort((a, b) => {
+    if (a.skipped && !b.skipped) return 1;
+    if (!a.skipped && b.skipped) return -1;
+    if (a.skipped && b.skipped) return 0;
+    return (b.expectancyPct || 0) - (a.expectancyPct || 0);
+  });
+
+  return results;
+}
+
+
+// ═══════════════════════════════════════════════
+// FULL REPORT WITH PRINT
+// ═══════════════════════════════════════════════
+
+/**
+ * Convenience: run backtest + print full report.
+ */
+export function runAndReport(allCandles, opts = {}) {
+  const result = runFullBacktest(allCandles, opts);
+
+  if (!result.report) {
+    console.log('No trades generated. Check data & filters.');
+    return result;
+  }
+
+  printReport(result.report);
+
+  console.log('\n📅 MONTHLY BREAKDOWN:');
+  console.table(result.monthly);
+
+  console.log('\n📆 DAY-OF-WEEK:');
+  console.table(result.dayOfWeek);
+
+  console.log('\n📏 RANGE WIDTH ANALYSIS:');
+  console.table(result.rangeAnalysis);
+
+  console.log(`\nDays scanned: ${result.totalDays} | Traded: ${result.tradedDays} | Hit rate: ${result.hitRate}%`);
+  console.log(`Skipped days: ${result.skippedDays.length}`);
+
+  return result;
+}
+
+
+// ── Util ──
+function round2(n) { return Math.round(n * 100) / 100; }
+```
+
+---
+
+## How the pieces connect
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        orb-runner.js                        │
+│                                                             │
+│  allCandles[] ──→ groupByDay() ──→ for each day:            │
+│                                      │                      │
+│            ┌─────────────────────────┘                      │
+│            ▼                                                │
+│     ┌─────────────┐                                        │
+│     │ orb-core.js  │                                        │
+│     │              │                                        │
+│     │ runORBForDay │                                        │
+│     │   ├─ computeVWAP()                                   │
+│     │   ├─ buildORBRange()    → { orbHigh, orbLow, ... }   │
+│     │   ├─ detectBreakoutSignal()                          │
+│     │   │    └─ orb-filters.js::runAllFilters()            │
+│     │   │         ├─ filterRangeWidth()                    │
+│     │   │         ├─ filterBreakoutVolume()                │
+│     │   │         ├─ filterVWAP()                          │
+│     │   │         └─ filterGapAlignment()                  │
+│     │   ├─ computeSLAndTargets()                           │
+│     │   └─ simulateTrade()                                 │
+│     │        ├─ SL hit?  → EXIT_REASON.STOP_LOSS          │
+│     │        ├─ T1 hit?  → partial exit 50%, SL→breakeven │
+│     │        ├─ T2 hit?  → partial exit 30%, trail active  │
+│     │        ├─ Trail    → prev candle low/high trailing   │
+│     │        ├─ Noon?    → TIME_STOP if T1 not hit         │
+│     │        └─ 3:15PM?  → TIME_STOP_EOD                  │
+│     └─────────────┘                                        │
+│            │                                                │
+│            ▼ trade records[]                                │
+│     ┌─────────────────┐                                    │
+│     │ orb-analyzer.js  │                                    │
+│     │                  │                                    │
+│     │ analyzePerformance()  → win rate, PF, Sharpe, DD     │
+│     │ monthlyBreakdown()    → month-by-month table         │
+│     │ dayOfWeekBreakdown()  → Mon-Fri edge detection       │
+│     │ rangeWidthAnalysis()  → which ranges work best       │
+│     │ printReport()         → formatted console output     │
+│     └─────────────────┘                                    │
+│                                                             │
+│  Also: compareVariants()   → 15min vs 5min side-by-side    │
+│        multiStockScan()    → rank multiple stocks          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Every config value referenced across all files lives in `orb-config.js`. To tune the strategy, change only that file — the rest adapts. The `simulateTrade` function is the beating heart: it walks candle-by-candle honoring partial exits, trailing stops, time stops, and re-entry-to-range exits exactly as the written strategy specifies.
