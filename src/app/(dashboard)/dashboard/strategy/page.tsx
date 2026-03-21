@@ -2668,25 +2668,29 @@ export default function StrategyAnalysisPage() {
                         {orbResult && (
                             <div className="space-y-4">
                                 {/* Summary */}
-                                <div className="grid grid-cols-3 gap-3">
+                                <div className="grid grid-cols-4 gap-3">
                                     <div className="bg-[var(--background)] rounded-lg p-3 text-center">
-                                        <p className="text-lg font-bold text-orange-400">{orbResult.totalScanned}</p>
-                                        <p className="text-[10px] text-[var(--foreground-muted)]">Stocks Scanned</p>
+                                        <p className="text-lg font-bold text-orange-400">{orbResult.totalSuccessful || 0}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Fetched / {orbResult.totalScanned}</p>
                                     </div>
                                     <div className="bg-[var(--background)] rounded-lg p-3 text-center">
                                         <p className="text-lg font-bold text-amber-400">{orbResult.totalWithSignals}</p>
-                                        <p className="text-[10px] text-[var(--foreground-muted)]">Active Signals{orbResult.highBetaSignals > 0 && <span className="text-orange-400"> ({orbResult.highBetaSignals} F&O)</span>}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Signals{orbResult.highBetaSignals > 0 && <span className="text-orange-400"> ({orbResult.highBetaSignals} F&O)</span>}</p>
                                     </div>
                                     <div className="bg-[var(--background)] rounded-lg p-3 text-center">
                                         <p className="text-lg font-bold text-yellow-400">{orbResult.totalWithBacktest}</p>
                                         <p className="text-[10px] text-[var(--foreground-muted)]">With Backtest</p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-red-400">{orbResult.fetchStats?.failedFetches || 0}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Fetch Errors</p>
                                     </div>
                                 </div>
 
                                 {/* Active Signals Table */}
                                 {orbResult.activeSignals && orbResult.activeSignals.length > 0 && (
                                     <div>
-                                        <h4 className="text-xs font-bold text-orange-400 mb-2 flex items-center gap-1"><Zap size={12} /> Today's ORB Signals</h4>
+                                        <h4 className="text-xs font-bold text-orange-400 mb-2 flex items-center gap-1"><Zap size={12} /> Today&apos;s ORB Signals</h4>
                                         <div className="overflow-x-auto">
                                             <table className="w-full text-xs">
                                                 <thead>
@@ -2731,14 +2735,17 @@ export default function StrategyAnalysisPage() {
 
                                 {orbResult.activeSignals && orbResult.activeSignals.length === 0 && (
                                     <div className="bg-[var(--background)] rounded-lg p-4 text-center">
-                                        <p className="text-xs text-[var(--foreground-muted)]">No ORB breakout signals detected today. Market may be range-bound or signals haven't triggered yet.</p>
+                                        <p className="text-xs text-[var(--foreground-muted)]">
+                                            No ORB breakout signals detected. ORB signals are generated during market hours (9:15 AM – 12:00 PM IST).
+                                            {(orbResult.totalSuccessful || 0) === 0 && ' Yahoo Finance may not have returned 5-minute data for this scan.'}
+                                        </p>
                                     </div>
                                 )}
 
                                 {/* Top Backtested Stocks */}
                                 {orbResult.backtestRanking && orbResult.backtestRanking.length > 0 && (
                                     <div>
-                                        <h4 className="text-xs font-bold text-amber-400 mb-2 flex items-center gap-1"><BarChart3 size={12} /> Backtest Rankings (55-day)</h4>
+                                        <h4 className="text-xs font-bold text-amber-400 mb-2 flex items-center gap-1"><BarChart3 size={12} /> Backtest Rankings (55-day, 5-min candles)</h4>
                                         <div className="overflow-x-auto">
                                             <table className="w-full text-xs">
                                                 <thead>
@@ -2779,11 +2786,57 @@ export default function StrategyAnalysisPage() {
                                     </div>
                                 )}
 
-                                {/* Fetch Stats */}
+                                {/* All Scanned Stocks Fallback (shows when no backtest or signals) */}
+                                {orbResult.allStocks && orbResult.allStocks.length > 0 && (!orbResult.backtestRanking || orbResult.backtestRanking.length === 0) && (
+                                    <div>
+                                        <h4 className="text-xs font-bold text-[var(--foreground)] mb-2 flex items-center gap-1"><Activity size={12} /> Scanned Stocks (top 50 by data quality)</h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-xs">
+                                                <thead>
+                                                    <tr className="text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="text-left py-2 pr-3">Symbol</th>
+                                                        <th className="text-center py-2 px-2">Days</th>
+                                                        <th className="text-center py-2 px-2">Candles</th>
+                                                        <th className="text-center py-2 px-2">ATR%</th>
+                                                        <th className="text-right py-2 px-2">Avg Vol</th>
+                                                        <th className="text-center py-2 pl-2">Backtest</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {orbResult.allStocks.map((s: any, i: number) => (
+                                                        <tr key={i} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-2 pr-3 font-medium text-[var(--foreground)]">
+                                                                {s.symbol}
+                                                                {s.isHighBeta && <span className="ml-1 px-1 py-0.5 rounded text-[8px] bg-orange-500/20 text-orange-400 font-bold">F&O</span>}
+                                                            </td>
+                                                            <td className="py-2 px-2 text-center">{s.daysOfData || 0}</td>
+                                                            <td className="py-2 px-2 text-center">{s.totalCandles || 0}</td>
+                                                            <td className="py-2 px-2 text-center text-orange-400">{s.atr14Pct || 0}%</td>
+                                                            <td className="py-2 px-2 text-right">{s.avgDailyVolume ? (s.avgDailyVolume / 1e6).toFixed(1) + 'M' : '—'}</td>
+                                                            <td className="py-2 pl-2 text-center">
+                                                                {s.backtest ? (
+                                                                    <span className="text-emerald-400">{s.backtest.totalTrades} trades</span>
+                                                                ) : (
+                                                                    <span className="text-[var(--foreground-muted)]">No trades</span>
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Always show fetch stats */}
                                 {orbResult.fetchStats && (
-                                    <div className="text-[10px] text-[var(--foreground-muted)] flex items-center gap-4">
-                                        <span>Stocks: {orbResult.fetchStats.successfulFetches}/{orbResult.fetchStats.totalSymbols}</span>
-                                        <span>Errors: {orbResult.fetchStats.failedFetches}</span>
+                                    <div className="bg-[var(--background)] rounded-lg p-3">
+                                        <div className="text-[10px] text-[var(--foreground-muted)] flex items-center gap-4 flex-wrap">
+                                            <span>📡 Fetched: {orbResult.fetchStats.successfulFetches}/{orbResult.fetchStats.totalSymbols} stocks</span>
+                                            <span>❌ Errors: {orbResult.fetchStats.failedFetches}</span>
+                                            <span>📊 Backtests: {orbResult.totalWithBacktest}</span>
+                                            <span>⚡ Signals: {orbResult.totalWithSignals}</span>
+                                        </div>
                                     </div>
                                 )}
                             </div>

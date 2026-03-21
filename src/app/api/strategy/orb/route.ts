@@ -201,7 +201,7 @@ export async function GET() {
 
         // Separate stocks with today's signal vs without
         const activeSignals = stockResults.filter(s => s.todaySignal !== null)
-        const noSignal = stockResults.filter(s => s.todaySignal === null && s.backtest)
+        const withBacktest = stockResults.filter(s => s.backtest)
 
         // Sort active: high-beta first, then by direction
         activeSignals.sort((a, b) => {
@@ -210,21 +210,31 @@ export async function GET() {
           return 0
         })
 
-        // Sort no-signal: high-beta first, then by win rate
-        noSignal.sort((a, b) => {
+        // Sort backtest ranking: high-beta first, then by win rate
+        withBacktest.sort((a, b) => {
           if (a.isHighBeta !== b.isHighBeta) return a.isHighBeta ? -1 : 1
           return (b.backtest?.winRatePct || 0) - (a.backtest?.winRatePct || 0)
+        })
+
+        // Also create a full list sorted by high-beta + data availability
+        const allStocks = [...stockResults].sort((a, b) => {
+          if (a.isHighBeta !== b.isHighBeta) return a.isHighBeta ? -1 : 1
+          if (a.backtest && !b.backtest) return -1
+          if (!a.backtest && b.backtest) return 1
+          return (b.atr14Pct || 0) - (a.atr14Pct || 0)
         })
 
         const highBetaSignals = activeSignals.filter(s => s.isHighBeta).length
 
         send('result', {
           activeSignals,
-          backtestRanking: noSignal.slice(0, 30),
+          backtestRanking: withBacktest.slice(0, 30),
+          allStocks: allStocks.slice(0, 50),
           totalScanned: allSymbols.length,
           totalWithSignals: activeSignals.length,
           highBetaSignals,
-          totalWithBacktest: stockResults.filter(s => s.backtest).length,
+          totalWithBacktest: withBacktest.length,
+          totalSuccessful: stockResults.length,
           fetchStats: {
             totalSymbols: allSymbols.length,
             successfulFetches: stockResults.length,
