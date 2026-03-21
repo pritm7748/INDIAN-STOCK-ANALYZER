@@ -241,6 +241,8 @@ export default function StrategyAnalysisPage() {
             const decoder = new TextDecoder()
             let buffer = ''
 
+            let currentEvent = ''
+
             while (true) {
                 const { done, value } = await reader.read()
                 if (done) break
@@ -249,7 +251,7 @@ export default function StrategyAnalysisPage() {
                 const lines = buffer.split('\n')
                 buffer = lines.pop() || ''
 
-                let currentEvent = ''
+
                 for (const line of lines) {
                     if (line.startsWith('event: ')) {
                         currentEvent = line.slice(7).trim()
@@ -305,6 +307,7 @@ export default function StrategyAnalysisPage() {
             const reader = res.body.getReader()
             const decoder = new TextDecoder()
             let buffer = ''
+            let currentEvent = ''
 
             while (true) {
                 const { done, value } = await reader.read()
@@ -314,7 +317,6 @@ export default function StrategyAnalysisPage() {
                 const lines = buffer.split('\n')
                 buffer = lines.pop() || ''
 
-                let currentEvent = ''
                 for (const line of lines) {
                     if (line.startsWith('event: ')) {
                         currentEvent = line.slice(7).trim()
@@ -370,6 +372,7 @@ export default function StrategyAnalysisPage() {
             const reader = res.body.getReader()
             const decoder = new TextDecoder()
             let buffer = ''
+            let currentEvent = ''
 
             while (true) {
                 const { done, value } = await reader.read()
@@ -379,7 +382,6 @@ export default function StrategyAnalysisPage() {
                 const lines = buffer.split('\n')
                 buffer = lines.pop() || ''
 
-                let currentEvent = ''
                 for (const line of lines) {
                     if (line.startsWith('event: ')) {
                         currentEvent = line.slice(7).trim()
@@ -435,6 +437,7 @@ export default function StrategyAnalysisPage() {
             const reader = res.body.getReader()
             const decoder = new TextDecoder()
             let buffer = ''
+            let currentEvent = ''
 
             while (true) {
                 const { done, value } = await reader.read()
@@ -444,7 +447,6 @@ export default function StrategyAnalysisPage() {
                 const lines = buffer.split('\n')
                 buffer = lines.pop() || ''
 
-                let currentEvent = ''
                 for (const line of lines) {
                     if (line.startsWith('event: ')) {
                         currentEvent = line.slice(7).trim()
@@ -501,6 +503,8 @@ export default function StrategyAnalysisPage() {
             const decoder = new TextDecoder()
             let buffer = ''
 
+            let currentEvent = ''
+
             while (true) {
                 const { done, value } = await reader.read()
                 if (done) break
@@ -509,7 +513,7 @@ export default function StrategyAnalysisPage() {
                 const lines = buffer.split('\n')
                 buffer = lines.pop() || ''
 
-                let currentEvent = ''
+
                 for (const line of lines) {
                     if (line.startsWith('event: ')) {
                         currentEvent = line.slice(7).trim()
@@ -566,6 +570,7 @@ export default function StrategyAnalysisPage() {
             const reader = res.body.getReader()
             const decoder = new TextDecoder()
             let buffer = ''
+            let currentEvent = ''
 
             while (true) {
                 const { done, value } = await reader.read()
@@ -575,7 +580,6 @@ export default function StrategyAnalysisPage() {
                 const lines = buffer.split('\n')
                 buffer = lines.pop() || ''
 
-                let currentEvent = ''
                 for (const line of lines) {
                     if (line.startsWith('event: ')) {
                         currentEvent = line.slice(7).trim()
@@ -634,6 +638,7 @@ export default function StrategyAnalysisPage() {
             const reader = res.body.getReader()
             const decoder = new TextDecoder()
             let buffer = ''
+            let currentEvent = ''
 
             while (true) {
                 const { done, value } = await reader.read()
@@ -643,7 +648,6 @@ export default function StrategyAnalysisPage() {
                 const lines = buffer.split('\n')
                 buffer = lines.pop() || ''
 
-                let currentEvent = ''
                 for (const line of lines) {
                     if (line.startsWith('event: ')) {
                         currentEvent = line.slice(7).trim()
