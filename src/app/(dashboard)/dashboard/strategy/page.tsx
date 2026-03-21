@@ -7,7 +7,7 @@ import {
     ChevronRight, Activity, Clock, Filter, Info, StopCircle,
     CalendarDays, ArrowRightLeft, ShieldCheck, Play,
     Crosshair, Eye, GitPullRequestArrow, PieChart, Repeat,
-    Newspaper, Sparkles, ArrowUpRight
+    Newspaper, Sparkles, ArrowUpRight, Layers
 } from 'lucide-react'
 
 interface Holding {
@@ -150,6 +150,14 @@ export default function StrategyAnalysisPage() {
     const [boStatusMsg, setBoStatusMsg] = useState('')
     const boAbortRef = useRef<AbortController | null>(null)
 
+    // Factor Strategy state
+    const [fcScanning, setFcScanning] = useState(false)
+    const [fcResult, setFcResult] = useState<any>(null)
+    const [fcError, setFcError] = useState('')
+    const [fcProgress, setFcProgress] = useState<ScanProgress | null>(null)
+    const [fcStatusMsg, setFcStatusMsg] = useState('')
+    const fcAbortRef = useRef<AbortController | null>(null)
+
     const timeframes = [
         { id: '1W', label: '1 Week', available: false },
         { id: '1M', label: '1 Month', available: true },
@@ -192,6 +200,12 @@ export default function StrategyAnalysisPage() {
         boAbortRef.current?.abort()
         setBoScanning(false)
         setBoStatusMsg('Scan stopped')
+    }, [])
+
+    const stopFcScan = useCallback(() => {
+        fcAbortRef.current?.abort()
+        setFcScanning(false)
+        setFcStatusMsg('Scan stopped')
     }, [])
 
     const runSectorRotation = useCallback(async () => {
@@ -386,6 +400,71 @@ export default function StrategyAnalysisPage() {
             }
         } finally {
             setBoScanning(false)
+        }
+    }, [])
+
+    const runFactor = useCallback(async () => {
+        setFcScanning(true)
+        setFcError('')
+        setFcResult(null)
+        setFcProgress(null)
+        setFcStatusMsg('Connecting...')
+
+        const abort = new AbortController()
+        fcAbortRef.current = abort
+
+        try {
+            const res = await fetch('/api/strategy/factor', { signal: abort.signal })
+            if (!res.ok || !res.body) throw new Error('Failed to connect')
+
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+
+                let currentEvent = ''
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        currentEvent = line.slice(7).trim()
+                    } else if (line.startsWith('data: ') && currentEvent) {
+                        try {
+                            const data = JSON.parse(line.slice(6))
+                            switch (currentEvent) {
+                                case 'status':
+                                    setFcStatusMsg(data.message || '')
+                                    break
+                                case 'progress':
+                                    setFcProgress(data)
+                                    setFcStatusMsg(`Scanning... ${data.scanned}/${data.total} stocks (${data.pct}%)`)
+                                    break
+                                case 'result':
+                                    setFcResult(data)
+                                    setFcStatusMsg('Analysis complete!')
+                                    break
+                                case 'error':
+                                    setFcError(data.message)
+                                    break
+                                case 'done':
+                                    break
+                            }
+                        } catch { /* skip */ }
+                        currentEvent = ''
+                    }
+                }
+            }
+        } catch (err: any) {
+            if (err.name !== 'AbortError') {
+                setFcError(err.message || 'Something went wrong')
+            }
+        } finally {
+            setFcScanning(false)
         }
     }, [])
 
@@ -2280,17 +2359,179 @@ export default function StrategyAnalysisPage() {
                         )}
                     </div>
 
-                    {/* More strategies placeholder */}
-                    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-6 border-dashed opacity-60">
-                        <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-[var(--background)] rounded-xl flex items-center justify-center">
-                                <Clock size={20} className="text-[var(--foreground-muted)]" />
+                    {/* Strategy 7: Factor-Based / Quantitative Stock Selection */}
+                    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-6 hover:border-indigo-500/30 transition-all">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-gradient-to-br from-indigo-500/20 to-violet-500/20 rounded-xl flex items-center justify-center">
+                                    <Layers size={20} className="text-indigo-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-bold text-[var(--foreground)]">Multi-Factor Quant Selection</h3>
+                                    <p className="text-[10px] text-[var(--foreground-muted)]">Momentum 35% · Value 25% · Quality 20% · Revision 20% · 1-month hold</p>
+                                </div>
                             </div>
-                            <div>
-                                <h3 className="text-sm font-bold text-[var(--foreground-muted)]">More 1-Month strategies coming soon</h3>
-                                <p className="text-[10px] text-[var(--foreground-muted)]">Value Momentum · Quality Factor</p>
-                            </div>
+                            {fcScanning ? (
+                                <button onClick={stopFcScan} className="flex items-center gap-1.5 bg-red-500/10 text-red-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-all">
+                                    <StopCircle size={14} /> Stop
+                                </button>
+                            ) : (
+                                <button onClick={runFactor} className="flex items-center gap-1.5 bg-indigo-500/10 text-indigo-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-indigo-500/20 transition-all">
+                                    <Play size={14} /> Scan
+                                </button>
+                            )}
                         </div>
+
+                        {/* Progress */}
+                        {fcScanning && (
+                            <div className="mb-4">
+                                <div className="flex items-center gap-2 text-xs text-indigo-400 mb-2">
+                                    <Loader2 size={14} className="animate-spin" />
+                                    <span>{fcStatusMsg}</span>
+                                </div>
+                                {fcProgress && (
+                                    <div className="w-full bg-[var(--background)] rounded-full h-1.5">
+                                        <div className="bg-gradient-to-r from-indigo-500 to-violet-500 h-1.5 rounded-full transition-all" style={{ width: `${fcProgress.pct}%` }} />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Error */}
+                        {fcError && (
+                            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-4">
+                                <p className="text-xs text-red-400"><AlertTriangle size={12} className="inline mr-1" />{fcError}</p>
+                            </div>
+                        )}
+
+                        {/* Results */}
+                        {fcResult && (
+                            <div className="space-y-4">
+                                {/* Summary */}
+                                <div className="grid grid-cols-3 gap-3">
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-indigo-400">{fcResult.totalScanned}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Stocks Scanned</p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-violet-400">{fcResult.qualifying}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Qualifying</p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-fuchsia-400">{fcResult.topStocks?.length || 0}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Top Picks</p>
+                                    </div>
+                                </div>
+
+                                {/* Top 15 Factor Picks Table */}
+                                {fcResult.topStocks && fcResult.topStocks.length > 0 && (
+                                    <div>
+                                        <h4 className="text-xs font-bold text-indigo-400 mb-2 flex items-center gap-1"><Layers size={12} /> Top 15 Factor Picks</h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-xs">
+                                                <thead>
+                                                    <tr className="text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="text-left py-2 pr-3">#</th>
+                                                        <th className="text-left py-2 pr-3">Symbol</th>
+                                                        <th className="text-center py-2 px-2">Composite</th>
+                                                        <th className="text-center py-2 px-2">Mom%</th>
+                                                        <th className="text-center py-2 px-2">Val%</th>
+                                                        <th className="text-center py-2 px-2">Qual%</th>
+                                                        <th className="text-center py-2 px-2">Rev%</th>
+                                                        <th className="text-right py-2 px-2">Price</th>
+                                                        <th className="text-right py-2 pl-2">3M Ret</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {fcResult.topStocks.map((s: any, i: number) => (
+                                                        <tr key={i} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-2 pr-3 text-[var(--foreground-muted)]">{s.rank}</td>
+                                                            <td className="py-2 pr-3 font-medium text-[var(--foreground)]">{s.symbol?.replace('.NS', '')}</td>
+                                                            <td className="py-2 px-2 text-center">
+                                                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-400">
+                                                                    {s.compositeScore?.toFixed(1)}
+                                                                </span>
+                                                            </td>
+                                                            <td className="py-2 px-2 text-center">
+                                                                <div className="flex items-center gap-1 justify-center">
+                                                                    <div className="w-8 h-1.5 bg-[var(--card-border)] rounded-full overflow-hidden">
+                                                                        <div className="h-full bg-cyan-400 rounded-full" style={{ width: `${s.momentumPctile || 0}%` }} />
+                                                                    </div>
+                                                                    <span className="text-[10px] text-cyan-400">{s.momentumPctile?.toFixed(0) || '—'}</span>
+                                                                </div>
+                                                            </td>
+                                                            <td className="py-2 px-2 text-center">
+                                                                <div className="flex items-center gap-1 justify-center">
+                                                                    <div className="w-8 h-1.5 bg-[var(--card-border)] rounded-full overflow-hidden">
+                                                                        <div className="h-full bg-amber-400 rounded-full" style={{ width: `${s.valuePctile || 0}%` }} />
+                                                                    </div>
+                                                                    <span className="text-[10px] text-amber-400">{s.valuePctile?.toFixed(0) || '—'}</span>
+                                                                </div>
+                                                            </td>
+                                                            <td className="py-2 px-2 text-center">
+                                                                <div className="flex items-center gap-1 justify-center">
+                                                                    <div className="w-8 h-1.5 bg-[var(--card-border)] rounded-full overflow-hidden">
+                                                                        <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${s.qualityPctile || 0}%` }} />
+                                                                    </div>
+                                                                    <span className="text-[10px] text-emerald-400">{s.qualityPctile?.toFixed(0) || '—'}</span>
+                                                                </div>
+                                                            </td>
+                                                            <td className="py-2 px-2 text-center">
+                                                                <div className="flex items-center gap-1 justify-center">
+                                                                    <div className="w-8 h-1.5 bg-[var(--card-border)] rounded-full overflow-hidden">
+                                                                        <div className="h-full bg-violet-400 rounded-full" style={{ width: `${s.revisionPctile || 0}%` }} />
+                                                                    </div>
+                                                                    <span className="text-[10px] text-violet-400">{s.revisionPctile?.toFixed(0) || '—'}</span>
+                                                                </div>
+                                                            </td>
+                                                            <td className="py-2 px-2 text-right text-[var(--foreground)]">₹{s.currentPrice?.toFixed(0)}</td>
+                                                            <td className={`py-2 pl-2 text-right font-medium ${(s.ret3m || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                                                {s.ret3m !== null ? `${s.ret3m?.toFixed(1)}%` : '—'}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {fcResult.topStocks && fcResult.topStocks.length === 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4 text-center">
+                                        <p className="text-xs text-[var(--foreground-muted)]">No stocks passed all factor filters. Check data availability.</p>
+                                    </div>
+                                )}
+
+                                {/* Watchlist (rank 16-30) */}
+                                {fcResult.watchlist && fcResult.watchlist.length > 0 && (
+                                    <div>
+                                        <h4 className="text-xs font-bold text-violet-400 mb-2 flex items-center gap-1"><Eye size={12} /> Next-in-Line Watchlist (Rank 16-30)</h4>
+                                        <div className="space-y-1">
+                                            {fcResult.watchlist.map((w: any, i: number) => (
+                                                <div key={i} className="bg-[var(--background)] rounded-lg p-2 flex items-center justify-between">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-[10px] text-[var(--foreground-muted)] w-5">#{w.rank}</span>
+                                                        <span className="text-xs font-medium text-[var(--foreground)]">{w.symbol?.replace('.NS', '')}</span>
+                                                        <span className="text-[10px] text-[var(--foreground-muted)]">{w.sector}</span>
+                                                    </div>
+                                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 font-medium">
+                                                        {w.compositeScore?.toFixed(1)}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Fetch Stats */}
+                                {fcResult.fetchStats && (
+                                    <div className="text-[10px] text-[var(--foreground-muted)] flex items-center gap-4">
+                                        <span>Stocks: {fcResult.fetchStats.successfulFetches}/{fcResult.fetchStats.totalSymbols}</span>
+                                        <span>Errors: {fcResult.fetchStats.failedFetches}</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
