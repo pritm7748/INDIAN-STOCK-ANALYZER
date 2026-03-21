@@ -166,6 +166,14 @@ export default function StrategyAnalysisPage() {
     const [orbStatusMsg, setOrbStatusMsg] = useState('')
     const orbAbortRef = useRef<AbortController | null>(null)
 
+    // VWAP (Intraday) state
+    const [vwapScanning, setVwapScanning] = useState(false)
+    const [vwapResult, setVwapResult] = useState<any>(null)
+    const [vwapError, setVwapError] = useState('')
+    const [vwapProgress, setVwapProgress] = useState<ScanProgress | null>(null)
+    const [vwapStatusMsg, setVwapStatusMsg] = useState('')
+    const vwapAbortRef = useRef<AbortController | null>(null)
+
     const timeframes = [
         { id: '1D', label: 'Intraday', available: true },
         { id: '1W', label: '1 Week', available: false },
@@ -221,6 +229,77 @@ export default function StrategyAnalysisPage() {
         orbAbortRef.current?.abort()
         setOrbScanning(false)
         setOrbStatusMsg('Scan stopped')
+    }, [])
+
+    const runVwap = useCallback(async () => {
+        setVwapScanning(true)
+        setVwapError('')
+        setVwapResult(null)
+        setVwapProgress(null)
+        setVwapStatusMsg('Connecting...')
+
+        const abort = new AbortController()
+        vwapAbortRef.current = abort
+
+        try {
+            const res = await fetch('/api/strategy/vwap', { signal: abort.signal })
+            if (!res.ok || !res.body) throw new Error('Failed to connect')
+
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+            let currentEvent = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        currentEvent = line.slice(7).trim()
+                    } else if (line.startsWith('data: ') && currentEvent) {
+                        try {
+                            const data = JSON.parse(line.slice(6))
+                            switch (currentEvent) {
+                                case 'status':
+                                    setVwapStatusMsg(data.message || '')
+                                    break
+                                case 'progress':
+                                    setVwapProgress(data)
+                                    setVwapStatusMsg(`Scanning... ${data.scanned}/${data.total} stocks (${data.pct}%)`)
+                                    break
+                                case 'result':
+                                    setVwapResult(data)
+                                    setVwapStatusMsg('Analysis complete!')
+                                    break
+                                case 'error':
+                                    setVwapError(data.message)
+                                    break
+                                case 'done':
+                                    break
+                            }
+                        } catch { /* skip */ }
+                        currentEvent = ''
+                    }
+                }
+            }
+        } catch (err: any) {
+            if (err.name !== 'AbortError') {
+                setVwapError(err.message || 'Something went wrong')
+            }
+        } finally {
+            setVwapScanning(false)
+        }
+    }, [])
+
+    const stopVwapScan = useCallback(() => {
+        vwapAbortRef.current?.abort()
+        setVwapScanning(false)
+        setVwapStatusMsg('Scan stopped')
     }, [])
 
     const runSectorRotation = useCallback(async () => {
@@ -2840,6 +2919,223 @@ export default function StrategyAnalysisPage() {
                                             <span>❌ Errors: {orbResult.fetchStats.failedFetches}</span>
                                             <span>📊 Backtests: {orbResult.totalWithBacktest}</span>
                                             <span>⚡ Signals: {orbResult.totalWithSignals}</span>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Strategy 2: VWAP Trading */}
+                    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-6 hover:border-purple-500/30 transition-all">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-gradient-to-br from-purple-500/20 to-violet-500/20 rounded-xl flex items-center justify-center">
+                                    <Activity size={20} className="text-purple-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-bold text-[var(--foreground)]">VWAP Trading</h3>
+                                    <p className="text-[10px] text-[var(--foreground-muted)]">Pullback + Breakout · VWAP ±SD Bands · EMA(9) Trail · All 500+ stocks</p>
+                                </div>
+                            </div>
+                            {vwapScanning ? (
+                                <button onClick={stopVwapScan} className="flex items-center gap-1.5 bg-red-500/10 text-red-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-all">
+                                    <StopCircle size={14} /> Stop
+                                </button>
+                            ) : (
+                                <button onClick={runVwap} className="flex items-center gap-1.5 bg-purple-500/10 text-purple-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-purple-500/20 transition-all">
+                                    <Play size={14} /> Scan
+                                </button>
+                            )}
+                        </div>
+
+                        {vwapScanning && (
+                            <div className="mb-4">
+                                <p className="text-xs text-purple-300 mb-2">{vwapStatusMsg}</p>
+                                {vwapProgress && (
+                                    <div className="w-full bg-[var(--background)] rounded-full h-1.5">
+                                        <div className="bg-gradient-to-r from-purple-500 to-violet-500 h-1.5 rounded-full transition-all" style={{ width: `${vwapProgress.pct}%` }} />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {vwapError && (
+                            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-4">
+                                <p className="text-xs text-red-400">{vwapError}</p>
+                            </div>
+                        )}
+
+                        {vwapResult && (
+                            <div className="space-y-4">
+                                {/* Summary Stats */}
+                                <div className="grid grid-cols-4 gap-3">
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-purple-400">{vwapResult.totalSuccessful || 0}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Fetched</p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-green-400">{vwapResult.totalWithSignals || 0}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Signals</p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-violet-400">{vwapResult.totalWithBacktest || 0}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Backtests</p>
+                                    </div>
+                                    <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                        <p className="text-lg font-bold text-red-400">{vwapResult.fetchStats?.failedFetches || 0}</p>
+                                        <p className="text-[10px] text-[var(--foreground-muted)]">Errors</p>
+                                    </div>
+                                </div>
+
+                                {/* Today's VWAP Signals */}
+                                {vwapResult.activeSignals && vwapResult.activeSignals.length > 0 ? (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-purple-400 mb-3 flex items-center gap-1.5">
+                                            <Sparkles size={14} /> Today&apos;s VWAP Signals
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="pb-2 pr-3">Symbol</th>
+                                                        <th className="pb-2 pr-3">Setup</th>
+                                                        <th className="pb-2 pr-3">Dir</th>
+                                                        <th className="pb-2 pr-3">Entry</th>
+                                                        <th className="pb-2 pr-3">SL</th>
+                                                        <th className="pb-2 pr-3">VWAP</th>
+                                                        <th className="pb-2 pr-3">P&L</th>
+                                                        <th className="pb-2">Exit</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {vwapResult.activeSignals.map((s: any, idx: number) => (
+                                                        s.todaySignals?.map((sig: any, sIdx: number) => (
+                                                            <tr key={`${idx}-${sIdx}`} className="border-b border-[var(--card-border)]/30">
+                                                                <td className="py-2 pr-3 font-medium text-[var(--foreground)]">
+                                                                    {s.symbol}
+                                                                    {s.isHighBeta && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-300">F&O</span>}
+                                                                </td>
+                                                                <td className="py-2 pr-3">
+                                                                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${sig.setup === 'PULLBACK' ? 'bg-blue-500/15 text-blue-400' : 'bg-amber-500/15 text-amber-400'}`}>
+                                                                        {sig.setup}
+                                                                    </span>
+                                                                </td>
+                                                                <td className={`py-2 pr-3 font-medium ${sig.direction === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>
+                                                                    {sig.direction}
+                                                                </td>
+                                                                <td className="py-2 pr-3 text-[var(--foreground)]">₹{sig.entryPrice}</td>
+                                                                <td className="py-2 pr-3 text-red-400">₹{sig.sl}</td>
+                                                                <td className="py-2 pr-3 text-purple-400">₹{sig.vwap}</td>
+                                                                <td className={`py-2 pr-3 font-medium ${sig.pnlPct != null ? (sig.pnlPct >= 0 ? 'text-green-400' : 'text-red-400') : 'text-[var(--foreground-muted)]'}`}>
+                                                                    {sig.pnlPct != null ? `${sig.pnlPct > 0 ? '+' : ''}${sig.pnlPct}%` : '—'}
+                                                                </td>
+                                                                <td className="py-2 text-[var(--foreground-muted)] text-[10px]">
+                                                                    {sig.exitReason?.replace(/_/g, ' ') || '—'}
+                                                                </td>
+                                                            </tr>
+                                                        ))
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <p className="text-xs text-[var(--foreground-muted)] text-center">
+                                            No VWAP signals today. Pullback signals are best between 10:00 AM – 12:30 PM IST.
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* Backtest Ranking */}
+                                {vwapResult.backtestRanking && vwapResult.backtestRanking.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-violet-400 mb-3 flex items-center gap-1.5">
+                                            <BarChart3 size={14} /> VWAP Backtest Ranking (Top 30)
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="pb-2 pr-3">Symbol</th>
+                                                        <th className="pb-2 pr-3">Trades</th>
+                                                        <th className="pb-2 pr-3">Win%</th>
+                                                        <th className="pb-2 pr-3">Expect%</th>
+                                                        <th className="pb-2 pr-3">Return%</th>
+                                                        <th className="pb-2 pr-3">PF</th>
+                                                        <th className="pb-2">Sharpe</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {vwapResult.backtestRanking.map((s: any, idx: number) => (
+                                                        <tr key={idx} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-2 pr-3 font-medium text-[var(--foreground)]">
+                                                                {s.symbol}
+                                                                {s.isHighBeta && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-300">F&O</span>}
+                                                            </td>
+                                                            <td className="py-2 pr-3 text-[var(--foreground)]">{s.backtest?.totalTrades}</td>
+                                                            <td className={`py-2 pr-3 font-medium ${(s.backtest?.winRatePct || 0) >= 55 ? 'text-green-400' : (s.backtest?.winRatePct || 0) >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>
+                                                                {s.backtest?.winRatePct}%
+                                                            </td>
+                                                            <td className={`py-2 pr-3 ${(s.backtest?.expectancyPct || 0) > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                                {s.backtest?.expectancyPct}%
+                                                            </td>
+                                                            <td className={`py-2 pr-3 ${(s.backtest?.totalReturnPct || 0) > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                                {s.backtest?.totalReturnPct}%
+                                                            </td>
+                                                            <td className="py-2 pr-3 text-[var(--foreground)]">{s.backtest?.profitFactor}</td>
+                                                            <td className="py-2 text-[var(--foreground)]">{s.backtest?.sharpeRatio}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Scanned Stocks Fallback */}
+                                {(!vwapResult.backtestRanking || vwapResult.backtestRanking.length === 0) && vwapResult.allStocks && vwapResult.allStocks.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-[var(--foreground-muted)] mb-3">Scanned Stocks (Top 50)</h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="pb-2 pr-3">Symbol</th>
+                                                        <th className="pb-2 pr-3">Days</th>
+                                                        <th className="pb-2 pr-3">Candles</th>
+                                                        <th className="pb-2 pr-3">ATR%</th>
+                                                        <th className="pb-2">Backtest</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {vwapResult.allStocks.map((s: any, idx: number) => (
+                                                        <tr key={idx} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">
+                                                                {s.symbol}
+                                                                {s.isHighBeta && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-300">F&O</span>}
+                                                            </td>
+                                                            <td className="py-1.5 pr-3 text-[var(--foreground-muted)]">{s.daysOfData}</td>
+                                                            <td className="py-1.5 pr-3 text-[var(--foreground-muted)]">{s.totalCandles}</td>
+                                                            <td className="py-1.5 pr-3 text-[var(--foreground-muted)]">{s.atr14Pct}%</td>
+                                                            <td className="py-1.5 text-[var(--foreground-muted)]">{s.backtest ? `${s.backtest.totalTrades} trades` : 'No data'}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Fetch Stats */}
+                                {vwapResult.fetchStats && (
+                                    <div className="bg-[var(--background)] rounded-lg p-3">
+                                        <div className="text-[10px] text-[var(--foreground-muted)] flex items-center gap-4 flex-wrap">
+                                            <span>📡 Fetched: {vwapResult.fetchStats.successfulFetches}/{vwapResult.fetchStats.totalSymbols} stocks</span>
+                                            <span>❌ Errors: {vwapResult.fetchStats.failedFetches}</span>
+                                            <span>📊 Backtests: {vwapResult.totalWithBacktest}</span>
+                                            <span>⚡ Signals: {vwapResult.totalWithSignals}</span>
                                         </div>
                                     </div>
                                 )}
