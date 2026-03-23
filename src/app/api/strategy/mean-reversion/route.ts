@@ -31,6 +31,7 @@ export async function GET() {
         const startDate = new Date()
         startDate.setMonth(endDate.getMonth() - 12) // 12 months for 200-SMA + buffer
         const period1 = startDate.toISOString().split('T')[0]
+        const period2 = new Date(endDate.getTime() + 86400000).toISOString().split('T')[0]
 
         const allSymbols = STOCK_LIST
         const total = allSymbols.length
@@ -40,7 +41,7 @@ export async function GET() {
         // 1. Fetch Nifty 50 data for market regime check
         let niftyCloses: number[] = []
         try {
-          const niftyResult = await yf.chart('^NSEI', { period1, interval: '1d' } as any) as any
+          const niftyResult = await yf.chart('^NSEI', { period1, period2, interval: '1d' } as any) as any
           if (niftyResult?.quotes) {
             niftyCloses = niftyResult.quotes
               .filter((q: any) => q.close !== null)
@@ -61,7 +62,7 @@ export async function GET() {
           const results = await Promise.allSettled(
             batch.map(async (stock) => {
               // stock.symbol already has .NS suffix (e.g., RELIANCE.NS)
-              const chartResult = await yf.chart(stock.symbol, { period1, interval: '1d' } as any) as any
+              const chartResult = await yf.chart(stock.symbol, { period1, period2, interval: '1d' } as any) as any
               if (!chartResult?.quotes || chartResult.quotes.length < 50) {
                 throw new Error('Insufficient data')
               }
@@ -116,7 +117,7 @@ export async function GET() {
         // 3. Run the full mean-reversion engine
         send({ type: 'status', message: `Analyzing ${stockDataList.length} stocks...` })
 
-        const currentDate = new Date().toISOString().slice(0, 10)
+        const currentDate = new Date(Date.now() + (5.5 * 60 * 60 * 1000)).toISOString().slice(0, 10) // IST
         const scanResult = scanUniverse(stockDataList, niftyCloses, currentDate)
 
         send({

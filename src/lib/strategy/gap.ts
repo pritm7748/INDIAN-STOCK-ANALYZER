@@ -746,7 +746,7 @@ export function groupByDay(candles: any[]) {
   const days = new Map<string, any[]>()
   for (const c of candles) {
     const d = c.time instanceof Date ? c.time : new Date(c.time)
-    const key = d.toISOString().slice(0, 10)
+    const key = new Date(d.getTime() + (5.5 * 60 * 60 * 1000)).toISOString().slice(0, 10)
     if (!days.has(key)) days.set(key, [])
     days.get(key)!.push(c)
   }

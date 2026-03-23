@@ -27,12 +27,13 @@ export async function GET() {
         const startDate = new Date()
         startDate.setMonth(endDate.getMonth() - 10)
         const period1 = startDate.toISOString().split('T')[0]
+        const period2 = new Date(endDate.getTime() + 86400000).toISOString().split('T')[0]
 
         // 1. Fetch Nifty first for regime check
         send('status', { phase: 'regime', message: 'Checking market regime (Nifty 50)...' })
         let niftyPrices: number[] = []
         try {
-          const niftyResult = await yf.chart('^NSEI', { period1, interval: '1d' } as any) as any
+          const niftyResult = await yf.chart('^NSEI', { period1, period2, interval: '1d' } as any) as any
           if (niftyResult?.quotes) {
             niftyPrices = niftyResult.quotes.filter((q: any) => q.close !== null).map((q: any) => q.close)
           }
@@ -55,7 +56,7 @@ export async function GET() {
 
           const results = await Promise.allSettled(
             batch.map(async (symbol) => {
-              const chartResult = await yf.chart(symbol, { period1, interval: '1d' } as any) as any
+              const chartResult = await yf.chart(symbol, { period1, period2, interval: '1d' } as any) as any
               if (!chartResult?.quotes || chartResult.quotes.length < 50) {
                 throw new Error('Insufficient data')
               }

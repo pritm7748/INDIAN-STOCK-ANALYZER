@@ -28,7 +28,8 @@ export async function GET() {
         const startDate = new Date()
         startDate.setMonth(endDate.getMonth() - 12)
         const period1 = startDate.toISOString().split('T')[0]
-        const currentDate = endDate.toISOString().split('T')[0]
+        const period2 = new Date(endDate.getTime() + 86400000).toISOString().split('T')[0]
+        const currentDate = new Date(endDate.getTime() + (5.5 * 60 * 60 * 1000)).toISOString().split('T')[0] // IST
 
         const allSymbols = STOCK_LIST.map(s => s.symbol)
         const totalBatches = Math.ceil(allSymbols.length / BATCH_SIZE)
@@ -46,7 +47,7 @@ export async function GET() {
 
           const results = await Promise.allSettled(
             batch.map(async (symbol) => {
-              const chartResult = await yf.chart(symbol, { period1, interval: '1d' } as any) as any
+              const chartResult = await yf.chart(symbol, { period1, period2, interval: '1d' } as any) as any
               if (!chartResult?.quotes || chartResult.quotes.length < 230) {
                 throw new Error('Insufficient data')
               }

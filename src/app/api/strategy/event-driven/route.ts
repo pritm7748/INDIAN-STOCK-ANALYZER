@@ -29,6 +29,7 @@ export async function GET() {
         const startDate = new Date()
         startDate.setMonth(endDate.getMonth() - 8)
         const period1 = startDate.toISOString().split('T')[0]
+        const period2 = new Date(endDate.getTime() + 86400000).toISOString().split('T')[0]
 
         const total = STOCK_LIST.length
         send('status', { phase: 'init', message: `Scanning ${total} stocks for event-driven signals...`, total })
@@ -42,7 +43,7 @@ export async function GET() {
 
           const results = await Promise.allSettled(
             batch.map(async (stock) => {
-              const chartResult = await yf.chart(stock.symbol, { period1, interval: '1d' } as any) as any
+              const chartResult = await yf.chart(stock.symbol, { period1, period2, interval: '1d' } as any) as any
               if (!chartResult?.quotes || chartResult.quotes.length < 60) throw new Error('Insufficient data')
 
               const quotes = chartResult.quotes.filter((q: any) =>
@@ -133,7 +134,7 @@ export async function GET() {
             if (volRatio >= 5.0) {
               const signal = analyzeBulkDeal(
                 {
-                  symbol, date: new Date().toISOString().slice(0, 10), dealType: 'BULK',
+                  symbol, date: new Date(Date.now() + (5.5 * 60 * 60 * 1000)).toISOString().slice(0, 10), dealType: 'BULK',
                   buyerName: 'Detected from volume spike', buyerCategory: 'DII',
                   quantityShares: Math.round(volumes[idx] * 0.3), pricePerShare: closes[idx],
                   stakePct: 0.8, totalDealValueCr: Math.round(volumes[idx] * closes[idx] / 1e7),
@@ -164,7 +165,7 @@ export async function GET() {
         const indexRebalances = getIndexRebalanceDates(currentYear)
 
         // Find next upcoming events
-        const today = new Date().toISOString().slice(0, 10)
+        const today = new Date(Date.now() + (5.5 * 60 * 60 * 1000)).toISOString().slice(0, 10)
         const upcomingRBI = rbiCalendar.filter(e => e.date >= today).slice(0, 2)
         const currentEarningsSeason = earningsSeasons.find(e => today >= e.startDate && today <= e.endDate)
         const upcomingRebalances = indexRebalances.filter(e => e.date >= today).slice(0, 2)

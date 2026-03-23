@@ -92,6 +92,7 @@ export async function GET() {
         const startDate = new Date()
         startDate.setMonth(endDate.getMonth() - 12)
         const period1 = startDate.toISOString().split('T')[0]
+        const period2 = new Date(endDate.getTime() + 86400000).toISOString().split('T')[0]
 
         const total = STOCK_LIST.length
         send('status', { phase: 'sectors', message: 'Fetching sector indices & Nifty data...', total })
@@ -99,7 +100,7 @@ export async function GET() {
         // 1. Fetch Nifty 50
         let niftyCloses: number[] = []
         try {
-          const niftyResult = await yf.chart('^NSEI', { period1, interval: '1d' } as any) as any
+          const niftyResult = await yf.chart('^NSEI', { period1, period2, interval: '1d' } as any) as any
           if (niftyResult?.quotes) niftyCloses = niftyResult.quotes.filter((q: any) => q.close !== null).map((q: any) => q.close)
         } catch { /* no Nifty data */ }
 
@@ -108,7 +109,7 @@ export async function GET() {
         let sectorsFetched = 0
         for (const [sectorKey, ticker] of Object.entries(SECTOR_INDEX_TICKERS)) {
           try {
-            const result = await yf.chart(ticker, { period1, interval: '1d' } as any) as any
+            const result = await yf.chart(ticker, { period1, period2, interval: '1d' } as any) as any
             if (result?.quotes) {
               const closes = result.quotes.filter((q: any) => q.close !== null).map((q: any) => q.close as number)
               if (closes.length > 50) { sectorData[sectorKey] = { prices: closes }; sectorsFetched++ }
@@ -129,7 +130,7 @@ export async function GET() {
 
           const results = await Promise.allSettled(
             batch.map(async (stock) => {
-              const chartResult = await yf.chart(stock.symbol, { period1, interval: '1d' } as any) as any
+              const chartResult = await yf.chart(stock.symbol, { period1, period2, interval: '1d' } as any) as any
               if (!chartResult?.quotes || chartResult.quotes.length < 50) throw new Error('Insufficient data')
 
               const quotes = chartResult.quotes.filter((q: any) => q.open !== null && q.high !== null && q.low !== null && q.close !== null && q.volume !== null)
@@ -167,7 +168,7 @@ export async function GET() {
         send('status', { phase: 'analyzing', message: `Analyzing ${Object.keys(sectorData).length} sectors, ${fetchedCount} stocks...` })
 
         const sectorRanking = rankSectors(sectorData, niftyCloses)
-        const currentDate = new Date().toISOString().slice(0, 10)
+        const currentDate = new Date(Date.now() + (5.5 * 60 * 60 * 1000)).toISOString().slice(0, 10) // IST
         const portfolio = buildPortfolio(sectorData, stocksBySector, niftyCloses, 10000000, null, currentDate)
 
         send('result', {

@@ -36,10 +36,17 @@ export async function GET() {
       }
 
       try {
+        // IST date helper (UTC+5:30) — ensures day grouping matches Indian market dates
+        const toIST = (d: Date) => {
+          const ist = new Date(d.getTime() + (5.5 * 60 * 60 * 1000))
+          return ist.toISOString().slice(0, 10)
+        }
+
         const endDate = new Date()
         const startDate = new Date()
         startDate.setDate(endDate.getDate() - 55)
         const period1 = startDate.toISOString().split('T')[0]
+        const period2 = new Date(endDate.getTime() + 86400000).toISOString().split('T')[0]
 
         const allSymbols = STOCK_LIST.map((s: any) => typeof s === 'string' ? s : s.symbol)
         const totalBatches = Math.ceil(allSymbols.length / BATCH_SIZE)
@@ -58,7 +65,7 @@ export async function GET() {
               const nsSymbol = symbol.endsWith('.NS') ? symbol : `${symbol}.NS`
               const cleanSymbol = symbol.replace('.NS', '')
 
-              const chartResult = await yf.chart(nsSymbol, { period1, interval: '5m' } as any) as any
+              const chartResult = await yf.chart(nsSymbol, { period1, period2, interval: '5m' } as any) as any
               if (!chartResult?.quotes || chartResult.quotes.length < 30) throw new Error('Insufficient data')
 
               const quotes = chartResult.quotes.filter((q: any) => q.close !== null && q.volume !== null)
@@ -70,7 +77,7 @@ export async function GET() {
               // Daily stats
               const dayMap = new Map<string, { highs: number[]; lows: number[]; closes: number[]; totalVol: number }>()
               for (const c of candles) {
-                const key = (c.time as Date).toISOString().slice(0, 10)
+                const key = toIST(c.time as Date)
                 if (!dayMap.has(key)) dayMap.set(key, { highs: [], lows: [], closes: [], totalVol: 0 })
                 const day = dayMap.get(key)!
                 day.highs.push(c.high); day.lows.push(c.low); day.closes.push(c.close); day.totalVol += c.volume
@@ -95,13 +102,13 @@ export async function GET() {
               // Today's signals
               const sortedDates = [...dayMap.keys()].sort()
               const todayKey = sortedDates[sortedDates.length - 1]
-              const todayCandles = candles.filter((c: any) => (c.time as Date).toISOString().slice(0, 10) === todayKey)
+              const todayCandles = candles.filter((c: any) => toIST(c.time as Date) === todayKey)
 
               let todaySignals: any[] = []
               let todayGapInfo: any = null
               if (todayCandles.length >= 6 && sortedDates.length > 1) {
                 const prevDayKey = sortedDates[sortedDates.length - 2]
-                const prevDayCandles = candles.filter((c: any) => (c.time as Date).toISOString().slice(0, 10) === prevDayKey)
+                const prevDayCandles = candles.filter((c: any) => toIST(c.time as Date) === prevDayKey)
                 if (prevDayCandles.length >= 3) {
                   const prevDay = {
                     open: prevDayCandles[0].open,
