@@ -58,11 +58,11 @@ export function LoginForm() {
   return (
     <div className="w-full max-w-md mx-auto">
       {/* Glass Card Container */}
-      <div className="glass-card p-8 card-glow-blue">
+      <div className="glass-card p-8 card-glow-primary">
         {/* Header */}
         <div className="text-center mb-8 stagger-children">
-          <h1 className="text-3xl font-bold text-white mb-2 animate-fade-in-up">Welcome back</h1>
-          <p className="text-gray-400 animate-fade-in-up">Sign in to continue to TradeSense AI</p>
+          <h1 className="text-3xl font-bold text-white mb-2 animate-fade-in-up font-display">Welcome back</h1>
+          <p className="text-[#adaaaa] animate-fade-in-up">Sign in to continue to TradeSense AI</p>
         </div>
 
         {/* Social Login */}
@@ -82,9 +82,9 @@ export function LoginForm() {
 
         {/* Error Message */}
         {error && (
-          <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/30 rounded-xl flex items-center gap-3 animate-scale-in backdrop-blur-sm">
-            <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 animate-pulse" />
-            <p className="text-sm text-rose-400">{error}</p>
+          <div className="mb-6 p-4 bg-[#ff6e84]/10 border border-[#ff6e84]/20 rounded-xl flex items-center gap-3 animate-scale-in backdrop-blur-sm">
+            <AlertCircle className="w-5 h-5 text-[#ff6e84] shrink-0 animate-pulse" />
+            <p className="text-sm text-[#ff6e84]">{error}</p>
           </div>
         )}
 
@@ -92,11 +92,11 @@ export function LoginForm() {
         <form onSubmit={handleSubmit} className="space-y-5">
           {/* Email Field */}
           <div className="animate-fade-in-up" style={{ animationDelay: '0.2s' }}>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-2">
+            <label htmlFor="email" className="block text-sm font-medium text-[#adaaaa] mb-2">
               Email address
             </label>
             <div className="relative group">
-              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500 group-focus-within:text-blue-400 transition-colors" />
+              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#777575] group-focus-within:text-[#ba9eff] transition-colors duration-400" />
               <input
                 id="email"
                 type="email"
@@ -104,27 +104,27 @@ export function LoginForm() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
                 required
-                className="w-full pl-12 pr-4 py-3.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-300 hover:bg-white/[0.07] hover:border-white/20"
+                className="w-full pl-12 pr-4 py-3.5 bg-white/[0.03] border border-white/[0.06] rounded-xl text-white placeholder-[#777575] focus:outline-none focus:ring-2 focus:ring-[#8455ef]/40 focus:border-transparent transition-all duration-400 hover:bg-white/[0.05]"
               />
-              <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-blue-500/20 to-purple-500/20 opacity-0 group-focus-within:opacity-100 transition-opacity -z-10 blur-xl" />
+              <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-[#8455ef]/15 to-[#ba9eff]/15 opacity-0 group-focus-within:opacity-100 transition-opacity duration-500 -z-10 blur-xl" />
             </div>
           </div>
 
           {/* Password Field */}
           <div className="animate-fade-in-up" style={{ animationDelay: '0.25s' }}>
             <div className="flex items-center justify-between mb-2">
-              <label htmlFor="password" className="block text-sm font-medium text-gray-300">
+              <label htmlFor="password" className="block text-sm font-medium text-[#adaaaa]">
                 Password
               </label>
               <Link
                 href="/forgot-password"
-                className="text-sm text-blue-400 hover:text-blue-300 transition-colors hover:underline"
+                className="text-sm text-[#ba9eff] hover:text-[#a27cff] transition-colors duration-400 hover:underline"
               >
                 Forgot password?
               </Link>
             </div>
             <div className="relative group">
-              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500 group-focus-within:text-blue-400 transition-colors" />
+              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#777575] group-focus-within:text-[#ba9eff] transition-colors duration-400" />
               <input
                 id="password"
                 type={showPassword ? 'text' : 'password'}
@@ -133,16 +133,16 @@ export function LoginForm() {
                 placeholder="••••••••"
                 required
                 minLength={6}
-                className="w-full pl-12 pr-12 py-3.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-300 hover:bg-white/[0.07] hover:border-white/20"
+                className="w-full pl-12 pr-12 py-3.5 bg-white/[0.03] border border-white/[0.06] rounded-xl text-white placeholder-[#777575] focus:outline-none focus:ring-2 focus:ring-[#8455ef]/40 focus:border-transparent transition-all duration-400 hover:bg-white/[0.05]"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors p-1 rounded-lg hover:bg-white/10"
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-[#777575] hover:text-[#adaaaa] transition-colors duration-400 p-1 rounded-lg hover:bg-white/5"
               >
                 {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
-              <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-blue-500/20 to-purple-500/20 opacity-0 group-focus-within:opacity-100 transition-opacity -z-10 blur-xl" />
+              <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-[#8455ef]/15 to-[#ba9eff]/15 opacity-0 group-focus-within:opacity-100 transition-opacity duration-500 -z-10 blur-xl" />
             </div>
           </div>
 
@@ -150,7 +150,7 @@ export function LoginForm() {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white font-medium rounded-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:-translate-y-0.5 active:translate-y-0 animate-fade-in-up group"
+            className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-gradient-to-r from-[#8455ef] to-[#ba9eff] text-white font-medium rounded-full transition-all duration-400 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-[#8455ef]/25 hover:shadow-[#8455ef]/40 hover:-translate-y-0.5 active:translate-y-0 animate-fade-in-up group"
             style={{ animationDelay: '0.3s' }}
           >
             {isLoading ? (
@@ -165,11 +165,11 @@ export function LoginForm() {
         </form>
 
         {/* Sign Up Link */}
-        <p className="mt-6 text-center text-gray-400 animate-fade-in-up" style={{ animationDelay: '0.35s' }}>
+        <p className="mt-6 text-center text-[#adaaaa] animate-fade-in-up" style={{ animationDelay: '0.35s' }}>
           Don't have an account?{' '}
           <Link
             href={`/signup${redirectTo !== '/dashboard' ? `?redirect=${redirectTo}` : ''}`}
-            className="text-blue-400 hover:text-blue-300 font-medium transition-colors hover:underline"
+            className="text-[#ba9eff] hover:text-[#a27cff] font-medium transition-colors duration-400 hover:underline"
           >
             Sign up
           </Link>
