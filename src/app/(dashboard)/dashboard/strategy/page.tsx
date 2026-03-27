@@ -7,7 +7,8 @@ import {
     ChevronRight, Activity, Clock, Filter, Info, StopCircle,
     CalendarDays, ArrowRightLeft, ShieldCheck, Play,
     Crosshair, Eye, GitPullRequestArrow, PieChart, Repeat,
-    Newspaper, Sparkles, ArrowUpRight, Layers, Timer
+    Newspaper, Sparkles, ArrowUpRight, Layers, Timer,
+    BookOpen, Waves
 } from 'lucide-react'
 
 interface Holding {
@@ -189,6 +190,14 @@ export default function StrategyAnalysisPage() {
     const [emaProgress, setEmaProgress] = useState<ScanProgress | null>(null)
     const [emaStatusMsg, setEmaStatusMsg] = useState('')
     const emaAbortRef = useRef<AbortController | null>(null)
+
+    // Order Flow & Market Depth state
+    const [ofScanning, setOfScanning] = useState(false)
+    const [ofResult, setOfResult] = useState<any>(null)
+    const [ofError, setOfError] = useState('')
+    const [ofProgress, setOfProgress] = useState<ScanProgress | null>(null)
+    const [ofStatusMsg, setOfStatusMsg] = useState('')
+    const ofAbortRef = useRef<AbortController | null>(null)
 
     const timeframes = [
         { id: '1D', label: 'Intraday', available: true },
@@ -458,6 +467,75 @@ export default function StrategyAnalysisPage() {
         emaAbortRef.current?.abort()
         setEmaScanning(false)
         setEmaStatusMsg('Scan stopped')
+    }, [])
+
+    const runOrderFlow = useCallback(async () => {
+        setOfScanning(true)
+        setOfError('')
+        setOfResult(null)
+        setOfProgress(null)
+        setOfStatusMsg('Connecting...')
+
+        const abort = new AbortController()
+        ofAbortRef.current = abort
+
+        try {
+            const res = await fetch('/api/strategy/orderflow', { signal: abort.signal })
+            if (!res.ok || !res.body) throw new Error('Failed to connect')
+
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+            let currentEvent = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                buffer += decoder.decode(value, { stream: true })
+
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) currentEvent = line.slice(7).trim()
+                    if (!line.startsWith('data: ')) continue
+                    try {
+                        const data = JSON.parse(line.slice(6))
+                        switch (currentEvent) {
+                            case 'status':
+                                setOfStatusMsg(data.message)
+                                break
+                            case 'progress':
+                                setOfProgress(data)
+                                setOfStatusMsg(`Scanning... ${data.scanned}/${data.total} stocks`)
+                                break
+                            case 'result':
+                                setOfResult(data)
+                                setOfStatusMsg('Analysis complete!')
+                                break
+                            case 'error':
+                                setOfError(data.message)
+                                break
+                            case 'done':
+                                break
+                        }
+                    } catch { /* skip */ }
+                    currentEvent = ''
+                }
+            }
+        } catch (err: any) {
+            if (err.name !== 'AbortError') {
+                setOfError(err.message || 'Something went wrong')
+            }
+        } finally {
+            setOfScanning(false)
+        }
+    }, [])
+
+    const stopOfScan = useCallback(() => {
+        ofAbortRef.current?.abort()
+        setOfScanning(false)
+        setOfStatusMsg('Scan stopped')
     }, [])
 
     const runSectorRotation = useCallback(async () => {
@@ -3721,6 +3799,204 @@ export default function StrategyAnalysisPage() {
                                         <span>Scanned: {emaResult.totalStocksScanned} stocks</span>
                                         <span>Errors: {emaResult.totalErrors}</span>
                                         <span>Signals: {emaResult.todaySignals?.reduce((s: number, st: any) => s + st.signals.length, 0) || 0}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Strategy 5: Order Flow & Market Depth */}
+                    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-6 hover:border-indigo-500/30 transition-all">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-gradient-to-br from-indigo-500/20 to-violet-500/20 rounded-xl flex items-center justify-center">
+                                    <Waves size={20} className="text-indigo-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-bold text-[var(--foreground)]">Order Flow &amp; Market Depth</h3>
+                                    <p className="text-[10px] text-[var(--foreground-muted)]">Synthetic Depth · Absorption · Stacking · Spoofing · Iceberg · Delta</p>
+                                </div>
+                            </div>
+                            {ofScanning ? (
+                                <button onClick={stopOfScan} className="flex items-center gap-1.5 bg-red-500/10 text-red-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-all">
+                                    <StopCircle size={14} /> Stop
+                                </button>
+                            ) : (
+                                <button onClick={runOrderFlow} className="flex items-center gap-1.5 bg-indigo-500/10 text-indigo-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-indigo-500/20 transition-all">
+                                    <Play size={14} /> Scan
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Key Info */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Modes</div>
+                                <div className="text-sm font-bold text-indigo-400">Stand + Confirm</div>
+                            </div>
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Patterns</div>
+                                <div className="text-sm font-bold text-violet-400">4 Detectors</div>
+                            </div>
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Filters</div>
+                                <div className="text-sm font-bold text-indigo-300">BAR + Δ + Pat</div>
+                            </div>
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Window</div>
+                                <div className="text-sm font-bold text-violet-300">9:20-2:30</div>
+                            </div>
+                        </div>
+
+                        {ofScanning && (
+                            <div className="mb-4">
+                                <p className="text-xs text-indigo-300 mb-2">{ofStatusMsg}</p>
+                                {ofProgress && (
+                                    <div className="w-full bg-[var(--background)] rounded-full h-1.5">
+                                        <div className="bg-gradient-to-r from-indigo-500 to-violet-500 h-1.5 rounded-full transition-all" style={{ width: `${Math.round((ofProgress.scanned / ofProgress.total) * 100)}%` }} />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {ofError && (
+                            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-4">
+                                <p className="text-xs text-red-400">{ofError}</p>
+                            </div>
+                        )}
+
+                        {ofResult && (
+                            <div className="space-y-4">
+                                {/* Today's Signals */}
+                                {ofResult.todaySignals && ofResult.todaySignals.length > 0 ? (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-indigo-400 mb-3 flex items-center gap-1.5">
+                                            <Zap size={14} /> Today&apos;s Order Flow Signals ({ofResult.todaySignals.reduce((s: number, st: any) => s + st.signals.length, 0)})
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="pb-2 pr-3">Symbol</th>
+                                                        <th className="pb-2 pr-3">Pattern</th>
+                                                        <th className="pb-2 pr-3">Dir</th>
+                                                        <th className="pb-2 pr-3">Score</th>
+                                                        <th className="pb-2 pr-3">Entry</th>
+                                                        <th className="pb-2 pr-3">SL</th>
+                                                        <th className="pb-2 pr-3">PnL%</th>
+                                                        <th className="pb-2">Exit</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {ofResult.todaySignals.slice(0, 30).map((stock: any, idx: number) =>
+                                                        stock.signals.map((sig: any, sIdx: number) => (
+                                                            <tr key={`of-${idx}-${sIdx}`} className="border-b border-[var(--card-border)]/30">
+                                                                <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">
+                                                                    {stock.symbol}
+                                                                    {stock.isFnO && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-indigo-500/20 text-indigo-300">F&amp;O</span>}
+                                                                </td>
+                                                                <td className="py-1.5 pr-3">
+                                                                    <span className="text-[9px] px-1 py-0.5 rounded bg-violet-500/10 text-violet-400">
+                                                                        {sig.primaryPattern?.replace(/_/g, ' ').slice(0, 15) || 'COMPOSITE'}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="py-1.5 pr-3">
+                                                                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${sig.direction === 'LONG' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                                                                        {sig.direction}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="py-1.5 pr-3 text-indigo-400 font-medium">{sig.patternScore}</td>
+                                                                <td className="py-1.5 pr-3 text-[var(--foreground)]">{sig.entryPrice}</td>
+                                                                <td className="py-1.5 pr-3 text-red-400">{sig.sl}</td>
+                                                                <td className={`py-1.5 pr-3 font-medium ${sig.netPnlPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                                    {sig.netPnlPct >= 0 ? '+' : ''}{sig.netPnlPct}%
+                                                                </td>
+                                                                <td className="py-1.5 text-[var(--foreground-muted)] text-[10px]">{sig.exitReason?.replace(/_/g, ' ')}</td>
+                                                            </tr>
+                                                        ))
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <p className="text-xs text-[var(--foreground-muted)] text-center">No order flow signals detected today.</p>
+                                    </div>
+                                )}
+
+                                {/* Pattern Effectiveness */}
+                                {ofResult.patternRanking && ofResult.patternRanking.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-violet-400 mb-3 flex items-center gap-1.5">
+                                            <BookOpen size={14} /> Pattern Effectiveness
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="pb-2 pr-3">Pattern</th>
+                                                        <th className="pb-2 pr-3">Count</th>
+                                                        <th className="pb-2 pr-3">Win%</th>
+                                                        <th className="pb-2">Avg PnL</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {ofResult.patternRanking.slice(0, 8).map((p: any, idx: number) => (
+                                                        <tr key={idx} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-1.5 pr-3 font-medium text-[var(--foreground)] text-[10px]">{p.pattern}</td>
+                                                            <td className="py-1.5 pr-3 text-[var(--foreground)]">{p.count}</td>
+                                                            <td className={`py-1.5 pr-3 font-medium ${p.winRatePct >= 55 ? 'text-green-400' : p.winRatePct >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{p.winRatePct}%</td>
+                                                            <td className={`py-1.5 font-medium ${p.avgPnlPct > 0 ? 'text-green-400' : 'text-red-400'}`}>{p.avgPnlPct}%</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Top Stocks by Win Rate */}
+                                {ofResult.topByWinRate && ofResult.topByWinRate.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-indigo-400 mb-3 flex items-center gap-1.5">
+                                            <BarChart3 size={14} /> Top Stocks by Win Rate
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="pb-2 pr-3">Symbol</th>
+                                                        <th className="pb-2 pr-3">Trades</th>
+                                                        <th className="pb-2 pr-3">Win%</th>
+                                                        <th className="pb-2">Expectancy</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {ofResult.topByWinRate.map((s: any, idx: number) => (
+                                                        <tr key={idx} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">
+                                                                {s.symbol}
+                                                                {s.isFnO && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-indigo-500/20 text-indigo-300">F&amp;O</span>}
+                                                            </td>
+                                                            <td className="py-1.5 pr-3 text-[var(--foreground)]">{s.trades}</td>
+                                                            <td className={`py-1.5 pr-3 font-medium ${(s.winRate || 0) >= 55 ? 'text-green-400' : (s.winRate || 0) >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{s.winRate}%</td>
+                                                            <td className={`py-1.5 font-medium ${(s.expectancy || 0) > 0 ? 'text-green-400' : 'text-red-400'}`}>{s.expectancy}%</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Scan Stats */}
+                                <div className="bg-[var(--background)] rounded-lg p-3">
+                                    <div className="text-[10px] text-[var(--foreground-muted)] flex items-center gap-4 flex-wrap">
+                                        <span>Scanned: {ofResult.totalStocksScanned} stocks</span>
+                                        <span>Errors: {ofResult.totalErrors}</span>
+                                        <span>Signals: {ofResult.todaySignals?.reduce((s: number, st: any) => s + st.signals.length, 0) || 0}</span>
+                                        <span>Patterns: {ofResult.patternRanking?.length || 0} types</span>
                                     </div>
                                 </div>
                             </div>
