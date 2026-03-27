@@ -113,7 +113,7 @@ export default function DashboardLayout({
 
       {/* Market Status Indicator */}
       {!marketOpen && (
-        <div className="fixed bottom-4 right-4 px-3 py-1.5 bg-[var(--warning-light)] border border-[rgba(251,191,36,0.2)] rounded-full text-xs text-[var(--warning)] font-medium backdrop-blur-xl shadow-lg">
+        <div className="fixed bottom-4 right-4 px-3 py-1.5 bg-[var(--warning-light)] border border-[var(--warning)] rounded-full text-xs text-[var(--warning)] font-medium">
           Market Closed
         </div>
       )}

@@ -30,7 +30,7 @@ function StatCard({
     delay?: number
 }) {
     const colorClasses: Record<string, { bg: string; text: string; glow: string }> = {
-        blue: { bg: 'from-[#8455ef]/15 to-[#ba9eff]/10', text: 'text-[#ba9eff]', glow: 'shadow-[#8455ef]/20' },
+        blue: { bg: 'from-blue-500/20 to-cyan-500/20', text: 'text-blue-400', glow: 'shadow-blue-500/20' },
         emerald: { bg: 'from-emerald-500/20 to-teal-500/20', text: 'text-emerald-400', glow: 'shadow-emerald-500/20' },
         rose: { bg: 'from-rose-500/20 to-pink-500/20', text: 'text-rose-400', glow: 'shadow-rose-500/20' },
         purple: { bg: 'from-purple-500/20 to-indigo-500/20', text: 'text-purple-400', glow: 'shadow-purple-500/20' },
@@ -160,7 +160,7 @@ export default function SignalsPage() {
     const getStatusBadge = (status: string) => {
         switch (status) {
             case 'ACTIVE':
-                return <span className="px-2.5 py-1 bg-[#8455ef]/15 text-[#ba9eff] rounded-lg text-xs flex items-center gap-1.5 font-medium"><Radio size={10} className="animate-pulse" /> Active</span>
+                return <span className="px-2.5 py-1 bg-blue-500/20 text-blue-400 rounded-lg text-xs flex items-center gap-1.5 font-medium"><Radio size={10} className="animate-pulse" /> Active</span>
             case 'TARGET_HIT':
                 return <span className="px-2.5 py-1 bg-emerald-500/20 text-emerald-400 rounded-lg text-xs flex items-center gap-1.5 font-medium"><CheckCircle2 size={12} /> Target Hit</span>
             case 'STOP_LOSS':
@@ -178,7 +178,7 @@ export default function SignalsPage() {
         return (
             <div className="flex items-center justify-center min-h-[400px]">
                 <div className="text-center">
-                    <Loader2 className="animate-spin text-[#ba9eff] mx-auto mb-4" size={40} />
+                    <Loader2 className="animate-spin text-blue-400 mx-auto mb-4" size={40} />
                     <p className="text-[var(--foreground-muted)]">Loading...</p>
                 </div>
             </div>
@@ -188,8 +188,8 @@ export default function SignalsPage() {
     if (!isAuthenticated) {
         return (
             <div className="flex flex-col items-center justify-center min-h-[400px] text-center glass-card p-8">
-                <div className="w-20 h-20 bg-gradient-to-br from-[#8455ef]/15 to-[#ba9eff]/10 rounded-full flex items-center justify-center mb-6">
-                    <Target className="text-[#ba9eff]" size={40} />
+                <div className="w-20 h-20 bg-gradient-to-br from-blue-500/20 to-purple-500/20 rounded-full flex items-center justify-center mb-6">
+                    <Target className="text-blue-400" size={40} />
                 </div>
                 <h2 className="text-xl font-bold text-[var(--foreground)] mb-2">Sign in Required</h2>
                 <p className="text-[var(--foreground-muted)]">Please sign in to view your trade signals</p>
@@ -202,11 +202,11 @@ export default function SignalsPage() {
             {/* Header */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-fade-in-down">
                 <div className="flex items-center gap-3">
-                    <div className="p-2.5 bg-gradient-to-br from-[#8455ef] to-[#ba9eff] rounded-xl shadow-lg shadow-[#8455ef]/20">
+                    <div className="p-2.5 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl shadow-lg shadow-blue-500/20">
                         <Target className="w-6 h-6 text-white" />
                     </div>
                     <div>
-                        <h1 className="text-2xl font-bold text-[var(--foreground)] font-display">Trade Signals</h1>
+                        <h1 className="text-2xl font-bold text-[var(--foreground)]">Trade Signals</h1>
                         <p className="text-[var(--foreground-muted)] text-sm">Track your live signals and accuracy</p>
                     </div>
                 </div>
@@ -240,7 +240,7 @@ export default function SignalsPage() {
                         key={tab}
                         onClick={() => setFilter(tab)}
                         className={`px-4 py-2 text-sm font-medium rounded-lg transition-all duration-300 ${filter === tab
-                            ? 'bg-gradient-to-r from-[#8455ef] to-[#ba9eff] text-white shadow-lg'
+                            ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg'
                             : 'text-[var(--foreground-muted)] hover:text-[var(--foreground)] hover:bg-[var(--background-secondary)]'
                             }`}
                     >
@@ -253,7 +253,7 @@ export default function SignalsPage() {
             {loading ? (
                 <div className="flex items-center justify-center py-16">
                     <div className="text-center">
-                        <Loader2 className="animate-spin text-[#ba9eff] mx-auto mb-4" size={40} />
+                        <Loader2 className="animate-spin text-blue-400 mx-auto mb-4" size={40} />
                         <p className="text-[var(--foreground-muted)]">Loading signals...</p>
                     </div>
                 </div>
@@ -313,7 +313,7 @@ export default function SignalsPage() {
                                             </div>
                                             {currentPrice && signal.status === 'ACTIVE' && (
                                                 <div className="flex items-center gap-1.5">
-                                                    <span className="text-[#ba9eff]">CMP:</span>
+                                                    <span className="text-blue-500 dark:text-blue-400">CMP:</span>
                                                     <span className="text-[var(--foreground)] font-medium">₹{currentPrice.toFixed(2)}</span>
                                                 </div>
                                             )}

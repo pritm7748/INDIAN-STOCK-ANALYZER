@@ -1,14 +1,13 @@
 // src/app/layout.tsx
 
 import type { Metadata } from "next";
-import { Inter, Plus_Jakarta_Sans } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/components/auth/AuthProvider";
 import { NotificationProvider } from "@/components/notifications/NotificationProvider";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
-const plusJakarta = Plus_Jakarta_Sans({ subsets: ["latin"], variable: "--font-jakarta", weight: ["400", "500", "600", "700", "800"] });
+const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "TradeSense AI - Pro Market Analytics",
@@ -22,7 +21,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
-      <body className={`${inter.variable} ${plusJakarta.variable} ${inter.className}`}>
+      <body className={inter.className}>
         <ThemeProvider>
           <AuthProvider>
             <NotificationProvider>

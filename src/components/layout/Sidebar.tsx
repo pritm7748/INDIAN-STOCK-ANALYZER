@@ -41,14 +41,56 @@ export function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
   const [newWatchlistName, setNewWatchlistName] = useState('')
   const [isCreating, setIsCreating] = useState(false)
 
-  // Navigation items
+  // Navigation items with gradients
   const mainNavItems = [
-    { name: 'Analyze', href: '/dashboard', icon: LayoutDashboard, description: 'Stock analyzer' },
-    { name: 'Backtest', href: '/dashboard/backtest', icon: FlaskConical, description: 'Strategy tester' },
-    { name: 'Screener', href: '/dashboard/screener', icon: Search, description: 'Find stocks' },
-    { name: 'Alerts', href: '/dashboard/alerts', icon: Bell, description: 'Price alerts' },
-    { name: 'Signals', href: '/dashboard/signals', icon: Crosshair, description: 'Trade signals' },
-    { name: 'Strategy', href: '/dashboard/strategy', icon: Brain, description: 'Strategy analysis' },
+    {
+      name: 'Analyze',
+      href: '/dashboard',
+      icon: LayoutDashboard,
+      description: 'Stock analyzer',
+      gradient: 'from-blue-500 to-cyan-500',
+      activeGlow: 'shadow-blue-500/30'
+    },
+    {
+      name: 'Backtest',
+      href: '/dashboard/backtest',
+      icon: FlaskConical,
+      description: 'Strategy tester',
+      gradient: 'from-violet-500 to-fuchsia-500',
+      activeGlow: 'shadow-violet-500/30'
+    },
+    {
+      name: 'Screener',
+      href: '/dashboard/screener',
+      icon: Search,
+      description: 'Find stocks',
+      gradient: 'from-purple-500 to-pink-500',
+      activeGlow: 'shadow-purple-500/30'
+    },
+    {
+      name: 'Alerts',
+      href: '/dashboard/alerts',
+      icon: Bell,
+      description: 'Price alerts',
+      gradient: 'from-amber-500 to-orange-500',
+      activeGlow: 'shadow-amber-500/30'
+    },
+    {
+      name: 'Signals',
+      href: '/dashboard/signals',
+      icon: Crosshair,
+      description: 'Trade signals',
+      gradient: 'from-emerald-500 to-teal-500',
+      activeGlow: 'shadow-emerald-500/30'
+    },
+    {
+      name: 'Strategy',
+      href: '/dashboard/strategy',
+      icon: Brain,
+      description: 'Strategy analysis',
+      gradient: 'from-cyan-500 to-blue-500',
+      activeGlow: 'shadow-cyan-500/30'
+    },
   ]
 
   const bottomNavItems = [
@@ -92,17 +134,17 @@ export function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
 
   return (
     <aside
-      className={`fixed left-0 top-0 z-40 h-screen bg-[#131313] backdrop-blur-xl transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] flex flex-col ${isCollapsed ? 'w-[70px]' : 'w-[260px]'
+      className={`fixed left-0 top-0 z-40 h-screen bg-[var(--card)]/95 backdrop-blur-xl border-r border-[var(--border)] transition-all duration-300 flex flex-col ${isCollapsed ? 'w-[70px]' : 'w-[260px]'
         }`}
     >
       {/* Logo */}
-      <div className="h-16 flex items-center justify-between px-4">
+      <div className="h-16 flex items-center justify-between px-4 border-b border-[var(--border)]">
         <Link href="/dashboard" className="flex items-center gap-2.5 group">
           <div className="relative">
-            <div className="bg-gradient-to-br from-[#8455ef] to-[#ba9eff] p-2 rounded-xl shrink-0 shadow-lg group-hover:shadow-[#8455ef]/30 transition-all duration-500">
+            <div className="bg-gradient-to-br from-blue-600 to-purple-600 p-2 rounded-xl shrink-0 shadow-lg group-hover:shadow-blue-500/30 transition-all duration-300">
               <TrendingUp size={20} className="text-white" />
             </div>
-            <div className="absolute -inset-1 bg-gradient-to-br from-[#8455ef] to-[#ba9eff] rounded-xl blur opacity-20 group-hover:opacity-40 transition-opacity duration-500" />
+            <div className="absolute -inset-1 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl blur opacity-25 group-hover:opacity-40 transition-opacity" />
           </div>
           {!isCollapsed && (
             <div className="overflow-hidden flex items-center gap-1.5">
@@ -134,13 +176,13 @@ export function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
             <Link
               key={item.name}
               href={item.href}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-400 group relative ${active
-                ? 'bg-[var(--primary-light)] text-[var(--primary)]'
-                : 'text-[var(--foreground-muted)] hover:bg-[#1a1919] hover:text-[var(--foreground)]'
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-300 group relative ${active
+                ? `bg-gradient-to-r ${item.gradient} bg-opacity-10 text-[var(--foreground)] shadow-lg ${item.activeGlow}`
+                : 'text-[var(--foreground-muted)] hover:bg-[var(--background-secondary)] hover:text-[var(--foreground)]'
                 }`}
               style={{ animationDelay: `${idx * 0.05}s` }}
             >
-              <div className={`p-1.5 rounded-lg transition-all duration-400 ${active ? 'bg-[var(--primary)]/15' : 'group-hover:bg-white/5'}`}>
+              <div className={`p-1.5 rounded-lg transition-all ${active ? 'bg-white/20' : 'group-hover:bg-white/5'}`}>
                 <item.icon size={18} className="shrink-0" />
               </div>
               {!isCollapsed && (
@@ -149,7 +191,7 @@ export function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
 
               {/* Active indicator */}
               {active && (
-                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-gradient-to-b from-[#8455ef] to-[#ba9eff] rounded-r-full shadow-[0_0_12px_rgba(132,85,239,0.4)]" />
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-gradient-to-b from-blue-400 to-purple-400 rounded-r-full" />
               )}
 
               {/* Tooltip for collapsed state */}
@@ -230,12 +272,12 @@ export function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
                         }}
                         placeholder="Watchlist name"
                         autoFocus
-                        className="flex-1 px-3 py-1.5 text-sm bg-[#0e0e0e] border border-[rgba(255,255,255,0.06)] rounded-lg text-[var(--foreground)] placeholder-[var(--foreground-muted)] focus:outline-none focus:ring-2 focus:ring-[#8455ef]/40 focus:border-transparent"
+                        className="flex-1 px-3 py-1.5 text-sm bg-[var(--background-secondary)] border border-[var(--border)] rounded-lg text-[var(--foreground)] placeholder-[var(--foreground-muted)] focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50"
                       />
                       <button
                         onClick={handleCreateWatchlist}
                         disabled={isCreating || !newWatchlistName.trim()}
-                        className="px-3 py-1.5 text-sm bg-gradient-to-r from-[#8455ef] to-[#ba9eff] hover:opacity-90 text-white rounded-lg transition-all duration-400 disabled:opacity-40"
+                        className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50"
                       >
                         {isCreating ? <Loader2 size={14} className="animate-spin" /> : 'Add'}
                       </button>
@@ -274,7 +316,7 @@ export function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
       </nav>
 
       {/* Bottom Navigation — Portfolio, Settings, Logout in one compact block */}
-      <div className="py-3 px-3 space-y-1">
+      <div className="border-t border-[var(--border)] py-3 px-3 space-y-1">
         {bottomNavItems.map((item) => (
           <Link
             key={item.name}

@@ -182,6 +182,14 @@ export default function StrategyAnalysisPage() {
     const [gapStatusMsg, setGapStatusMsg] = useState('')
     const gapAbortRef = useRef<AbortController | null>(null)
 
+    // EMA Crossover + MACD (Intraday) state
+    const [emaScanning, setEmaScanning] = useState(false)
+    const [emaResult, setEmaResult] = useState<any>(null)
+    const [emaError, setEmaError] = useState('')
+    const [emaProgress, setEmaProgress] = useState<ScanProgress | null>(null)
+    const [emaStatusMsg, setEmaStatusMsg] = useState('')
+    const emaAbortRef = useRef<AbortController | null>(null)
+
     const timeframes = [
         { id: '1D', label: 'Intraday', available: true },
         { id: '1W', label: '1 Week', available: false },
@@ -379,6 +387,77 @@ export default function StrategyAnalysisPage() {
         gapAbortRef.current?.abort()
         setGapScanning(false)
         setGapStatusMsg('Scan stopped')
+    }, [])
+
+    const runEmaMacd = useCallback(async () => {
+        setEmaScanning(true)
+        setEmaError('')
+        setEmaResult(null)
+        setEmaProgress(null)
+        setEmaStatusMsg('Connecting...')
+
+        const abort = new AbortController()
+        emaAbortRef.current = abort
+
+        try {
+            const res = await fetch('/api/strategy/ema-macd', { signal: abort.signal })
+            if (!res.ok || !res.body) throw new Error('Failed to connect')
+
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+            let currentEvent = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        currentEvent = line.slice(7).trim()
+                    } else if (line.startsWith('data: ') && currentEvent) {
+                        try {
+                            const data = JSON.parse(line.slice(6))
+                            switch (currentEvent) {
+                                case 'status':
+                                    setEmaStatusMsg(data.message || '')
+                                    break
+                                case 'progress':
+                                    setEmaProgress(data)
+                                    setEmaStatusMsg(`Scanning... ${data.scanned}/${data.total} stocks`)
+                                    break
+                                case 'result':
+                                    setEmaResult(data)
+                                    setEmaStatusMsg('Analysis complete!')
+                                    break
+                                case 'error':
+                                    setEmaError(data.message)
+                                    break
+                                case 'done':
+                                    break
+                            }
+                        } catch { /* skip */ }
+                        currentEvent = ''
+                    }
+                }
+            }
+        } catch (err: any) {
+            if (err.name !== 'AbortError') {
+                setEmaError(err.message || 'Something went wrong')
+            }
+        } finally {
+            setEmaScanning(false)
+        }
+    }, [])
+
+    const stopEmaScan = useCallback(() => {
+        emaAbortRef.current?.abort()
+        setEmaScanning(false)
+        setEmaStatusMsg('Scan stopped')
     }, [])
 
     const runSectorRotation = useCallback(async () => {
@@ -3452,6 +3531,198 @@ export default function StrategyAnalysisPage() {
                                         </div>
                                     </div>
                                 )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Strategy 4: EMA Crossover + MACD */}
+                    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-6 hover:border-cyan-500/30 transition-all">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-gradient-to-br from-cyan-500/20 to-teal-500/20 rounded-xl flex items-center justify-center">
+                                    <GitPullRequestArrow size={20} className="text-cyan-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-bold text-[var(--foreground)]">EMA Crossover + MACD</h3>
+                                    <p className="text-[10px] text-[var(--foreground-muted)]">9/20 EMA &amp; Triple 5/13/26 · MACD (5,13,4) · VWAP Alignment · 6 Filters · All 500+ stocks</p>
+                                </div>
+                            </div>
+                            {emaScanning ? (
+                                <button onClick={stopEmaScan} className="flex items-center gap-1.5 bg-red-500/10 text-red-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-all">
+                                    <StopCircle size={14} /> Stop
+                                </button>
+                            ) : (
+                                <button onClick={runEmaMacd} className="flex items-center gap-1.5 bg-cyan-500/10 text-cyan-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-cyan-500/20 transition-all">
+                                    <Play size={14} /> Scan
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Key Info */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Systems</div>
+                                <div className="text-sm font-bold text-cyan-400">Dual + Triple</div>
+                            </div>
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">MACD</div>
+                                <div className="text-sm font-bold text-teal-400">(5,13,4)</div>
+                            </div>
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Filters</div>
+                                <div className="text-sm font-bold text-cyan-300">6 Cascaded</div>
+                            </div>
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Window</div>
+                                <div className="text-sm font-bold text-teal-300">9:30-1:00</div>
+                            </div>
+                        </div>
+
+                        {emaScanning && (
+                            <div className="mb-4">
+                                <p className="text-xs text-cyan-300 mb-2">{emaStatusMsg}</p>
+                                {emaProgress && (
+                                    <div className="w-full bg-[var(--background)] rounded-full h-1.5">
+                                        <div className="bg-gradient-to-r from-cyan-500 to-teal-500 h-1.5 rounded-full transition-all" style={{ width: `${Math.round((emaProgress.scanned / emaProgress.total) * 100)}%` }} />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {emaError && (
+                            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-4">
+                                <p className="text-xs text-red-400">{emaError}</p>
+                            </div>
+                        )}
+
+                        {emaResult && (
+                            <div className="space-y-4">
+                                {/* Today Signals */}
+                                {emaResult.todaySignals && emaResult.todaySignals.length > 0 ? (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-cyan-400 mb-3 flex items-center gap-1.5">
+                                            <Zap size={14} /> Today&apos;s EMA Signals ({emaResult.todaySignals.reduce((s: number, st: any) => s + st.signals.length, 0)})
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="pb-2 pr-3">Symbol</th>
+                                                        <th className="pb-2 pr-3">System</th>
+                                                        <th className="pb-2 pr-3">Dir</th>
+                                                        <th className="pb-2 pr-3">Entry</th>
+                                                        <th className="pb-2 pr-3">SL</th>
+                                                        <th className="pb-2 pr-3">PnL%</th>
+                                                        <th className="pb-2">Exit</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {emaResult.todaySignals.slice(0, 30).map((stock: any, idx: number) =>
+                                                        stock.signals.map((sig: any, sIdx: number) => (
+                                                            <tr key={`${idx}-${sIdx}`} className="border-b border-[var(--card-border)]/30">
+                                                                <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">
+                                                                    {stock.symbol}
+                                                                    {stock.isHighBeta && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-cyan-500/20 text-cyan-300">F&amp;O</span>}
+                                                                </td>
+                                                                <td className="py-1.5 pr-3">
+                                                                    <span className={`text-[9px] px-1 py-0.5 rounded ${sig.system === 'DUAL_9_20' ? 'bg-cyan-500/10 text-cyan-400' : 'bg-teal-500/10 text-teal-400'}`}>
+                                                                        {sig.system === 'DUAL_9_20' ? '9/20' : '5/13/26'}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="py-1.5 pr-3">
+                                                                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${sig.direction === 'LONG' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                                                                        {sig.direction}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="py-1.5 pr-3 text-[var(--foreground)]">{sig.entryPrice}</td>
+                                                                <td className="py-1.5 pr-3 text-red-400">{sig.sl}</td>
+                                                                <td className={`py-1.5 pr-3 font-medium ${sig.netPnlPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                                    {sig.netPnlPct >= 0 ? '+' : ''}{sig.netPnlPct}%
+                                                                </td>
+                                                                <td className="py-1.5 text-[var(--foreground-muted)] text-[10px]">{sig.exitReason?.replace(/_/g, ' ')}</td>
+                                                            </tr>
+                                                        ))
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <p className="text-xs text-[var(--foreground-muted)] text-center">No EMA crossover signals detected today.</p>
+                                    </div>
+                                )}
+
+                                {/* 9/20 EMA Top Ranking */}
+                                {emaResult.topDualByWinRate && emaResult.topDualByWinRate.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-cyan-400 mb-3 flex items-center gap-1.5">
+                                            <BarChart3 size={14} /> 9/20 EMA Top Stocks by Win Rate
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="pb-2 pr-3">Symbol</th>
+                                                        <th className="pb-2 pr-3">Trades</th>
+                                                        <th className="pb-2 pr-3">Win%</th>
+                                                        <th className="pb-2">Expectancy</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {emaResult.topDualByWinRate.map((s: any, idx: number) => (
+                                                        <tr key={idx} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">{s.symbol}</td>
+                                                            <td className="py-1.5 pr-3 text-[var(--foreground)]">{s.trades}</td>
+                                                            <td className={`py-1.5 pr-3 font-medium ${(s.winRate || 0) >= 55 ? 'text-green-400' : (s.winRate || 0) >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{s.winRate}%</td>
+                                                            <td className={`py-1.5 font-medium ${(s.expectancy || 0) > 0 ? 'text-green-400' : 'text-red-400'}`}>{s.expectancy}%</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Triple EMA Top Ranking */}
+                                {emaResult.topTripleByWinRate && emaResult.topTripleByWinRate.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-teal-400 mb-3 flex items-center gap-1.5">
+                                            <Layers size={14} /> Triple EMA (5/13/26) Top Stocks
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="pb-2 pr-3">Symbol</th>
+                                                        <th className="pb-2 pr-3">Trades</th>
+                                                        <th className="pb-2 pr-3">Win%</th>
+                                                        <th className="pb-2">Expectancy</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {emaResult.topTripleByWinRate.map((s: any, idx: number) => (
+                                                        <tr key={idx} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">{s.symbol}</td>
+                                                            <td className="py-1.5 pr-3 text-[var(--foreground)]">{s.trades}</td>
+                                                            <td className={`py-1.5 pr-3 font-medium ${(s.winRate || 0) >= 55 ? 'text-green-400' : (s.winRate || 0) >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{s.winRate}%</td>
+                                                            <td className={`py-1.5 font-medium ${(s.expectancy || 0) > 0 ? 'text-green-400' : 'text-red-400'}`}>{s.expectancy}%</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Scan Stats */}
+                                <div className="bg-[var(--background)] rounded-lg p-3">
+                                    <div className="text-[10px] text-[var(--foreground-muted)] flex items-center gap-4 flex-wrap">
+                                        <span>Scanned: {emaResult.totalStocksScanned} stocks</span>
+                                        <span>Errors: {emaResult.totalErrors}</span>
+                                        <span>Signals: {emaResult.todaySignals?.reduce((s: number, st: any) => s + st.signals.length, 0) || 0}</span>
+                                    </div>
+                                </div>
                             </div>
                         )}
                     </div>

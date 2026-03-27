@@ -46,9 +46,9 @@ function Toggle({ checked, onChange, disabled = false }: ToggleProps) {
       className={`
         relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full 
         border-2 border-transparent transition-all duration-300 ease-in-out
-        focus:outline-none focus:ring-2 focus:ring-[#8455ef]/50 focus:ring-offset-2 focus:ring-offset-[#0e0e0e]
+        focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-[#0A0A0A]
         disabled:cursor-not-allowed disabled:opacity-50
-        ${checked ? 'bg-gradient-to-r from-[#8455ef] to-[#ba9eff] shadow-lg shadow-[#8455ef]/30' : 'bg-[#262626]'}
+        ${checked ? 'bg-gradient-to-r from-blue-600 to-purple-600 shadow-lg shadow-blue-500/30' : 'bg-gray-700'}
       `}
     >
       <span
@@ -91,8 +91,8 @@ function SectionCard({
           <Icon className="w-5 h-5 text-white" />
         </div>
         <div>
-          <h2 className="text-lg font-semibold text-white font-display">{title}</h2>
-          <p className="text-sm text-[#777575]">{description}</p>
+          <h2 className="text-lg font-semibold text-white">{title}</h2>
+          <p className="text-sm text-gray-500">{description}</p>
         </div>
       </div>
       {children}
@@ -285,26 +285,26 @@ export default function SettingsPage() {
       {/* Header */}
       <div className="animate-fade-in-down">
         <div className="flex items-center gap-3 mb-2">
-          <div className="p-2.5 bg-gradient-to-br from-[#8455ef] to-[#ba9eff] rounded-xl shadow-lg shadow-[#8455ef]/20">
+          <div className="p-2.5 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl shadow-lg shadow-blue-500/20">
             <Settings className="w-6 h-6 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-white font-display">Settings</h1>
+          <h1 className="text-2xl font-bold text-white">Settings</h1>
         </div>
-        <p className="text-[#777575]">Manage your account and preferences</p>
+        <p className="text-gray-500">Manage your account and preferences</p>
       </div>
 
       {/* Error Message */}
       {error && (
-        <div className="p-4 bg-[#ff6e84]/10 border border-[#ff6e84]/20 rounded-xl flex items-center gap-3 animate-scale-in backdrop-blur-sm">
-          <AlertTriangle className="w-5 h-5 text-[#ff6e84] shrink-0 animate-pulse" />
-          <p className="text-sm text-[#ff6e84]">{error}</p>
+        <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-xl flex items-center gap-3 animate-scale-in backdrop-blur-sm">
+          <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 animate-pulse" />
+          <p className="text-sm text-rose-400">{error}</p>
         </div>
       )}
 
       {/* Profile Section */}
       <SectionCard
         icon={User}
-        iconColor="bg-gradient-to-br from-[#8455ef] to-[#22d3ee]"
+        iconColor="bg-gradient-to-br from-blue-500 to-cyan-500"
         title="Profile"
         description="Your personal information"
         delay={0.1}
@@ -319,7 +319,7 @@ export default function SettingsPage() {
               type="text"
               value={formData.full_name}
               onChange={(e) => handleFieldChange('full_name', e.target.value)}
-              className="w-full px-4 py-3.5 bg-white/[0.03] border border-white/[0.06] rounded-xl text-white placeholder-[#777575] focus:outline-none focus:ring-2 focus:ring-[#8455ef]/40 focus:border-transparent transition-all duration-400 hover:bg-white/[0.05]"
+              className="w-full px-4 py-3.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-300 hover:bg-white/[0.07] hover:border-white/20"
               placeholder="Your name"
             />
           </div>
@@ -375,8 +375,8 @@ export default function SettingsPage() {
           {/* In-App Notifications */}
           <div className="flex items-center justify-between p-4 bg-white/5 rounded-xl hover:bg-white/[0.07] transition-all duration-200 group">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-[#8455ef]/15 rounded-lg group-hover:bg-[#8455ef]/25 transition-colors">
-                <Globe className="w-4 h-4 text-[#ba9eff]" />
+              <div className="p-2 bg-blue-500/20 rounded-lg group-hover:bg-blue-500/30 transition-colors">
+                <Globe className="w-4 h-4 text-blue-400" />
               </div>
               <div>
                 <p className="font-medium text-white">In-App Notifications</p>
@@ -404,7 +404,7 @@ export default function SettingsPage() {
               {!notifications.browser_push && (
                 <button
                   onClick={requestPushPermission}
-                  className="text-xs text-[#ba9eff] hover:text-[#a27cff] transition-colors px-2 py-1 rounded-lg hover:bg-[#8455ef]/10"
+                  className="text-xs text-blue-400 hover:text-blue-300 transition-colors px-2 py-1 rounded-lg hover:bg-blue-500/10"
                 >
                   Enable
                 </button>
@@ -573,7 +573,7 @@ export default function SettingsPage() {
             flex items-center gap-2 px-6 py-3 font-medium rounded-xl transition-all duration-300
             ${saved
               ? 'bg-gradient-to-r from-emerald-600 to-cyan-600 shadow-lg shadow-emerald-500/30'
-              : 'bg-gradient-to-r from-[#8455ef] to-[#ba9eff] hover:shadow-lg hover:shadow-[#8455ef]/30 hover:-translate-y-0.5'
+              : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:shadow-lg hover:shadow-blue-500/30 hover:-translate-y-0.5'
             }
             text-white disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none
           `}

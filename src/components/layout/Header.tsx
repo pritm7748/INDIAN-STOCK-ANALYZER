@@ -36,7 +36,7 @@ export function Header({ onMenuClick, sidebarCollapsed }: HeaderProps) {
   }
 
   return (
-    <header className={`fixed top-0 right-0 left-0 lg:left-[var(--sidebar-width)] z-30 h-16 bg-[#0e0e0e]/80 backdrop-blur-2xl transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]`}
+    <header className={`fixed top-0 right-0 left-0 lg:left-[var(--sidebar-width)] z-30 h-16 bg-[var(--card)]/90 backdrop-blur-xl border-b border-[var(--border)] transition-all duration-300`}
       style={{ '--sidebar-width': sidebarCollapsed ? '70px' : '260px' } as React.CSSProperties}
     >
       <div className="h-full px-3 sm:px-4 flex items-center justify-between gap-2 sm:gap-4">
@@ -59,7 +59,7 @@ export function Header({ onMenuClick, sidebarCollapsed }: HeaderProps) {
                 onChange={(e) => setSearchQuery(e.target.value.toUpperCase())}
                 placeholder="Search stock symbol..."
                 autoFocus
-                className="w-full pl-9 pr-9 py-2 bg-[#131313] border border-[rgba(255,255,255,0.06)] rounded-xl text-[var(--foreground)] placeholder-[var(--foreground-muted)] focus:outline-none focus:ring-2 focus:ring-[#8455ef]/40 focus:border-transparent text-sm transition-all duration-400"
+                className="w-full pl-9 pr-9 py-2 bg-[var(--background-secondary)] border border-[var(--border)] rounded-xl text-[var(--foreground)] placeholder-[var(--foreground-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent text-sm transition-colors"
               />
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--foreground-muted)]" />
               <button
@@ -76,7 +76,7 @@ export function Header({ onMenuClick, sidebarCollapsed }: HeaderProps) {
           ) : (
             <button
               onClick={() => setShowSearch(true)}
-              className="flex items-center gap-2 px-3 py-2 bg-[#131313] border border-[rgba(255,255,255,0.06)] rounded-xl text-[var(--foreground-muted)] hover:text-[var(--foreground)] hover:bg-[#1a1919] transition-all duration-400 text-sm min-w-0"
+              className="flex items-center gap-2 px-3 py-2 bg-[var(--background-secondary)] border border-[var(--border)] rounded-xl text-[var(--foreground-muted)] hover:text-[var(--foreground)] hover:border-[var(--border-light)] transition-colors text-sm min-w-0"
             >
               <Search size={16} className="shrink-0" />
               <span className="hidden sm:inline">Search stocks...</span>
@@ -95,7 +95,7 @@ export function Header({ onMenuClick, sidebarCollapsed }: HeaderProps) {
 
           {/* Alerts */}
           {isAuthenticated && (
-            <Link href="/dashboard/alerts" className="relative p-2 rounded-lg hover:bg-[#1a1919] text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-all duration-400">
+            <Link href="/dashboard/alerts" className="relative p-2 rounded-lg hover:bg-[var(--background-secondary)] text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-colors">
               <Bell size={20} />
             </Link>
           )}

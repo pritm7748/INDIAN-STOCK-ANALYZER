@@ -209,7 +209,7 @@ function MetricCard({
     green: { text: 'text-emerald-500 dark:text-emerald-400', glow: 'hover:shadow-emerald-500/20', bg: 'from-emerald-500/10 to-emerald-600/5' },
     red: { text: 'text-rose-500 dark:text-rose-400', glow: 'hover:shadow-rose-500/20', bg: 'from-rose-500/10 to-rose-600/5' },
     yellow: { text: 'text-amber-500 dark:text-yellow-400', glow: 'hover:shadow-amber-500/20', bg: 'from-amber-500/10 to-amber-600/5' },
-    blue: { text: 'text-[#ba9eff]', glow: 'hover:shadow-[#8455ef]/20', bg: 'from-[#8455ef]/10 to-[#ba9eff]/5' },
+    blue: { text: 'text-blue-500 dark:text-blue-400', glow: 'hover:shadow-blue-500/20', bg: 'from-blue-500/10 to-blue-600/5' },
     purple: { text: 'text-purple-500 dark:text-purple-400', glow: 'hover:shadow-purple-500/20', bg: 'from-purple-500/10 to-purple-600/5' },
     orange: { text: 'text-orange-500 dark:text-orange-400', glow: 'hover:shadow-orange-500/20', bg: 'from-orange-500/10 to-orange-600/5' },
     cyan: { text: 'text-cyan-500 dark:text-cyan-400', glow: 'hover:shadow-cyan-500/20', bg: 'from-cyan-500/10 to-cyan-600/5' },
@@ -234,7 +234,7 @@ function MetricCard({
         {value}
       </p>
       {subValue && (
-        <p className="text-xs text-[var(--foreground-muted)] mt-1">{subValue}</p>
+        <p className="text-xs text-gray-500 mt-1">{subValue}</p>
       )}
     </div>
   )
@@ -247,27 +247,27 @@ function SectionHeader({ icon: Icon, title, color = 'blue', badge }: {
   badge?: string
 }) {
   const colorClasses: Record<string, { text: string; bg: string }> = {
-    blue: { text: 'text-[#ba9eff]', bg: 'from-[#8455ef]/20 to-[#ba9eff]/15' },
-    green: { text: 'text-[#69f6b8]', bg: 'from-[#69f6b8]/15 to-[#22d3ee]/10' },
-    red: { text: 'text-[#ff6e84]', bg: 'from-[#ff6e84]/15 to-[#ff6e84]/10' },
-    yellow: { text: 'text-[#fbbf24]', bg: 'from-[#fbbf24]/15 to-[#f59e0b]/10' },
-    purple: { text: 'text-[#b299ff]', bg: 'from-[#b299ff]/15 to-[#8455ef]/10' },
-    orange: { text: 'text-orange-400', bg: 'from-orange-500/15 to-orange-500/10' },
-    cyan: { text: 'text-[#22d3ee]', bg: 'from-[#22d3ee]/15 to-[#06b6d4]/10' },
-    pink: { text: 'text-pink-400', bg: 'from-pink-500/15 to-rose-500/10' },
+    blue: { text: 'text-blue-400', bg: 'from-blue-500/20 to-cyan-500/20' },
+    green: { text: 'text-emerald-400', bg: 'from-emerald-500/20 to-teal-500/20' },
+    red: { text: 'text-rose-400', bg: 'from-rose-500/20 to-pink-500/20' },
+    yellow: { text: 'text-yellow-400', bg: 'from-yellow-500/20 to-amber-500/20' },
+    purple: { text: 'text-purple-400', bg: 'from-purple-500/20 to-indigo-500/20' },
+    orange: { text: 'text-orange-400', bg: 'from-orange-500/20 to-red-500/20' },
+    cyan: { text: 'text-cyan-400', bg: 'from-cyan-500/20 to-blue-500/20' },
+    pink: { text: 'text-pink-400', bg: 'from-pink-500/20 to-rose-500/20' },
   }
   const style = colorClasses[color] || colorClasses.blue
 
   return (
     <div className="flex items-center justify-between mb-4">
-      <h3 className="flex items-center gap-2.5 text-xs font-bold text-[var(--foreground-secondary)] uppercase tracking-widest font-display">
+      <h3 className="flex items-center gap-2.5 text-xs font-bold text-gray-300 uppercase tracking-widest">
         <div className={`p-1.5 rounded-lg bg-gradient-to-br ${style.bg}`}>
           <Icon size={14} className={style.text} />
         </div>
         {title}
       </h3>
       {badge && (
-        <span className="text-[10px] px-2.5 py-1 bg-gradient-to-r from-[#8455ef]/10 to-[#ba9eff]/10 border border-[#8455ef]/20 rounded-full text-[#ba9eff] font-medium">
+        <span className="text-[10px] px-2.5 py-1 bg-gradient-to-r from-purple-500/10 to-blue-500/10 border border-purple-500/20 rounded-full text-purple-400 font-medium">
           {badge}
         </span>
       )}
@@ -323,7 +323,7 @@ function PremiumCard({
   glowOnHover?: boolean
 }) {
   const gradientBg: Record<string, string> = {
-    blue: 'from-[#8455ef]/5 via-transparent to-transparent',
+    blue: 'from-blue-500/5 via-transparent to-transparent',
     green: 'from-emerald-500/5 via-transparent to-transparent',
     red: 'from-rose-500/5 via-transparent to-transparent',
     purple: 'from-purple-500/5 via-transparent to-transparent',
@@ -333,7 +333,7 @@ function PremiumCard({
   }
 
   const glowClass: Record<string, string> = {
-    blue: 'hover:shadow-[#8455ef]/10',
+    blue: 'hover:shadow-blue-500/10',
     green: 'hover:shadow-emerald-500/10',
     red: 'hover:shadow-rose-500/10',
     purple: 'hover:shadow-purple-500/10',
@@ -368,7 +368,7 @@ function ProgressBar({ value, max = 100, color = 'blue', showLabel = true, anima
   const percentage = Math.min(100, Math.max(0, (value / max) * 100))
 
   const colorClasses: Record<string, string> = {
-    blue: 'bg-gradient-to-r from-[#8455ef] to-[#ba9eff]',
+    blue: 'bg-gradient-to-r from-blue-600 to-blue-400',
     green: 'bg-gradient-to-r from-emerald-600 to-emerald-400',
     red: 'bg-gradient-to-r from-rose-600 to-rose-400',
     yellow: 'bg-gradient-to-r from-amber-600 to-amber-400',
@@ -378,7 +378,7 @@ function ProgressBar({ value, max = 100, color = 'blue', showLabel = true, anima
   }
 
   const glowClasses: Record<string, string> = {
-    blue: 'shadow-[#8455ef]/50',
+    blue: 'shadow-blue-500/50',
     green: 'shadow-emerald-500/50',
     red: 'shadow-rose-500/50',
     yellow: 'shadow-amber-500/50',
@@ -723,13 +723,13 @@ function DashboardContent() {
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
-        <div className="bg-[#131313] border border-[rgba(255,255,255,0.06)] p-3 rounded-xl shadow-xl">
-          <p className="text-[#777575] text-xs mb-1">{label}</p>
+        <div className="bg-slate-900 border border-slate-700 p-3 rounded-lg shadow-xl">
+          <p className="text-slate-400 text-xs mb-1">{label}</p>
           <p className="text-white font-bold text-lg">
             ₹{payload[0].value?.toFixed(2)}
           </p>
           {payload[0].payload.volume && (
-            <p className="text-[#adaaaa] text-xs mt-1">
+            <p className="text-gray-400 text-xs mt-1">
               Vol: {formatLargeNumber(payload[0].payload.volume)}
             </p>
           )}
@@ -750,11 +750,11 @@ function DashboardContent() {
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-fade-in-down">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-gradient-to-br from-[#8455ef] to-[#ba9eff] rounded-xl shadow-lg shadow-[#8455ef]/20">
+          <div className="p-2.5 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl shadow-lg shadow-blue-500/20">
             <Zap className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-[var(--foreground)] font-display">Stock Analyzer</h1>
+            <h1 className="text-2xl font-bold text-[var(--foreground)]">Stock Analyzer</h1>
             <p className="text-[var(--foreground-muted)] text-sm">AI-powered technical analysis for Indian stocks</p>
           </div>
         </div>
@@ -826,7 +826,7 @@ function DashboardContent() {
           <button
             onClick={() => handleAnalyze()}
             disabled={loading}
-            className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-[#8455ef] to-[#ba9eff] disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium rounded-full transition-all duration-400 text-sm shadow-lg shadow-[#8455ef]/25 hover:shadow-[#8455ef]/40 hover:-translate-y-0.5 group"
+            className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-all text-sm shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:-translate-y-0.5 group"
           >
             {loading ? (
               <>
@@ -863,7 +863,7 @@ function DashboardContent() {
             onRefresh={handleForceRefresh}
           />
           {loading && (
-            <span className="flex items-center gap-2 text-xs text-[#ba9eff]">
+            <span className="flex items-center gap-2 text-xs text-blue-400">
               <Loader2 size={12} className="animate-spin" />
               Refreshing...
             </span>
@@ -873,9 +873,9 @@ function DashboardContent() {
 
       {/* Error Display */}
       {error && (
-        <div className="bg-[#ff6e84]/10 border border-[#ff6e84]/20 rounded-2xl p-4 flex items-center gap-3">
-          <AlertTriangle className="text-[#ff6e84]" size={20} />
-          <p className="text-[#ff6e84] text-sm">{error}</p>
+        <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-4 flex items-center gap-3">
+          <AlertTriangle className="text-rose-400" size={20} />
+          <p className="text-rose-400 text-sm">{error}</p>
         </div>
       )}
 
@@ -884,13 +884,13 @@ function DashboardContent() {
         <div className="flex flex-col items-center justify-center py-20 space-y-6">
           <div className="relative w-24 h-24">
             {/* Outer spinning ring */}
-            <div className="absolute inset-0 border-4 border-[#8455ef]/20 rounded-full"></div>
-            <div className="absolute inset-0 border-4 border-transparent border-t-[#8455ef] rounded-full animate-spin"></div>
+            <div className="absolute inset-0 border-4 border-blue-500/20 rounded-full"></div>
+            <div className="absolute inset-0 border-4 border-transparent border-t-blue-500 rounded-full animate-spin"></div>
             {/* Inner pulsing orb */}
-            <div className="absolute inset-4 bg-gradient-to-br from-[#8455ef]/20 to-[#ba9eff]/15 rounded-full animate-pulse"></div>
+            <div className="absolute inset-4 bg-gradient-to-br from-blue-500/20 to-purple-500/20 rounded-full animate-pulse"></div>
             {/* Center icon */}
             <div className="absolute inset-0 flex items-center justify-center">
-              <BrainCircuit size={28} className="text-[#ba9eff] animate-pulse" />
+              <BrainCircuit size={28} className="text-blue-400 animate-pulse" />
             </div>
           </div>
           <div className="text-center">
@@ -1037,7 +1037,7 @@ function DashboardContent() {
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
                   className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-300 ${activeTab === tab.id
-                    ? 'bg-gradient-to-r from-[#8455ef] to-[#ba9eff] text-white shadow-lg shadow-[#8455ef]/25'
+                    ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg shadow-blue-500/25'
                     : 'text-gray-400 hover:text-white hover:bg-white/5'
                     }`}
                 >
