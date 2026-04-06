@@ -8,7 +8,7 @@ import {
     CalendarDays, ArrowRightLeft, ShieldCheck, Play,
     Crosshair, Eye, GitPullRequestArrow, PieChart, Repeat,
     Newspaper, Sparkles, ArrowUpRight, Layers, Timer,
-    BookOpen, Waves, Moon, Sun, ArrowDown
+    BookOpen, Waves, Moon, Sun, ArrowDown, TrendingUp as TUp2
 } from 'lucide-react'
 
 interface Holding {
@@ -207,6 +207,15 @@ export default function StrategyAnalysisPage() {
     const [btstStatusMsg, setBtstStatusMsg] = useState('')
     const [btstRiskGate, setBtstRiskGate] = useState<any>(null)
     const btstAbortRef = useRef<AbortController | null>(null)
+
+    // Weekly Breakout state
+    const [wbScanning, setWbScanning] = useState(false)
+    const [wbResult, setWbResult] = useState<any>(null)
+    const [wbError, setWbError] = useState('')
+    const [wbProgress, setWbProgress] = useState<ScanProgress | null>(null)
+    const [wbStatusMsg, setWbStatusMsg] = useState('')
+    const [wbRiskGate, setWbRiskGate] = useState<any>(null)
+    const wbAbortRef = useRef<AbortController | null>(null)
 
     const timeframes = [
         { id: '1D', label: 'Intraday', available: true },
@@ -618,6 +627,56 @@ export default function StrategyAnalysisPage() {
         btstAbortRef.current?.abort()
         setBtstScanning(false)
         setBtstStatusMsg('Scan stopped')
+    }, [])
+
+    const runWeeklyBreakout = useCallback(async () => {
+        setWbScanning(true)
+        setWbError('')
+        setWbResult(null)
+        setWbProgress(null)
+        setWbRiskGate(null)
+        setWbStatusMsg('Connecting...')
+        const abort = new AbortController()
+        wbAbortRef.current = abort
+        try {
+            const res = await fetch('/api/strategy/weekly-breakout', { signal: abort.signal })
+            if (!res.ok || !res.body) throw new Error('Failed to connect')
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+            let currentEvent = ''
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) currentEvent = line.slice(7).trim()
+                    if (!line.startsWith('data: ')) continue
+                    try {
+                        const data = JSON.parse(line.slice(6))
+                        switch (currentEvent) {
+                            case 'status': setWbStatusMsg(data.message); break
+                            case 'riskGate': setWbRiskGate(data); break
+                            case 'progress': setWbProgress(data); setWbStatusMsg(`Scanning... ${data.scanned}/${data.total} stocks`); break
+                            case 'result': setWbResult(data); setWbStatusMsg('Analysis complete!'); break
+                            case 'error': setWbError(data.message); break
+                            case 'done': break
+                        }
+                    } catch { /* skip */ }
+                    currentEvent = ''
+                }
+            }
+        } catch (err: any) {
+            if (err.name !== 'AbortError') setWbError(err.message || 'Something went wrong')
+        } finally { setWbScanning(false) }
+    }, [])
+
+    const stopWbScan = useCallback(() => {
+        wbAbortRef.current?.abort()
+        setWbScanning(false)
+        setWbStatusMsg('Scan stopped')
     }, [])
 
     const runSectorRotation = useCallback(async () => {
@@ -4384,6 +4443,291 @@ export default function StrategyAnalysisPage() {
                                         <span>Errors: {btstResult.totalErrors}</span>
                                         <span>Candidates: {btstResult.totalCandidates}</span>
                                         <span>Backtest Trades: {btstResult.backtest?.totalTrades ?? 0}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Strategy 8: Weekly Breakout / Breakdown */}
+                    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-6 hover:border-teal-500/30 transition-all">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-gradient-to-br from-teal-500/20 to-cyan-500/20 rounded-xl flex items-center justify-center">
+                                    <Layers size={20} className="text-teal-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-bold text-[var(--foreground)]">Weekly Breakout / Breakdown</h3>
+                                    <p className="text-[10px] text-[var(--foreground-muted)]">PW Range · Multi-Week Base · RS vs Nifty · Monday Effect · Retest Entries · Hold 3-5 Days</p>
+                                </div>
+                            </div>
+                            {wbScanning ? (
+                                <button onClick={stopWbScan} className="flex items-center gap-1.5 bg-red-500/10 text-red-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-all">
+                                    <StopCircle size={14} /> Stop
+                                </button>
+                            ) : (
+                                <button onClick={runWeeklyBreakout} className="flex items-center gap-1.5 bg-teal-500/10 text-teal-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-teal-500/20 transition-all">
+                                    <Play size={14} /> Scan
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Analysis</div>
+                                <div className="text-sm font-bold text-teal-400">Weekend Scan</div>
+                            </div>
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Entry</div>
+                                <div className="text-sm font-bold text-cyan-400">Mon-Wed</div>
+                            </div>
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Target</div>
+                                <div className="text-sm font-bold text-teal-300">3-8%</div>
+                            </div>
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Hold</div>
+                                <div className="text-sm font-bold text-cyan-300">3-5 Days</div>
+                            </div>
+                        </div>
+
+                        {wbScanning && (
+                            <div className="mb-4">
+                                <p className="text-xs text-teal-300 mb-2">{wbStatusMsg}</p>
+                                {wbProgress && (
+                                    <div className="w-full bg-[var(--background)] rounded-full h-1.5">
+                                        <div className="bg-gradient-to-r from-teal-500 to-cyan-500 h-1.5 rounded-full transition-all" style={{ width: `${Math.round((wbProgress.scanned / wbProgress.total) * 100)}%` }} />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {wbError && (
+                            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-4">
+                                <p className="text-xs text-red-400">{wbError}</p>
+                            </div>
+                        )}
+
+                        {wbRiskGate && (
+                            <div className={`rounded-lg p-3 mb-4 border ${wbRiskGate.allowed ? 'bg-green-500/5 border-green-500/20' : 'bg-red-500/10 border-red-500/20'}`}>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <ShieldCheck size={14} className={wbRiskGate.allowed ? 'text-green-400' : 'text-red-400'} />
+                                    <span className={`text-xs font-semibold ${wbRiskGate.allowed ? 'text-green-400' : 'text-red-400'}`}>
+                                        Risk Gate: {wbRiskGate.allowed ? '\u2705 CLEAR' : '\ud83d\udeab BLOCKED'}
+                                    </span>
+                                </div>
+                                {wbRiskGate.blocks.map((b: any, i: number) => <p key={i} className="text-[10px] text-red-400 ml-5">\u274c {b.rule}: {b.msg}</p>)}
+                                {wbRiskGate.warnings.map((w: any, i: number) => <p key={i} className="text-[10px] text-yellow-400 ml-5">\u26a0\ufe0f {w.rule}: {w.msg}</p>)}
+                            </div>
+                        )}
+
+                        {wbResult && (
+                            <div className="space-y-4">
+                                {/* Market Context */}
+                                <div className="bg-[var(--background)] rounded-lg p-3 flex items-center gap-4 flex-wrap text-[11px]">
+                                    <span>Regime: <span className={`font-medium ${wbResult.market.regime?.regime === 'STRONG_TREND' || wbResult.market.regime?.regime === 'TRENDING' ? 'text-green-400' : wbResult.market.regime?.regime === 'CHOPPY' ? 'text-red-400' : 'text-yellow-400'}`}>{wbResult.market.regime?.regime || '-'}</span></span>
+                                    <span>Nifty Trend: <span className="text-teal-400 font-medium">{wbResult.market.niftyTrend?.trend || '-'}</span></span>
+                                    {wbResult.market.indiaVix && <span>VIX: <span className={wbResult.market.indiaVix > 18 ? 'text-yellow-400' : 'text-[var(--foreground)]'}>{wbResult.market.indiaVix}</span></span>}
+                                    <span>Success Est: <span className="text-teal-400 font-medium">{wbResult.market.regime?.estimatedSuccessRate ? `${Math.round(wbResult.market.regime.estimatedSuccessRate * 100)}%` : '-'}</span></span>
+                                </div>
+
+                                {/* Breakout Watchlist */}
+                                {wbResult.breakoutWatch && wbResult.breakoutWatch.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-teal-400 mb-3 flex items-center gap-1.5">
+                                            <TrendingUp size={14} /> Breakout Watchlist ({wbResult.totalBreakoutCandidates})
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="pb-2 pr-3">Symbol</th>
+                                                        <th className="pb-2 pr-2">Score</th>
+                                                        <th className="pb-2 pr-2">PW High</th>
+                                                        <th className="pb-2 pr-2">PW%</th>
+                                                        <th className="pb-2 pr-2">Base</th>
+                                                        <th className="pb-2 pr-2">RS</th>
+                                                        <th className="pb-2 pr-2">52W</th>
+                                                        <th className="pb-2 pr-2">RSI</th>
+                                                        <th className="pb-2">SL</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {wbResult.breakoutWatch.map((c: any, idx: number) => (
+                                                        <tr key={idx} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">
+                                                                {c.symbol}
+                                                                {c.isFnO && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-teal-500/20 text-teal-300">F&amp;O</span>}
+                                                            </td>
+                                                            <td className="py-1.5 pr-2 text-teal-400 font-medium">{c.weekendScore}</td>
+                                                            <td className="py-1.5 pr-2 text-[var(--foreground)]">{c.pwHigh}</td>
+                                                            <td className="py-1.5 pr-2 text-[var(--foreground)]">{c.pwRangePct}%</td>
+                                                            <td className="py-1.5 pr-2">
+                                                                <span className={`text-[9px] px-1 py-0.5 rounded ${c.baseClass === 'PERFECT_COIL' || c.baseClass === 'COILED_SPRING' ? 'bg-green-500/10 text-green-400' : c.baseClass === 'STRONG_BASE' || c.baseClass === 'VALID_BASE' ? 'bg-teal-500/10 text-teal-400' : 'bg-[var(--background)] text-[var(--foreground-muted)]'}`}>
+                                                                    {c.baseClass === 'PERFECT_COIL' ? 'PERFECT' : c.baseClass === 'COILED_SPRING' ? 'COILED' : c.baseClass === 'STRONG_BASE' ? 'STRONG' : c.baseClass === 'VALID_BASE' ? 'VALID' : 'NONE'}
+                                                                    {c.baseWeeks > 0 && ` ${c.baseWeeks}w`}
+                                                                </span>
+                                                            </td>
+                                                            <td className="py-1.5 pr-2">
+                                                                <span className={`text-[9px] px-1 py-0.5 rounded ${c.rsRank === 'VERY_STRONG' || c.rsRank === 'STRONG' ? 'bg-green-500/10 text-green-400' : c.rsRank === 'NEUTRAL' ? 'bg-[var(--background)] text-[var(--foreground-muted)]' : 'bg-red-500/10 text-red-400'}`}>{c.rsRank}</span>
+                                                            </td>
+                                                            <td className="py-1.5 pr-2">{c.nearHighZone ? <span className="text-green-400 text-[9px]">Near ATH</span> : <span className="text-[var(--foreground-muted)]">{Math.round(c.w52Position * 100)}%</span>}</td>
+                                                            <td className="py-1.5 pr-2 text-[var(--foreground)]">{c.rsi14}</td>
+                                                            <td className="py-1.5 text-red-400">{c.stopLoss}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Breakdown Watchlist */}
+                                {wbResult.breakdownWatch && wbResult.breakdownWatch.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-red-400 mb-3 flex items-center gap-1.5">
+                                            <TrendingDown size={14} /> Breakdown Watchlist ({wbResult.totalBreakdownCandidates})
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="pb-2 pr-3">Symbol</th>
+                                                        <th className="pb-2 pr-2">Score</th>
+                                                        <th className="pb-2 pr-2">PW Low</th>
+                                                        <th className="pb-2 pr-2">RSI</th>
+                                                        <th className="pb-2">Target</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {wbResult.breakdownWatch.map((c: any, idx: number) => (
+                                                        <tr key={idx} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">{c.symbol}</td>
+                                                            <td className="py-1.5 pr-2 text-red-400 font-medium">{c.weekendScore}</td>
+                                                            <td className="py-1.5 pr-2 text-[var(--foreground)]">{c.pwLow}</td>
+                                                            <td className="py-1.5 pr-2 text-[var(--foreground)]">{c.rsi14}</td>
+                                                            <td className="py-1.5 text-red-400">{c.target}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Backtest Stats */}
+                                {wbResult.backtest && wbResult.backtest.totalTrades > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-cyan-400 mb-3 flex items-center gap-1.5">
+                                            <BarChart3 size={14} /> Backtest Performance (~1 Year)
+                                        </h4>
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Trades</div><div className="text-sm font-bold text-[var(--foreground)]">{wbResult.backtest.totalTrades}</div></div>
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Win Rate</div><div className={`text-sm font-bold ${wbResult.backtest.winRatePct >= 55 ? 'text-green-400' : wbResult.backtest.winRatePct >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{wbResult.backtest.winRatePct}%</div></div>
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Profit Factor</div><div className={`text-sm font-bold ${wbResult.backtest.profitFactor >= 1.5 ? 'text-green-400' : wbResult.backtest.profitFactor >= 1 ? 'text-yellow-400' : 'text-red-400'}`}>{wbResult.backtest.profitFactor}</div></div>
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Sharpe</div><div className={`text-sm font-bold ${wbResult.backtest.sharpeRatio >= 1 ? 'text-green-400' : wbResult.backtest.sharpeRatio >= 0.5 ? 'text-yellow-400' : 'text-red-400'}`}>{wbResult.backtest.sharpeRatio}</div></div>
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Avg PnL</div><div className={`text-sm font-bold ${wbResult.backtest.avgPnlPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>{wbResult.backtest.avgPnlPct}%</div></div>
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Avg Hold</div><div className="text-sm font-bold text-teal-400">{wbResult.backtest.avgHoldDays}d</div></div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Analytics Breakdown */}
+                                {wbResult.analysis && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-teal-400 mb-3">Strategy Analytics</h4>
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                            {/* Monday Effect */}
+                                            <div className="bg-[var(--card)] rounded-lg p-2">
+                                                <div className="text-[9px] text-teal-400 mb-1">Monday Effect</div>
+                                                <div className="text-[10px] text-[var(--foreground)]">
+                                                    Mon: {wbResult.analysis.mondayEffect?.monday?.count || 0} trades, WR: {wbResult.analysis.mondayEffect?.monday?.winRate || 0}%
+                                                </div>
+                                                <div className="text-[10px] text-[var(--foreground-muted)]">
+                                                    Other: {wbResult.analysis.mondayEffect?.nonMonday?.count || 0} trades, WR: {wbResult.analysis.mondayEffect?.nonMonday?.winRate || 0}%
+                                                </div>
+                                                {wbResult.analysis.mondayEffect?.edge != null && <div className={`text-[9px] mt-1 ${wbResult.analysis.mondayEffect.edge > 0 ? 'text-green-400' : 'text-red-400'}`}>Edge: {wbResult.analysis.mondayEffect.edge > 0 ? '+' : ''}{wbResult.analysis.mondayEffect.edge}%</div>}
+                                            </div>
+                                            {/* Entry Type */}
+                                            <div className="bg-[var(--card)] rounded-lg p-2">
+                                                <div className="text-[9px] text-cyan-400 mb-1">Entry Type</div>
+                                                <div className="text-[10px] text-[var(--foreground)]">
+                                                    Breakout: {wbResult.analysis.entryType?.breakout?.count || 0}, WR: {wbResult.analysis.entryType?.breakout?.winRate || 0}%
+                                                </div>
+                                                <div className="text-[10px] text-[var(--foreground-muted)]">
+                                                    Retest: {wbResult.analysis.entryType?.retest?.count || 0}, WR: {wbResult.analysis.entryType?.retest?.winRate || 0}%
+                                                </div>
+                                            </div>
+                                            {/* Base Effect */}
+                                            <div className="bg-[var(--card)] rounded-lg p-2">
+                                                <div className="text-[9px] text-teal-400 mb-1">Multi-Week Base</div>
+                                                <div className="text-[10px] text-[var(--foreground)]">
+                                                    With: {wbResult.analysis.baseEffect?.withBase?.count || 0}, WR: {wbResult.analysis.baseEffect?.withBase?.winRate || 0}%
+                                                </div>
+                                                <div className="text-[10px] text-[var(--foreground-muted)]">
+                                                    Without: {wbResult.analysis.baseEffect?.noBase?.count || 0}, WR: {wbResult.analysis.baseEffect?.noBase?.winRate || 0}%
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Drawdown & Exit Reasons */}
+                                        <div className="flex items-center gap-4 text-[10px] text-[var(--foreground-muted)] flex-wrap mt-3 pt-3 border-t border-[var(--card-border)]/30">
+                                            <span>Max DD: <span className="text-red-400">{wbResult.analysis.maxDrawdownPct}%</span></span>
+                                            <span>Best: <span className="text-green-400">+{wbResult.backtest.bestTrade}%</span></span>
+                                            <span>Worst: <span className="text-red-400">{wbResult.backtest.worstTrade}%</span></span>
+                                            <span>Max Loss Streak: <span className="text-red-400">{wbResult.backtest.maxConsecLosses}</span></span>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Exit Reasons */}
+                                {wbResult.analysis?.byExitReason && (
+                                    <div className="bg-[var(--background)] rounded-lg p-3">
+                                        <div className="text-[10px] text-[var(--foreground-muted)] mb-2">Exit Reasons</div>
+                                        <div className="flex items-center gap-3 flex-wrap">
+                                            {wbResult.analysis.byExitReason.map((r: any, i: number) => (
+                                                <span key={i} className="text-[10px] px-2 py-1 rounded bg-[var(--card)] text-[var(--foreground)]">
+                                                    {r.reason.replace(/_/g, ' ')}: {r.count} (<span className={r.avgPnl >= 0 ? 'text-green-400' : 'text-red-400'}>{r.avgPnl}%</span>)
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Top Stocks */}
+                                {wbResult.topStocks && wbResult.topStocks.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-teal-400 mb-3 flex items-center gap-1.5">
+                                            <BarChart3 size={14} /> Top Stocks by Win Rate
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead><tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                    <th className="pb-2 pr-3">Symbol</th><th className="pb-2 pr-3">Trades</th><th className="pb-2 pr-3">Win%</th><th className="pb-2">Avg PnL</th>
+                                                </tr></thead>
+                                                <tbody>
+                                                    {wbResult.topStocks.map((s: any, i: number) => (
+                                                        <tr key={i} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">{s.symbol}{s.isFnO && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-teal-500/20 text-teal-300">F&amp;O</span>}</td>
+                                                            <td className="py-1.5 pr-3 text-[var(--foreground)]">{s.trades}</td>
+                                                            <td className={`py-1.5 pr-3 font-medium ${s.winRate >= 55 ? 'text-green-400' : s.winRate >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{s.winRate}%</td>
+                                                            <td className={`py-1.5 font-medium ${s.avgPnl > 0 ? 'text-green-400' : 'text-red-400'}`}>{s.avgPnl > 0 ? '+' : ''}{s.avgPnl}%</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Scan Stats */}
+                                <div className="bg-[var(--background)] rounded-lg p-3">
+                                    <div className="text-[10px] text-[var(--foreground-muted)] flex items-center gap-4 flex-wrap">
+                                        <span>Scanned: {wbResult.totalStocksScanned}</span>
+                                        <span>Errors: {wbResult.totalErrors}</span>
+                                        <span>Breakout: {wbResult.totalBreakoutCandidates}</span>
+                                        <span>Breakdown: {wbResult.totalBreakdownCandidates}</span>
+                                        <span>Backtest: {wbResult.backtest?.totalTrades ?? 0} trades</span>
                                     </div>
                                 </div>
                             </div>
