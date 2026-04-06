@@ -8,7 +8,7 @@ import {
     CalendarDays, ArrowRightLeft, ShieldCheck, Play,
     Crosshair, Eye, GitPullRequestArrow, PieChart, Repeat,
     Newspaper, Sparkles, ArrowUpRight, Layers, Timer,
-    BookOpen, Waves
+    BookOpen, Waves, Moon, Sun, ArrowDown
 } from 'lucide-react'
 
 interface Holding {
@@ -199,9 +199,18 @@ export default function StrategyAnalysisPage() {
     const [ofStatusMsg, setOfStatusMsg] = useState('')
     const ofAbortRef = useRef<AbortController | null>(null)
 
+    // BTST / STBT state
+    const [btstScanning, setBtstScanning] = useState(false)
+    const [btstResult, setBtstResult] = useState<any>(null)
+    const [btstError, setBtstError] = useState('')
+    const [btstProgress, setBtstProgress] = useState<ScanProgress | null>(null)
+    const [btstStatusMsg, setBtstStatusMsg] = useState('')
+    const [btstRiskGate, setBtstRiskGate] = useState<any>(null)
+    const btstAbortRef = useRef<AbortController | null>(null)
+
     const timeframes = [
         { id: '1D', label: 'Intraday', available: true },
-        { id: '1W', label: '1 Week', available: false },
+        { id: '1W', label: '1 Week', available: true },
         { id: '1M', label: '1 Month', available: true },
         { id: '3M', label: '3 Months', available: false },
         { id: '6M', label: '6 Months', available: false },
@@ -536,6 +545,79 @@ export default function StrategyAnalysisPage() {
         ofAbortRef.current?.abort()
         setOfScanning(false)
         setOfStatusMsg('Scan stopped')
+    }, [])
+
+    const runBTST = useCallback(async () => {
+        setBtstScanning(true)
+        setBtstError('')
+        setBtstResult(null)
+        setBtstProgress(null)
+        setBtstRiskGate(null)
+        setBtstStatusMsg('Connecting...')
+
+        const abort = new AbortController()
+        btstAbortRef.current = abort
+
+        try {
+            const res = await fetch('/api/strategy/btst', { signal: abort.signal })
+            if (!res.ok || !res.body) throw new Error('Failed to connect')
+
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+            let currentEvent = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                buffer += decoder.decode(value, { stream: true })
+
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) currentEvent = line.slice(7).trim()
+                    if (!line.startsWith('data: ')) continue
+                    try {
+                        const data = JSON.parse(line.slice(6))
+                        switch (currentEvent) {
+                            case 'status':
+                                setBtstStatusMsg(data.message)
+                                break
+                            case 'riskGate':
+                                setBtstRiskGate(data)
+                                break
+                            case 'progress':
+                                setBtstProgress(data)
+                                setBtstStatusMsg(`Scanning... ${data.scanned}/${data.total} stocks`)
+                                break
+                            case 'result':
+                                setBtstResult(data)
+                                setBtstStatusMsg('Analysis complete!')
+                                break
+                            case 'error':
+                                setBtstError(data.message)
+                                break
+                            case 'done':
+                                break
+                        }
+                    } catch { /* skip */ }
+                    currentEvent = ''
+                }
+            }
+        } catch (err: any) {
+            if (err.name !== 'AbortError') {
+                setBtstError(err.message || 'Something went wrong')
+            }
+        } finally {
+            setBtstScanning(false)
+        }
+    }, [])
+
+    const stopBtstScan = useCallback(() => {
+        btstAbortRef.current?.abort()
+        setBtstScanning(false)
+        setBtstStatusMsg('Scan stopped')
     }, [])
 
     const runSectorRotation = useCallback(async () => {
@@ -4005,8 +4087,313 @@ export default function StrategyAnalysisPage() {
                 </div>
             )}
 
+            {/* ═══════════════ 1W TIMEFRAME ═══════════════ */}
+            {activeTimeframe === '1W' && (
+                <div className="space-y-6">
+                    {/* Strategy 7: BTST / STBT */}
+                    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-6 hover:border-amber-500/30 transition-all">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-gradient-to-br from-amber-500/20 to-orange-500/20 rounded-xl flex items-center justify-center">
+                                    <Moon size={20} className="text-amber-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-bold text-[var(--foreground)]">BTST / STBT (Buy Today Sell Tomorrow)</h3>
+                                    <p className="text-[10px] text-[var(--foreground-muted)]">Overnight Momentum · 7 Criteria · 10-Factor Scoring · Risk Gates · Gap Analysis</p>
+                                </div>
+                            </div>
+                            {btstScanning ? (
+                                <button onClick={stopBtstScan} className="flex items-center gap-1.5 bg-red-500/10 text-red-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-all">
+                                    <StopCircle size={14} /> Stop
+                                </button>
+                            ) : (
+                                <button onClick={runBTST} className="flex items-center gap-1.5 bg-amber-500/10 text-amber-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-amber-500/20 transition-all">
+                                    <Play size={14} /> Scan
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Strategy Info Badges */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Entry Window</div>
+                                <div className="text-sm font-bold text-amber-400">3:00-3:15 PM</div>
+                            </div>
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Hold Period</div>
+                                <div className="text-sm font-bold text-orange-400">Overnight</div>
+                            </div>
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Target</div>
+                                <div className="text-sm font-bold text-amber-300">1.5-3%</div>
+                            </div>
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Max Positions</div>
+                                <div className="text-sm font-bold text-orange-300">3 stocks</div>
+                            </div>
+                        </div>
+
+                        {/* Scanning Progress */}
+                        {btstScanning && (
+                            <div className="mb-4">
+                                <p className="text-xs text-amber-300 mb-2">{btstStatusMsg}</p>
+                                {btstProgress && (
+                                    <div className="w-full bg-[var(--background)] rounded-full h-1.5">
+                                        <div className="bg-gradient-to-r from-amber-500 to-orange-500 h-1.5 rounded-full transition-all" style={{ width: `${Math.round((btstProgress.scanned / btstProgress.total) * 100)}%` }} />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {btstError && (
+                            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-4">
+                                <p className="text-xs text-red-400">{btstError}</p>
+                            </div>
+                        )}
+
+                        {/* Risk Gate Banner */}
+                        {btstRiskGate && (
+                            <div className={`rounded-lg p-3 mb-4 border ${btstRiskGate.allowed ? 'bg-green-500/5 border-green-500/20' : 'bg-red-500/10 border-red-500/20'}`}>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <ShieldCheck size={14} className={btstRiskGate.allowed ? 'text-green-400' : 'text-red-400'} />
+                                    <span className={`text-xs font-semibold ${btstRiskGate.allowed ? 'text-green-400' : 'text-red-400'}`}>
+                                        Risk Gate: {btstRiskGate.allowed ? '✅ CLEAR' : '🚫 BLOCKED'}
+                                        {btstRiskGate.sizeMultiplier < 1 && ` (size: ${btstRiskGate.sizeMultiplier}x)`}
+                                    </span>
+                                </div>
+                                {btstRiskGate.blocks.map((b: any, idx: number) => (
+                                    <p key={idx} className="text-[10px] text-red-400 ml-5">❌ {b.rule}: {b.msg}</p>
+                                ))}
+                                {btstRiskGate.warnings.map((w: any, idx: number) => (
+                                    <p key={idx} className="text-[10px] text-yellow-400 ml-5">⚠️ {w.rule}: {w.msg}</p>
+                                ))}
+                            </div>
+                        )}
+
+                        {btstResult && (
+                            <div className="space-y-4">
+                                {/* Market Context */}
+                                <div className="bg-[var(--background)] rounded-lg p-3 flex items-center gap-4 flex-wrap text-[11px]">
+                                    <span className="flex items-center gap-1">
+                                        {btstResult.market.niftyPositive
+                                            ? <TrendingUp size={12} className="text-green-400" />
+                                            : <TrendingDown size={12} className="text-red-400" />
+                                        }
+                                        Nifty: <span className={btstResult.market.niftyPositive ? 'text-green-400' : 'text-red-400'}>{btstResult.market.niftyChange}%</span>
+                                    </span>
+                                    {btstResult.market.indiaVix && (
+                                        <span>VIX: <span className={btstResult.market.indiaVix > 18 ? 'text-yellow-400' : 'text-[var(--foreground)]'}>{btstResult.market.indiaVix}</span></span>
+                                    )}
+                                    <span>Direction: <span className="text-amber-400 font-medium">{btstResult.market.scanDirection}</span></span>
+                                    <span>Candidates: <span className="text-amber-400 font-medium">{btstResult.totalCandidates}</span></span>
+                                </div>
+
+                                {/* Today's Candidates */}
+                                {btstResult.candidates && btstResult.candidates.length > 0 ? (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-amber-400 mb-3 flex items-center gap-1.5">
+                                            <Zap size={14} /> Today&apos;s {btstResult.market.niftyPositive ? 'BTST' : 'STBT'} Candidates ({btstResult.candidates.length})
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="pb-2 pr-2">#</th>
+                                                        <th className="pb-2 pr-3">Symbol</th>
+                                                        <th className="pb-2 pr-2">Grade</th>
+                                                        <th className="pb-2 pr-2">Score</th>
+                                                        <th className="pb-2 pr-2">Day%</th>
+                                                        <th className="pb-2 pr-2">CS</th>
+                                                        <th className="pb-2 pr-2">Vol×</th>
+                                                        <th className="pb-2 pr-2">RSI</th>
+                                                        <th className="pb-2 pr-2">Gap↑%</th>
+                                                        <th className="pb-2">Action</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {btstResult.candidates.map((c: any) => (
+                                                        <tr key={c.rank} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-1.5 pr-2 text-[var(--foreground-muted)]">{c.rank}</td>
+                                                            <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">
+                                                                {c.symbol}
+                                                                {c.isFnO && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300">F&amp;O</span>}
+                                                            </td>
+                                                            <td className="py-1.5 pr-2">
+                                                                <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                                                                    c.grade === 'A+' || c.grade === 'A' ? 'bg-green-500/10 text-green-400' :
+                                                                    c.grade === 'B+' || c.grade === 'B' ? 'bg-amber-500/10 text-amber-400' :
+                                                                    'bg-red-500/10 text-red-400'
+                                                                }`}>{c.grade}</span>
+                                                            </td>
+                                                            <td className="py-1.5 pr-2 text-amber-400 font-medium">{c.score}</td>
+                                                            <td className={`py-1.5 pr-2 font-medium ${c.dayChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                                {c.dayChange >= 0 ? '+' : ''}{c.dayChange}%
+                                                            </td>
+                                                            <td className="py-1.5 pr-2 text-[var(--foreground)]">{c.closingStrength}</td>
+                                                            <td className="py-1.5 pr-2 text-[var(--foreground)]">{c.volumeRatio}×</td>
+                                                            <td className="py-1.5 pr-2 text-[var(--foreground)]">{c.rsi14}</td>
+                                                            <td className="py-1.5 pr-2">
+                                                                {c.gapUpProb !== null ? (
+                                                                    <span className={c.gapUpProb >= 0.6 ? 'text-green-400' : 'text-[var(--foreground-muted)]'}>
+                                                                        {Math.round(c.gapUpProb * 100)}%
+                                                                    </span>
+                                                                ) : <span className="text-[var(--foreground-muted)]">-</span>}
+                                                            </td>
+                                                            <td className="py-1.5">
+                                                                <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+                                                                    c.action === 'STRONG BUY' ? 'bg-green-500/10 text-green-400' :
+                                                                    c.action === 'BUY' ? 'bg-amber-500/10 text-amber-400' :
+                                                                    'bg-[var(--background)] text-[var(--foreground-muted)]'
+                                                                }`}>{c.action}</span>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <p className="text-xs text-[var(--foreground-muted)] text-center">
+                                            {btstRiskGate && !btstRiskGate.allowed
+                                                ? 'Risk gate blocked — no BTST trades today.'
+                                                : 'No stocks passed all 7 BTST criteria today.'}
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* Backtest Performance */}
+                                {btstResult.backtest && btstResult.backtest.totalTrades > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-orange-400 mb-3 flex items-center gap-1.5">
+                                            <BarChart3 size={14} /> Backtest Performance (~1 Year)
+                                        </h4>
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+                                            <div className="text-center">
+                                                <div className="text-[10px] text-[var(--foreground-muted)]">Trades</div>
+                                                <div className="text-sm font-bold text-[var(--foreground)]">{btstResult.backtest.totalTrades}</div>
+                                            </div>
+                                            <div className="text-center">
+                                                <div className="text-[10px] text-[var(--foreground-muted)]">Win Rate</div>
+                                                <div className={`text-sm font-bold ${btstResult.backtest.winRatePct >= 55 ? 'text-green-400' : btstResult.backtest.winRatePct >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{btstResult.backtest.winRatePct}%</div>
+                                            </div>
+                                            <div className="text-center">
+                                                <div className="text-[10px] text-[var(--foreground-muted)]">Profit Factor</div>
+                                                <div className={`text-sm font-bold ${btstResult.backtest.profitFactor >= 1.5 ? 'text-green-400' : btstResult.backtest.profitFactor >= 1 ? 'text-yellow-400' : 'text-red-400'}`}>{btstResult.backtest.profitFactor}</div>
+                                            </div>
+                                            <div className="text-center">
+                                                <div className="text-[10px] text-[var(--foreground-muted)]">Sharpe</div>
+                                                <div className={`text-sm font-bold ${btstResult.backtest.sharpeRatio >= 1 ? 'text-green-400' : btstResult.backtest.sharpeRatio >= 0.5 ? 'text-yellow-400' : 'text-red-400'}`}>{btstResult.backtest.sharpeRatio}</div>
+                                            </div>
+                                            <div className="text-center">
+                                                <div className="text-[10px] text-[var(--foreground-muted)]">Avg PnL</div>
+                                                <div className={`text-sm font-bold ${btstResult.backtest.avgPnlPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>{btstResult.backtest.avgPnlPct}%</div>
+                                            </div>
+                                            <div className="text-center">
+                                                <div className="text-[10px] text-[var(--foreground-muted)]">Max DD</div>
+                                                <div className="text-sm font-bold text-red-400">{btstResult.drawdown?.maxDrawdownPct ?? '-'}%</div>
+                                            </div>
+                                        </div>
+
+                                        {/* Score Tier Comparison */}
+                                        {btstResult.backtest.byScoreTier && (
+                                            <div className="mt-3 pt-3 border-t border-[var(--card-border)]/30">
+                                                <div className="text-[10px] text-[var(--foreground-muted)] mb-2">Score Tier Analysis</div>
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <div className="bg-[var(--card)] rounded-lg p-2 text-center">
+                                                        <div className="text-[9px] text-amber-400 mb-1">High Score (≥60)</div>
+                                                        <div className="text-xs text-[var(--foreground)]">
+                                                            {btstResult.backtest.byScoreTier.highScore.trades} trades · WR: {btstResult.backtest.byScoreTier.highScore.winRate}% · Avg: {btstResult.backtest.byScoreTier.highScore.avgPnl}%
+                                                        </div>
+                                                    </div>
+                                                    <div className="bg-[var(--card)] rounded-lg p-2 text-center">
+                                                        <div className="text-[9px] text-[var(--foreground-muted)] mb-1">Low Score (&lt;60)</div>
+                                                        <div className="text-xs text-[var(--foreground)]">
+                                                            {btstResult.backtest.byScoreTier.lowScore.trades} trades · WR: {btstResult.backtest.byScoreTier.lowScore.winRate}% · Avg: {btstResult.backtest.byScoreTier.lowScore.avgPnl}%
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Gap Analysis */}
+                                        <div className="mt-3 pt-3 border-t border-[var(--card-border)]/30">
+                                            <div className="flex items-center gap-4 text-[10px] text-[var(--foreground-muted)] flex-wrap">
+                                                <span>Avg Gap: <span className={btstResult.backtest.avgGapPct >= 0 ? 'text-green-400' : 'text-red-400'}>{btstResult.backtest.avgGapPct}%</span></span>
+                                                <span>Gap↑ Rate: <span className="text-amber-400">{btstResult.backtest.positiveGapRate}%</span></span>
+                                                <span>Best: <span className="text-green-400">+{btstResult.backtest.bestTrade}%</span></span>
+                                                <span>Worst: <span className="text-red-400">{btstResult.backtest.worstTrade}%</span></span>
+                                                <span>Max Loss Streak: <span className="text-red-400">{btstResult.backtest.maxConsecutiveLosses}</span></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Top Stocks by Win Rate */}
+                                {btstResult.topStocksByWinRate && btstResult.topStocksByWinRate.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-amber-400 mb-3 flex items-center gap-1.5">
+                                            <BarChart3 size={14} /> Top Stocks — BTST Win Rate (≥3 trades)
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                        <th className="pb-2 pr-3">Symbol</th>
+                                                        <th className="pb-2 pr-3">Trades</th>
+                                                        <th className="pb-2 pr-3">Win%</th>
+                                                        <th className="pb-2">Avg PnL</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {btstResult.topStocksByWinRate.map((s: any, idx: number) => (
+                                                        <tr key={idx} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">
+                                                                {s.symbol}
+                                                                {s.isFnO && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300">F&amp;O</span>}
+                                                            </td>
+                                                            <td className="py-1.5 pr-3 text-[var(--foreground)]">{s.trades}</td>
+                                                            <td className={`py-1.5 pr-3 font-medium ${s.winRate >= 55 ? 'text-green-400' : s.winRate >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{s.winRate}%</td>
+                                                            <td className={`py-1.5 font-medium ${s.avgPnl > 0 ? 'text-green-400' : 'text-red-400'}`}>{s.avgPnl > 0 ? '+' : ''}{s.avgPnl}%</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Exit Reason Breakdown */}
+                                {btstResult.backtest?.exitReasons && (
+                                    <div className="bg-[var(--background)] rounded-lg p-3">
+                                        <div className="text-[10px] text-[var(--foreground-muted)] mb-2">Exit Reasons</div>
+                                        <div className="flex items-center gap-3 flex-wrap">
+                                            {Object.entries(btstResult.backtest.exitReasons).map(([reason, data]: [string, any]) => (
+                                                <span key={reason} className="text-[10px] px-2 py-1 rounded bg-[var(--card)] text-[var(--foreground)]">
+                                                    {reason.replace(/_/g, ' ')}: {data.count} (<span className={data.avgPnl >= 0 ? 'text-green-400' : 'text-red-400'}>{data.avgPnl}%</span>)
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Scan Stats */}
+                                <div className="bg-[var(--background)] rounded-lg p-3">
+                                    <div className="text-[10px] text-[var(--foreground-muted)] flex items-center gap-4 flex-wrap">
+                                        <span>Scanned: {btstResult.totalStocksScanned} stocks</span>
+                                        <span>Errors: {btstResult.totalErrors}</span>
+                                        <span>Candidates: {btstResult.totalCandidates}</span>
+                                        <span>Backtest Trades: {btstResult.backtest?.totalTrades ?? 0}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {/* Other Timeframes — Coming Soon */}
-            {activeTimeframe !== '1M' && activeTimeframe !== '1D' && (
+            {activeTimeframe !== '1M' && activeTimeframe !== '1D' && activeTimeframe !== '1W' && (
                 <div className="flex flex-col items-center justify-center py-20 text-center">
                     <div className="w-20 h-20 bg-gradient-to-br from-cyan-500/10 to-blue-500/10 rounded-2xl flex items-center justify-center mb-6">
                         <Clock size={40} className="text-cyan-400/60" />

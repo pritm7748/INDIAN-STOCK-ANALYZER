@@ -1,0 +1,1778 @@
+
+
+# Honest Assessment — What's Wrong
+
+**No.** The implementation has structural flaws:
+
+| Critical Gap | Problem |
+|---|---|
+| **Stop loss logic is inverted** | Strategy says "below gap-day low OR 5%, whichever is LESS". "Less" = tighter stop. I used `Math.max` which gives the WIDER stop — completely backwards |
+| **Over-generalized away from earnings** | Strategy's edge is specifically PEAD (Post-Earnings Announcement Drift). I diluted it into 5 gap types when the documented 62-70% win rate only applies to genuine earnings beats |
+| **Entry window is wrong** | Strategy says "within 2% pullback, NOT if gaps up 3%+". That's a narrow -2% to +2% window. I used -5% to +3% — far too wide |
+| **No delivery % check** | In Indian markets delivery % on gap day is THE signal for institutional conviction vs speculative noise. Completely missing |
+| **No earnings surprise → drift magnitude mapping** | 20% profit beat drifts more than 6% beat. Non-linear relationship I ignored |
+| **No prior-quarter PEAD tracking** | TCS drifts for 2 weeks after results. HDFC Bank prices in within 1 day. Stock-specific PEAD persistence is critical |
+| **Shorts treated as symmetric** | Gap-down on earnings miss has fundamentally different dynamics (panic selling, margin calls) — NOT a mirror of gap-up |
+| **No limit order entry** | "Buy at the pullback" means limit order at/near gap-day close, NOT market order at whatever Day-2 opens at |
+| **No OI context before earnings** | Heavy call writing pre-results → gap up forces short covering → amplified drift. Heavy call buying → "sell the news" risk |
+| **No FII/DII data** | FII net buy on gap day = institutional conviction. Available in Indian markets, not used |
+| **No analyst revision cycle** | PEAD mechanism is literally analyst underreaction → gradual revision cycle. I modeled the drift but not why it drifts |
+| **No sector-relative earnings context** | If entire IT sector beats, TCS gap has less individual drift. If TCS uniquely beats while peers miss, drift is 2× |
+
+---
+
+## `gap-indicators.js`
+
+```javascript
+/**
+ * Gap Continuation Swing — Rebuilt around PEAD
+ *
+ * Core thesis: Post-earnings gaps on genuine beats drift 5-10%
+ * over 3-5 days as institutions slowly build positions.
+ *
+ * This is NOT a generic gap strategy — the edge comes from
+ * earnings-driven information asymmetry.
+ */
+
+// ═══════════════════════════════════════════════
+//  GAP DETECTION & MEASUREMENT
+// ═══════════════════════════════════════════════
+
+function detectGap(gapDayCandle, prevDayCandle) {
+  if (!gapDayCandle || !prevDayCandle) return null;
+
+  const g = gapDayCandle;
+  const p = prevDayCandle;
+
+  const gapPercent = ((g.o - p.c) / p.c) * 100;
+  const absGap = Math.abs(gapPercent);
+  const isGapUp = gapPercent > 0;
+
+  const range = g.h - g.l;
+  const body = Math.abs(g.c - g.o);
+  const closePosition = range > 0 ? (g.c - g.l) / range : 0.5;
+
+  // upper/lower wick
+  const isBullish = g.c >= g.o;
+  const upperWick = range > 0
+    ? (g.h - (isBullish ? g.c : g.o)) / range
+    : 0;
+  const lowerWick = range > 0
+    ? ((isBullish ? g.o : g.c) - g.l) / range
+    : 0;
+
+  // gap fill: did price retrace to prev close during the day?
+  const gapFilledIntraday = isGapUp
+    ? g.l <= p.c
+    : g.h >= p.c;
+
+  // how much of the gap was retraced
+  let retracePct = 0;
+  if (isGapUp && g.l < g.o) {
+    const gapSize = g.o - p.c;
+    retracePct = gapSize > 0 ? ((g.o - g.l) / gapSize) * 100 : 0;
+  } else if (!isGapUp && g.h > g.o) {
+    const gapSize = p.c - g.o;
+    retracePct = gapSize > 0 ? ((g.h - g.o) / gapSize) * 100 : 0;
+  }
+
+  // did gap EXTEND during the day? (close beyond open in gap direction)
+  const gapExtended = isGapUp ? g.c > g.o : g.c < g.o;
+
+  // closing strength for gap-up: close near high
+  // closing strength for gap-down: close near low
+  const idealClose = isGapUp
+    ? closePosition > 0.80
+    : closePosition < 0.20;
+
+  const strongClose = isGapUp
+    ? closePosition > 0.65
+    : closePosition < 0.35;
+
+  // rejection wick (bad sign for continuation)
+  const hasRejection = isGapUp
+    ? upperWick > 0.30
+    : lowerWick > 0.30;
+
+  // day's range relative to gap size
+  const rangeVsGap = absGap > 0
+    ? ((range / p.c) * 100) / absGap
+    : 1;
+
+  // marubozu-like: full body, no wicks → strongest conviction
+  const isMarubozu = body / range > 0.80 && isBullish === isGapUp;
+
+  return {
+    gapPercent: r(gapPercent),
+    absGap: r(absGap),
+    isGapUp,
+    isGapDown: !isGapUp,
+
+    closePosition: r(closePosition, 3),
+    idealClose,
+    strongClose,
+    gapExtended,
+    gapFilledIntraday,
+    retracePct: r(retracePct),
+    hasRejection,
+    isMarubozu,
+    rangeVsGap: r(rangeVsGap),
+
+    bodyPercent: r((body / range) * 100),
+    upperWickPct: r(upperWick * 100),
+    lowerWickPct: r(lowerWick * 100),
+
+    gapDayHigh: r(g.h),
+    gapDayLow: r(g.l),
+    gapDayClose: r(g.c),
+    gapDayOpen: r(g.o),
+    prevClose: r(p.c),
+    gapDayVolume: g.v,
+    date: g.date,
+  };
+}
+
+
+// ═══════════════════════════════════════════════
+//  EARNINGS QUALITY ANALYSIS
+//  (The core driver of PEAD — this is everything)
+// ═══════════════════════════════════════════════
+
+/**
+ * Analyze earnings quality and map to expected PEAD magnitude
+ *
+ * Academic research shows PEAD magnitude correlates with:
+ * 1. Earnings surprise magnitude (non-linear — bigger beats → bigger drift)
+ * 2. Revenue surprise (revenue beats are "higher quality" than profit-only)
+ * 3. Guidance changes (forward-looking = strongest signal)
+ * 4. Beat consistency (beat on BOTH rev AND profit > one-sided)
+ * 5. Margin expansion (profit beat from margins > from one-time items)
+ *
+ * @param {Object} earnings
+ *   {
+ *     revenueActual, revenueEstimate,
+ *     profitActual, profitEstimate,
+ *     guidanceRevised: 'UP' | 'DOWN' | 'MAINTAINED' | null,
+ *     marginExpansion: boolean | null,
+ *     isOneTimeItem: boolean | null,
+ *     quarterOverQuarterGrowth: number | null,  // %
+ *     yearOverYearGrowth: number | null,         // %
+ *   }
+ */
+function analyzeEarningsQuality(earnings) {
+  if (!earnings) return null;
+
+  // ── calculate surprise percentages ──
+  const revSurprise = earnings.revenueEstimate > 0
+    ? ((earnings.revenueActual - earnings.revenueEstimate) / earnings.revenueEstimate) * 100
+    : null;
+
+  const profitSurprise = earnings.profitEstimate > 0
+    ? ((earnings.profitActual - earnings.profitEstimate) / earnings.profitEstimate) * 100
+    : null;
+
+  // ── classify beat/miss ──
+  const revBeat = revSurprise !== null && revSurprise > 0;
+  const profitBeat = profitSurprise !== null && profitSurprise > 0;
+  const bothBeat = revBeat && profitBeat;
+  const strongBothBeat = revSurprise > 5 && profitSurprise > 5;
+
+  // ── PEAD magnitude estimation ──
+  // Non-linear: small beats → small drift, large beats → disproportionately large drift
+  let peadEstimate = 0;
+
+  if (profitSurprise !== null) {
+    if (profitSurprise > 20) peadEstimate += 4.0;
+    else if (profitSurprise > 10) peadEstimate += 3.0;
+    else if (profitSurprise > 5) peadEstimate += 2.0;
+    else if (profitSurprise > 0) peadEstimate += 1.0;
+    else if (profitSurprise > -5) peadEstimate -= 1.0;
+    else peadEstimate -= 3.0;
+  }
+
+  if (revSurprise !== null) {
+    // revenue beats are "higher quality" — harder to manipulate
+    if (revSurprise > 10) peadEstimate += 2.5;
+    else if (revSurprise > 5) peadEstimate += 1.5;
+    else if (revSurprise > 0) peadEstimate += 0.8;
+    else peadEstimate -= 0.5;
+  }
+
+  // guidance is the strongest forward signal
+  if (earnings.guidanceRevised === 'UP') peadEstimate += 2.0;
+  else if (earnings.guidanceRevised === 'DOWN') peadEstimate -= 2.5;
+
+  // margin expansion = sustainable profit growth
+  if (earnings.marginExpansion === true) peadEstimate += 0.8;
+
+  // one-time items = unsustainable → less drift
+  if (earnings.isOneTimeItem === true) peadEstimate *= 0.5;
+
+  // YoY growth adds to conviction
+  if (earnings.yearOverYearGrowth != null) {
+    if (earnings.yearOverYearGrowth > 30) peadEstimate += 1.0;
+    else if (earnings.yearOverYearGrowth > 15) peadEstimate += 0.5;
+  }
+
+  // ── continuation probability ──
+  let continuationProb;
+  if (strongBothBeat && earnings.guidanceRevised === 'UP') {
+    continuationProb = 0.78;
+  } else if (strongBothBeat) {
+    continuationProb = 0.72;
+  } else if (bothBeat && (revSurprise > 3 || profitSurprise > 5)) {
+    continuationProb = 0.67;
+  } else if (bothBeat) {
+    continuationProb = 0.62;
+  } else if (profitBeat && !revBeat) {
+    continuationProb = 0.55; // profit-only beat is weaker
+  } else if (revBeat && !profitBeat) {
+    continuationProb = 0.52; // revenue beat but profit miss → mixed signal
+  } else {
+    continuationProb = 0.40; // miss or mixed
+  }
+
+  // ── quality classification ──
+  let qualityClass;
+  if (strongBothBeat && earnings.guidanceRevised === 'UP') qualityClass = 'EXCEPTIONAL';
+  else if (strongBothBeat) qualityClass = 'STRONG';
+  else if (bothBeat) qualityClass = 'SOLID';
+  else if (profitBeat || revBeat) qualityClass = 'MIXED';
+  else qualityClass = 'MISS';
+
+  // meets strategy requirement: "Revenue AND Profit beat estimates by > 5%"
+  const meetsStrategyFilter = revSurprise > 5 && profitSurprise > 5;
+
+  // ── earnings quality score (0-100) ──
+  let eqScore = 0;
+  if (revSurprise !== null) eqScore += clamp(mapRange(revSurprise, -5, 20, 0, 40));
+  if (profitSurprise !== null) eqScore += clamp(mapRange(profitSurprise, -5, 25, 0, 40));
+  if (earnings.guidanceRevised === 'UP') eqScore += 15;
+  if (earnings.marginExpansion) eqScore += 5;
+  eqScore = clamp(eqScore);
+
+  return {
+    revenueSurprise: r(revSurprise),
+    profitSurprise: r(profitSurprise),
+    revenueBeat: revBeat,
+    profitBeat: profitBeat,
+    bothBeat,
+    strongBothBeat,
+    meetsStrategyFilter,
+    guidanceRevised: earnings.guidanceRevised,
+    marginExpansion: earnings.marginExpansion,
+    qualityClass,
+    peadEstimate: r(peadEstimate),
+    continuationProb: r(continuationProb, 2),
+    earningsScore: r(eqScore),
+    yoyGrowth: earnings.yearOverYearGrowth,
+  };
+}
+
+/**
+ * Compare this stock's earnings to sector peers
+ * If entire sector beat → drift is diluted
+ * If this stock uniquely beat → drift is amplified
+ *
+ * @param {Object} stockEarnings - from analyzeEarningsQuality
+ * @param {Array} sectorPeerEarnings - [{symbol, bothBeat, profitSurprise, ...}, ...]
+ */
+function sectorRelativeEarnings(stockEarnings, sectorPeerEarnings = []) {
+  if (!stockEarnings || sectorPeerEarnings.length === 0) return null;
+
+  const peersWhoBeat = sectorPeerEarnings.filter(p => p.bothBeat);
+  const peersWhoMissed = sectorPeerEarnings.filter(p => !p.profitBeat);
+  const totalPeers = sectorPeerEarnings.length;
+
+  const sectorBeatRate = totalPeers > 0 ? (peersWhoBeat.length / totalPeers) * 100 : 0;
+
+  // stock beat while most peers missed → strongest drift
+  const isUniqueBeater = stockEarnings.bothBeat && sectorBeatRate < 40;
+  // everyone beat → drift is diluted (sector-wide re-rate already happening)
+  const sectorWideBeat = sectorBeatRate > 70;
+
+  let driftMultiplier = 1.0;
+  if (isUniqueBeater) driftMultiplier = 1.4;
+  else if (sectorWideBeat) driftMultiplier = 0.7;
+  else driftMultiplier = 1.0;
+
+  // average sector surprise
+  const avgSectorProfit = sectorPeerEarnings.length > 0
+    ? sectorPeerEarnings.reduce((s, p) => s + (p.profitSurprise || 0), 0) / sectorPeerEarnings.length
+    : 0;
+
+  const stockOutperformance = (stockEarnings.profitSurprise || 0) - avgSectorProfit;
+
+  return {
+    sectorBeatRate: r(sectorBeatRate),
+    peersWhoBeat: peersWhoBeat.length,
+    peersWhoMissed: peersWhoMissed.length,
+    isUniqueBeater,
+    sectorWideBeat,
+    driftMultiplier: r(driftMultiplier),
+    stockOutperformance: r(stockOutperformance),
+    sectorScore: r(clamp(
+      isUniqueBeater ? 90 :
+      !sectorWideBeat ? 60 :
+      35
+    )),
+  };
+}
+
+
+// ═══════════════════════════════════════════════
+//  PRIOR-QUARTER PEAD TRACKING
+// ═══════════════════════════════════════════════
+
+/**
+ * How did THIS stock drift after the LAST 4 quarterly earnings?
+ * Stock-specific PEAD persistence:
+ *   - TCS: drifts for 2 weeks after every result
+ *   - HDFC Bank: prices in within 1 day (no drift left)
+ *
+ * @param {Array} dailyCandles - full history
+ * @param {Array} earningsDates - [{date, gapPercent, bothBeat}, ...]
+ *   historical earnings dates for this stock
+ * @param {number} forwardDays - track drift for N days
+ */
+function priorQuarterPEAD(dailyCandles, earningsDates, forwardDays = 5) {
+  if (!dailyCandles || !earningsDates || earningsDates.length < 2) return null;
+
+  const peadEvents = [];
+
+  for (const ed of earningsDates) {
+    const dayIdx = dailyCandles.findIndex(c => c.date === ed.date);
+    if (dayIdx < 0 || dayIdx + forwardDays + 1 >= dailyCandles.length) continue;
+
+    const gapDay = dailyCandles[dayIdx];
+
+    // entry is Day-2 open (next day's open)
+    const entryPrice = dailyCandles[dayIdx + 1].o;
+
+    // track forward returns
+    const driftByDay = [];
+    let maxDrift = 0, maxAdverse = 0;
+
+    for (let d = 1; d <= forwardDays; d++) {
+      if (dayIdx + 1 + d >= dailyCandles.length) break;
+      const fwd = dailyCandles[dayIdx + 1 + d];
+      const ret = ((fwd.c - entryPrice) / entryPrice) * 100;
+      driftByDay.push(r(ret));
+
+      if (ed.gapPercent > 0) {
+        maxDrift = Math.max(maxDrift, ret);
+        maxAdverse = Math.min(maxAdverse, ((fwd.l - entryPrice) / entryPrice) * 100);
+      } else {
+        maxDrift = Math.min(maxDrift, ret);
+        maxAdverse = Math.max(maxAdverse, ((fwd.h - entryPrice) / entryPrice) * 100);
+      }
+    }
+
+    const finalDrift = driftByDay.length > 0 ? driftByDay[driftByDay.length - 1] : 0;
+    const continued = ed.gapPercent > 0 ? finalDrift > 0 : finalDrift < 0;
+
+    peadEvents.push({
+      date: ed.date,
+      gapPercent: r(ed.gapPercent),
+      bothBeat: ed.bothBeat,
+      driftByDay,
+      finalDrift: r(finalDrift),
+      maxDrift: r(maxDrift),
+      maxAdverse: r(maxAdverse),
+      continued,
+    });
+  }
+
+  if (peadEvents.length === 0) return { hasData: false };
+
+  const wins = peadEvents.filter(e => e.continued);
+  const winRate = (wins.length / peadEvents.length) * 100;
+  const avgDrift = peadEvents.reduce((s, e) => s + e.finalDrift, 0) / peadEvents.length;
+
+  // average drift curve (day 1, day 2, ..., day N)
+  const avgDriftCurve = [];
+  for (let d = 0; d < forwardDays; d++) {
+    const drifts = peadEvents.map(e => e.driftByDay[d]).filter(v => v != null);
+    avgDriftCurve.push(drifts.length > 0
+      ? r(drifts.reduce((a, b) => a + b, 0) / drifts.length)
+      : null
+    );
+  }
+
+  // when does drift peak? (day of max average drift)
+  const absDriftCurve = avgDriftCurve.map(v => v != null ? Math.abs(v) : 0);
+  const peakDriftDay = absDriftCurve.indexOf(Math.max(...absDriftCurve)) + 1;
+
+  // is this stock a consistent drifter?
+  const isConsistentDrifter = winRate > 60 && peadEvents.length >= 3;
+  const isQuickPricer = winRate < 45 && peadEvents.length >= 3; // prices in fast, no drift left
+
+  return {
+    hasData: true,
+    quarterCount: peadEvents.length,
+    winRate: r(winRate),
+    avgDrift: r(avgDrift),
+    avgDriftCurve,
+    peakDriftDay,
+    avgMaxDrift: r(peadEvents.reduce((s, e) => s + e.maxDrift, 0) / peadEvents.length),
+    avgMaxAdverse: r(peadEvents.reduce((s, e) => s + e.maxAdverse, 0) / peadEvents.length),
+    isConsistentDrifter,
+    isQuickPricer,
+    events: peadEvents,
+    peadScore: r(clamp(mapRange(winRate, 35, 80, 10, 100))),
+  };
+}
+
+
+// ═══════════════════════════════════════════════
+//  DELIVERY % & BLOCK DEALS (India-specific)
+// ═══════════════════════════════════════════════
+
+/**
+ * Delivery percentage on gap day
+ * High delivery = institutions taking delivery = genuine buying
+ * Low delivery = speculative/intraday volume = gap may not sustain
+ *
+ * @param {Object} deliveryData
+ *   {
+ *     deliveryQty, tradedQty, deliveryPercent,
+ *     blockDeals: [{qty, price, buyer, seller}, ...] | null,
+ *     bulkDeals: [{qty, price, buyer, seller}, ...] | null,
+ *   }
+ */
+function deliveryAnalysis(deliveryData) {
+  if (!deliveryData) return null;
+
+  const dp = deliveryData.deliveryPercent;
+
+  // delivery % benchmarks for Indian large-caps
+  // > 50% = strong institutional buying
+  // 30-50% = normal
+  // < 30% = mostly speculative
+  let deliveryQuality;
+  if (dp > 60) deliveryQuality = 'VERY_HIGH';
+  else if (dp > 50) deliveryQuality = 'HIGH';
+  else if (dp > 35) deliveryQuality = 'MODERATE';
+  else if (dp > 20) deliveryQuality = 'LOW';
+  else deliveryQuality = 'VERY_LOW';
+
+  const institutionalConviction = dp > 45;
+
+  // block deals = large institutional transactions
+  const hasBlockDeals = deliveryData.blockDeals && deliveryData.blockDeals.length > 0;
+  const blockDealVolume = hasBlockDeals
+    ? deliveryData.blockDeals.reduce((s, d) => s + d.qty, 0)
+    : 0;
+
+  // bulk deals
+  const hasBulkDeals = deliveryData.bulkDeals && deliveryData.bulkDeals.length > 0;
+
+  return {
+    deliveryPercent: r(dp),
+    deliveryQuality,
+    institutionalConviction,
+    hasBlockDeals,
+    blockDealVolume,
+    hasBulkDeals,
+    deliveryScore: r(clamp(mapRange(dp, 20, 65, 10, 100))),
+  };
+}
+
+
+// ═══════════════════════════════════════════════
+//  PRE-EARNINGS OI CONTEXT
+// ═══════════════════════════════════════════════
+
+/**
+ * Options positioning before results
+ * Heavy call WRITING before results → gap up forces short covering → amplified drift
+ * Heavy call BUYING before results → gap up = "sell the news" risk
+ *
+ * @param {Object} oiData
+ *   {
+ *     callOI, putOI, callOIChange, putOIChange,
+ *     putCallRatio,
+ *     maxCallOIStrike, maxPutOIStrike,
+ *     impliedVolatility,
+ *   }
+ */
+function preEarningsOIContext(oiData) {
+  if (!oiData) return null;
+
+  const pcr = oiData.putCallRatio || 1;
+  const callBuildup = oiData.callOIChange > 0;
+  const putBuildup = oiData.putOIChange > 0;
+
+  // high IV before results = market expects big move (priced in)
+  // low IV = market doesn't expect move (more surprise potential)
+  const ivLevel = oiData.impliedVolatility;
+  let ivContext;
+  if (ivLevel > 50) ivContext = 'VERY_HIGH_IV';
+  else if (ivLevel > 35) ivContext = 'HIGH_IV';
+  else if (ivLevel > 25) ivContext = 'MODERATE_IV';
+  else ivContext = 'LOW_IV';
+
+  // for gap-UP continuation:
+  // heavy CALL WRITING before results = short covering fuel on gap up = GOOD
+  // heavy CALL BUYING before results = already positioned, will sell into gap = BAD
+  let callContext;
+  if (callBuildup && putBuildup) {
+    callContext = 'HEDGING_BOTH_SIDES';
+  } else if (callBuildup && !putBuildup) {
+    callContext = 'CALL_BUILDUP — may sell into gap up';
+  } else if (putBuildup && !callBuildup) {
+    callContext = 'PUT_BUILDUP — short covering fuel if gap up';
+  } else {
+    callContext = 'NEUTRAL';
+  }
+
+  // PCR > 1.2 = more puts = bullish undertone (put WRITING = support)
+  const pcrBullish = pcr > 1.2;
+
+  return {
+    putCallRatio: r(pcr),
+    pcrBullish,
+    callContext,
+    ivLevel,
+    ivContext,
+    // high IV = market expects move = less surprise = less PEAD
+    ivPenalty: ivLevel > 40 ? true : false,
+    shortCoveringFuel: putBuildup && !callBuildup,
+    sellTheNewsRisk: callBuildup && !putBuildup,
+    oiScore: r(clamp(
+      (pcrBullish ? 20 : 0)
+      + (putBuildup && !callBuildup ? 30 : 0)
+      + (!callBuildup ? 15 : -10)
+      + (ivLevel < 30 ? 20 : ivLevel < 40 ? 10 : -10)
+      + 30 // base
+    )),
+  };
+}
+
+
+// ═══════════════════════════════════════════════
+//  FII/DII NET BUYING (India-specific)
+// ═══════════════════════════════════════════════
+
+/**
+ * @param {Object} fiiDiiData
+ *   {
+ *     fiiNetBuy: number (₹ crores, positive = buy, negative = sell),
+ *     diiNetBuy: number,
+ *     fiiNetBuyShares: number | null,
+ *   }
+ */
+function fiiDiiOnGapDay(fiiDiiData) {
+  if (!fiiDiiData) return null;
+
+  const fiiBuying = fiiDiiData.fiiNetBuy > 0;
+  const diiBuying = fiiDiiData.diiNetBuy > 0;
+  const bothBuying = fiiBuying && diiBuying;
+  const fiiLargeBuy = fiiDiiData.fiiNetBuy > 500;  // > ₹500 Cr = significant
+
+  return {
+    fiiNetBuy: fiiDiiData.fiiNetBuy,
+    diiNetBuy: fiiDiiData.diiNetBuy,
+    fiiBuying,
+    diiBuying,
+    bothBuying,
+    fiiLargeBuy,
+    // FII buying = foreign institutional conviction = strongest signal
+    institutionalScore: r(clamp(
+      (fiiBuying ? 30 : -10)
+      + (fiiLargeBuy ? 25 : 0)
+      + (diiBuying ? 20 : 0)
+      + (bothBuying ? 15 : 0)
+      + 20 // base
+    )),
+  };
+}
+
+
+// ═══════════════════════════════════════════════
+//  PRE-GAP TREND
+// ═══════════════════════════════════════════════
+
+function preGapTrend(dailyCandles, gapDayIndex) {
+  if (!dailyCandles || gapDayIndex < 60) return null;
+
+  const prior = dailyCandles.slice(0, gapDayIndex);
+  const closes = prior.map(c => c.c);
+
+  const sma50 = sma(closes, 50);
+  const sma200 = closes.length >= 200 ? sma(closes, 200) : null;
+  const last = closes[closes.length - 1];
+
+  const above50 = sma50 ? last > sma50 : null;
+  const above200 = sma200 ? last > sma200 : null;
+
+  // was consolidating? (tight range before gap = setup)
+  const last10 = prior.slice(-10);
+  const rangePct = last > 0
+    ? ((Math.max(...last10.map(c => c.h)) - Math.min(...last10.map(c => c.l))) / last) * 100
+    : 0;
+  const wasConsolidating = rangePct < 6;
+
+  // 52W high proximity
+  const high52 = closes.length >= 250
+    ? Math.max(...closes.slice(-250))
+    : Math.max(...closes);
+  const nearATH = ((high52 - last) / high52) * 100 < 10;
+
+  return {
+    above50SMA: above50,
+    above200SMA: above200,
+    wasConsolidating,
+    nearATH,
+    sma50: sma50 ? r(sma50) : null,
+    sma200: sma200 ? r(sma200) : null,
+    // strategy requires: above 50-day SMA
+    meetsStrategyFilter: above50 === true,
+    trendScore: r(clamp(
+      (above50 ? 30 : 0) + (above200 ? 25 : 0)
+      + (wasConsolidating ? 15 : 0) + (nearATH ? 15 : 0)
+      + 15 // base
+    )),
+  };
+}
+
+
+// ═══════════════════════════════════════════════
+//  DAY-2 PULLBACK ASSESSMENT
+// ═══════════════════════════════════════════════
+
+/**
+ * Strategy spec: "If stock opens flat or pulls back slightly (within 2%),
+ *                 NOT if it gaps up another 3%+"
+ *
+ * This defines a NARROW entry window: -2% to +2%
+ */
+function day2Assessment(gapData, day2Candle) {
+  if (!gapData || !day2Candle) return null;
+
+  const d2 = day2Candle;
+  const gapClose = gapData.gapDayClose;
+
+  const d2OpenVsGapClose = ((d2.o - gapClose) / gapClose) * 100;
+  const isGapUp = gapData.isGapUp;
+
+  // ── STRICT strategy filter ──
+  let canEnter, openType;
+
+  if (isGapUp) {
+    if (d2OpenVsGapClose > 3) {
+      canEnter = false;
+      openType = 'TOO_EXTENDED';
+    } else if (d2OpenVsGapClose >= -2 && d2OpenVsGapClose <= 2) {
+      canEnter = true;
+      openType = d2OpenVsGapClose < -0.5 ? 'IDEAL_PULLBACK' : 'FLAT_OPEN';
+    } else if (d2OpenVsGapClose >= -4) {
+      canEnter = true; // deeper pullback, still possible but riskier
+      openType = 'DEEP_PULLBACK';
+    } else {
+      canEnter = false;
+      openType = 'GAP_FAILING';
+    }
+  } else {
+    // mirror for shorts
+    if (d2OpenVsGapClose < -3) {
+      canEnter = false;
+      openType = 'TOO_EXTENDED';
+    } else if (d2OpenVsGapClose >= -2 && d2OpenVsGapClose <= 2) {
+      canEnter = true;
+      openType = d2OpenVsGapClose > 0.5 ? 'IDEAL_BOUNCE' : 'FLAT_OPEN';
+    } else {
+      canEnter = false;
+      openType = 'GAP_FAILING';
+    }
+  }
+
+  // ── ENTRY PRICE ──
+  // Strategy says "buy at the pullback" — this implies:
+  // For ideal pullback: buy at open (getting a discount)
+  // For flat open: buy at open (capturing the gap)
+  // Alternative: limit order at gap-day close (wait for retest)
+  const marketEntry = r(d2.o);
+  const limitEntry = r(gapClose); // for pullback limit orders
+
+  // ── STOP LOSS — "below result day's low OR 5%, whichever is LESS" ──
+  // "whichever is less" = TIGHTER stop
+  const stopByGapLow = isGapUp ? gapData.gapDayLow : gapData.gapDayHigh;
+  const stopBy5Pct = isGapUp ? d2.o * 0.95 : d2.o * 1.05;
+
+  const stopLoss = isGapUp
+    ? Math.max(stopByGapLow, stopBy5Pct)  // MAX gives the tighter (higher) stop for longs
+    : Math.min(stopByGapLow, stopBy5Pct); // MIN gives the tighter (lower) stop for shorts
+
+  const stopPercent = Math.abs((d2.o - stopLoss) / d2.o) * 100;
+
+  // ── Day-2 full-day analysis (if candle is complete) ──
+  const heldGapDayLow = isGapUp
+    ? d2.l > gapData.gapDayLow
+    : d2.h < gapData.gapDayHigh;
+
+  const d2Range = d2.h - d2.l;
+  const d2ClosePos = d2Range > 0 ? (d2.c - d2.l) / d2Range : 0.5;
+  const d2Bullish = d2.c > d2.o;
+
+  // continuation signal on Day 2
+  const d2Continuation = isGapUp
+    ? d2Bullish && d2ClosePos > 0.6
+    : !d2Bullish && d2ClosePos < 0.4;
+
+  return {
+    canEnter,
+    openType,
+    d2OpenVsGapClose: r(d2OpenVsGapClose),
+    marketEntry,
+    limitEntry,
+    stopLoss: r(stopLoss),
+    stopLossPercent: r(stopPercent),
+    stopByGapLow: r(stopByGapLow),
+    stopBy5Pct: r(stopBy5Pct),
+    heldGapDayLow,
+    d2Bullish,
+    d2ClosePosition: r(d2ClosePos, 3),
+    d2Continuation,
+    d2Volume: d2.v,
+    pullbackScore: r(clamp(
+      (openType === 'IDEAL_PULLBACK' || openType === 'IDEAL_BOUNCE' ? 40 : 0)
+      + (openType === 'FLAT_OPEN' ? 30 : 0)
+      + (openType === 'DEEP_PULLBACK' ? 15 : 0)
+      + (heldGapDayLow ? 20 : -5)
+      + (d2Continuation ? 15 : 0)
+      + (canEnter ? 10 : 0)
+    )),
+  };
+}
+
+
+// ═══════════════════════════════════════════════
+//  GAP-DAY INTRADAY QUALITY
+// ═══════════════════════════════════════════════
+
+function gapDayIntradayQuality(intradayCandles, gapData) {
+  if (!intradayCandles || intradayCandles.length < 10 || !gapData) return null;
+
+  const isGapUp = gapData.isGapUp;
+  const total = intradayCandles.length;
+  const first = intradayCandles[0];
+  const last = intradayCandles[total - 1];
+
+  // VWAP
+  let cumTPV = 0, cumVol = 0;
+  for (const c of intradayCandles) {
+    cumTPV += ((c.h + c.l + c.c) / 3) * c.v;
+    cumVol += c.v;
+  }
+  const vwap = cumVol > 0 ? cumTPV / cumVol : last.c;
+  const closedAboveVWAP = last.c > vwap;
+  const vwapConfirm = isGapUp ? closedAboveVWAP : !closedAboveVWAP;
+
+  // volume distribution: last hour vs first hour
+  const firstHour = intradayCandles.filter(c => extractTime(c.time) < '10:30');
+  const lastHour = intradayCandles.filter(c => extractTime(c.time) >= '14:30');
+  const fhVol = firstHour.reduce((s, c) => s + c.v, 0);
+  const lhVol = lastHour.reduce((s, c) => s + c.v, 0);
+  const totalVol = cumVol;
+  const institutionalPattern = totalVol > 0 && lhVol > fhVol * 0.7;
+
+  // did gap extend or fade?
+  const dayTrend = ((last.c - first.o) / first.o) * 100;
+  const extended = isGapUp ? dayTrend > 0.3 : dayTrend < -0.3;
+  const faded = isGapUp ? dayTrend < -0.5 : dayTrend > 0.5;
+
+  let quality;
+  if (extended && vwapConfirm) quality = 'STRONG';
+  else if (!faded && vwapConfirm) quality = 'GOOD';
+  else if (!faded) quality = 'MODERATE';
+  else quality = 'WEAK';
+
+  return {
+    quality,
+    vwap: r(vwap),
+    vwapConfirm,
+    institutionalPattern,
+    dayTrend: r(dayTrend),
+    extended,
+    faded,
+    intradayScore: r(clamp(
+      (extended ? 25 : faded ? -10 : 10)
+      + (vwapConfirm ? 25 : -10)
+      + (institutionalPattern ? 20 : 0)
+      + 30
+    )),
+  };
+}
+
+
+// ═══════════════════════════════════════════════
+//  HISTORICAL GAP STATS
+// ═══════════════════════════════════════════════
+
+function historicalGapStats(dailyCandles, minGapPct = 3, fwdDays = 5) {
+  if (!dailyCandles || dailyCandles.length < 100) return null;
+
+  const events = [];
+  for (let i = 1; i < dailyCandles.length - fwdDays - 1; i++) {
+    const gapPct = ((dailyCandles[i].o - dailyCandles[i - 1].c) / dailyCandles[i - 1].c) * 100;
+    if (Math.abs(gapPct) < minGapPct) continue;
+
+    const entry = dailyCandles[i + 1].o; // Day-2 open
+    const returns = [];
+    for (let d = 1; d <= fwdDays && i + 1 + d < dailyCandles.length; d++) {
+      returns.push(((dailyCandles[i + 1 + d].c - entry) / entry) * 100);
+    }
+    const finalRet = returns.length > 0 ? returns[returns.length - 1] : 0;
+    const continued = gapPct > 0 ? finalRet > 0 : finalRet < 0;
+
+    events.push({ gapPct: r(gapPct), finalRet: r(finalRet), continued });
+  }
+
+  if (events.length < 2) return null;
+
+  const ups = events.filter(e => e.gapPct > 0);
+  const downs = events.filter(e => e.gapPct < 0);
+
+  const analyze = arr => {
+    if (arr.length === 0) return { count: 0, continuationRate: 0, avgReturn: 0 };
+    const cont = arr.filter(e => e.continued);
+    return {
+      count: arr.length,
+      continuationRate: r((cont.length / arr.length) * 100),
+      avgReturn: r(arr.reduce((s, e) => s + e.finalRet, 0) / arr.length),
+    };
+  };
+
+  return { gapUp: analyze(ups), gapDown: analyze(downs) };
+}
+
+
+// ═══════════════════════════════════════════════
+//  STANDARD INDICATORS
+// ═══════════════════════════════════════════════
+
+function rsi(closes, period = 14) {
+  if (!closes || closes.length < period + 1) return null;
+  let ag = 0, al = 0;
+  for (let i = 1; i <= period; i++) {
+    const d = closes[i] - closes[i - 1];
+    if (d >= 0) ag += d; else al -= d;
+  }
+  ag /= period; al /= period;
+  for (let i = period + 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1];
+    ag = (ag * (period - 1) + Math.max(d, 0)) / period;
+    al = (al * (period - 1) + Math.max(-d, 0)) / period;
+  }
+  return al === 0 ? 100 : r(100 - 100 / (1 + ag / al));
+}
+
+function sma(values, period) {
+  if (!values || values.length < period) return null;
+  return r(values.slice(-period).reduce((a, b) => a + b, 0) / period);
+}
+
+function atr(candles, period = 14) {
+  if (!candles || candles.length < period + 1) return null;
+  const trs = [];
+  for (let i = 1; i < candles.length; i++) {
+    trs.push(Math.max(candles[i].h - candles[i].l, Math.abs(candles[i].h - candles[i - 1].c), Math.abs(candles[i].l - candles[i - 1].c)));
+  }
+  let val = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < trs.length; i++) val = (val * (period - 1) + trs[i]) / period;
+  return r(val);
+}
+
+function avgVolume(candles, period = 20) {
+  if (!candles || candles.length < period) return null;
+  return Math.round(candles.slice(-period).reduce((s, c) => s + c.v, 0) / period);
+}
+
+function extractTime(t) { return t?.includes('T') ? t.split('T')[1].substring(0, 5) : (t || '00:00').substring(0, 5); }
+function r(v, d = 2) { return v == null || isNaN(v) ? null : Math.round(v * 10 ** d) / 10 ** d; }
+function clamp(v, min = 0, max = 100) { return Math.min(max, Math.max(min, v)); }
+function mapRange(v, a, b, c, d) { return ((v - a) / (b - a)) * (d - c) + c; }
+
+module.exports = {
+  detectGap, analyzeEarningsQuality, sectorRelativeEarnings,
+  priorQuarterPEAD, deliveryAnalysis, preEarningsOIContext,
+  fiiDiiOnGapDay, preGapTrend, day2Assessment,
+  gapDayIntradayQuality, historicalGapStats,
+  rsi, sma, atr, avgVolume,
+  extractTime, r, clamp, mapRange,
+};
+```
+
+---
+
+## `gap-scanner.js`
+
+```javascript
+const ind = require('./gap-indicators');
+
+/**
+ * Two-phase scanner focused on POST-EARNINGS gaps
+ *
+ * Phase 1 (Gap Day close): Detect gap + validate earnings quality
+ * Phase 2 (Day 2 pre-market): Validate pullback entry window
+ */
+class GapContinuationScanner {
+  constructor(config = {}) {
+    this.c = {
+      minGapPercent: config.minGapPercent ?? 5.0,   // strategy spec: > 5%
+      maxGapPercent: config.maxGapPercent ?? 20.0,
+      minVolumeMultiple: config.minVolumeMultiple ?? 3.0,  // strategy spec: > 3×
+      minClosePosition: config.minClosePosition ?? 0.65,   // near day's high
+      requireAbove50SMA: config.requireAbove50SMA ?? true,  // strategy spec
+      requireBothBeat: config.requireBothBeat ?? true,      // strategy spec: rev AND profit > 5%
+      allowNonEarnings: config.allowNonEarnings ?? false,   // strict: only earnings gaps
+    };
+  }
+
+  // ═══════════════════════════════════════
+  //  PHASE 1: GAP-DAY SCAN
+  // ═══════════════════════════════════════
+
+  /**
+   * @param {Array} stocks
+   *   [{
+   *     symbol, sector, isFnO,
+   *     dailyCandles: [...],
+   *     intradayCandles: [...] | null,
+   *     earnings: {
+   *       revenueActual, revenueEstimate,
+   *       profitActual, profitEstimate,
+   *       guidanceRevised, marginExpansion, isOneTimeItem,
+   *       yearOverYearGrowth
+   *     } | null,
+   *     deliveryData: {...} | null,
+   *     oiData: {...} | null,
+   *     fiiDiiData: {...} | null,
+   *     sectorPeerEarnings: [...] | null,
+   *     priorEarningsDates: [...] | null,
+   *   }]
+   */
+  gapDayScan(stocks, market = {}) {
+    const candidates = [];
+    const rejected = [];
+
+    for (const stock of stocks) {
+      try {
+        const result = this._evaluateGapDay(stock, market);
+        if (result.rejected) {
+          rejected.push({ symbol: stock.symbol, reason: result.rejectionReason });
+        } else {
+          candidates.push(result);
+        }
+      } catch (err) {
+        rejected.push({ symbol: stock.symbol, error: err.message });
+      }
+    }
+
+    candidates.sort((a, b) => b.gapDayScore - a.gapDayScore);
+
+    return {
+      candidates,
+      rejected,
+      meta: {
+        scanned: stocks.length,
+        passed: candidates.length,
+        rejected: rejected.length,
+      },
+    };
+  }
+
+  _evaluateGapDay(stock, market) {
+    const daily = stock.dailyCandles;
+    if (!daily || daily.length < 60) {
+      return { rejected: true, rejectionReason: 'Insufficient data' };
+    }
+
+    const today = daily[daily.length - 1];
+    const yesterday = daily[daily.length - 2];
+    const gapDayIndex = daily.length - 1;
+
+    // ── detect gap ──
+    const gapData = ind.detectGap(today, yesterday);
+    if (!gapData) return { rejected: true, rejectionReason: 'No gap detected' };
+
+    // ── FILTER 1: Gap > 5% ──
+    if (gapData.absGap < this.c.minGapPercent) {
+      return { rejected: true, rejectionReason: `Gap ${gapData.absGap}% < ${this.c.minGapPercent}%` };
+    }
+    if (gapData.absGap > this.c.maxGapPercent) {
+      return { rejected: true, rejectionReason: `Gap ${gapData.absGap}% too extreme` };
+    }
+
+    // ── FILTER 2: Close near day's high ──
+    if (gapData.isGapUp && !gapData.strongClose) {
+      return { rejected: true, rejectionReason: `Close position ${gapData.closePosition} — not near high` };
+    }
+    if (gapData.isGapDown && gapData.closePosition > 0.35) {
+      return { rejected: true, rejectionReason: `Close position ${gapData.closePosition} — not near low` };
+    }
+
+    // ── FILTER 3: Volume > 3× average ──
+    const avgVol = ind.avgVolume(daily.slice(0, -1), 20);
+    const volRatio = avgVol > 0 ? today.v / avgVol : 0;
+    if (volRatio < this.c.minVolumeMultiple) {
+      return { rejected: true, rejectionReason: `Volume ${r(volRatio)}× < ${this.c.minVolumeMultiple}×` };
+    }
+
+    // ── FILTER 4: Earnings quality ──
+    const earningsQuality = stock.earnings
+      ? ind.analyzeEarningsQuality(stock.earnings)
+      : null;
+
+    if (this.c.requireBothBeat) {
+      if (!earningsQuality) {
+        if (!this.c.allowNonEarnings) {
+          return { rejected: true, rejectionReason: 'No earnings data — strategy requires earnings gap' };
+        }
+      } else if (!earningsQuality.meetsStrategyFilter) {
+        return { rejected: true, rejectionReason: `Earnings: Rev ${earningsQuality.revenueSurprise}%, Profit ${earningsQuality.profitSurprise}% — need both > 5%` };
+      }
+    }
+
+    // ── FILTER 5: Above 50 SMA ──
+    const trend = ind.preGapTrend(daily, gapDayIndex);
+    if (this.c.requireAbove50SMA && gapData.isGapUp && !trend?.meetsStrategyFilter) {
+      return { rejected: true, rejectionReason: 'Not above 50-day SMA' };
+    }
+
+    // ── compute enhanced analysis ──
+    const sectorRel = stock.sectorPeerEarnings
+      ? ind.sectorRelativeEarnings(earningsQuality, stock.sectorPeerEarnings)
+      : null;
+
+    const priorPEAD = stock.priorEarningsDates
+      ? ind.priorQuarterPEAD(daily, stock.priorEarningsDates, 5)
+      : null;
+
+    const delivery = stock.deliveryData
+      ? ind.deliveryAnalysis(stock.deliveryData)
+      : null;
+
+    const oiContext = stock.oiData
+      ? ind.preEarningsOIContext(stock.oiData)
+      : null;
+
+    const fiiDii = stock.fiiDiiData
+      ? ind.fiiDiiOnGapDay(stock.fiiDiiData)
+      : null;
+
+    const intradayQuality = stock.intradayCandles
+      ? ind.gapDayIntradayQuality(stock.intradayCandles, gapData)
+      : null;
+
+    const gapHistory = ind.historicalGapStats(daily, 3, 5);
+
+    // daily indicators
+    const closes = daily.map(c => c.c);
+    const rsi14 = ind.rsi(closes, 14);
+    const atrVal = ind.atr(daily, 14);
+
+    // ── GAP-DAY SCORE ──
+    let score = 0;
+
+    // earnings quality (0-25) — THE dominant factor
+    if (earningsQuality) {
+      score += (earningsQuality.earningsScore / 100) * 25;
+    }
+
+    // pre-gap trend (0-15)
+    score += (trend?.trendScore || 40) / 100 * 15;
+
+    // volume (0-10)
+    score += clamp(mapRange(volRatio, 3, 7, 50, 100)) / 100 * 10;
+
+    // gap-day candle quality (0-10)
+    if (gapData.idealClose) score += 8;
+    else if (gapData.strongClose) score += 5;
+    if (gapData.isMarubozu) score += 2;
+    if (gapData.hasRejection) score -= 5;
+    if (gapData.gapFilledIntraday) score -= 5;
+
+    // intraday quality (0-10)
+    if (intradayQuality) score += (intradayQuality.intradayScore / 100) * 10;
+
+    // delivery % (0-8)
+    if (delivery) score += (delivery.deliveryScore / 100) * 8;
+
+    // prior PEAD (0-7)
+    if (priorPEAD?.hasData) score += (priorPEAD.peadScore / 100) * 7;
+
+    // sector relative (0-5)
+    if (sectorRel) score += (sectorRel.sectorScore / 100) * 5;
+
+    // FII/DII (0-5)
+    if (fiiDii) score += (fiiDii.institutionalScore / 100) * 5;
+
+    // OI context (0-5)
+    if (oiContext) score += (oiContext.oiScore / 100) * 5;
+
+    // penalties
+    if (priorPEAD?.isQuickPricer) score -= 8;
+    if (oiContext?.sellTheNewsRisk) score -= 5;
+    if (sectorRel?.sectorWideBeat) score -= 3;
+
+    // PEAD estimate
+    const peadEstimate = earningsQuality?.peadEstimate || 0;
+    const driftMultiplier = sectorRel?.driftMultiplier || 1.0;
+    const adjustedPEAD = r(peadEstimate * driftMultiplier);
+
+    // direction
+    const direction = gapData.isGapUp ? 'LONG' : 'SHORT';
+
+    return {
+      rejected: false,
+      symbol: stock.symbol,
+      sector: stock.sector,
+      isFnO: stock.isFnO,
+      direction,
+      gapDayScore: r(clamp(score)),
+
+      gapData,
+      earningsQuality,
+      sectorRelative: sectorRel,
+      priorPEAD,
+      deliveryAnalysis: delivery,
+      oiContext,
+      fiiDii,
+      trendContext: trend,
+      intradayQuality,
+      gapHistory,
+
+      indicators: {
+        close: today.c,
+        rsi14,
+        atr14: atrVal,
+        avgVolume: avgVol,
+        volumeRatio: r(volRatio),
+      },
+
+      peadEstimate: adjustedPEAD,
+      continuationProb: earningsQuality?.continuationProb || 0.50,
+    };
+  }
+
+
+  // ═══════════════════════════════════════
+  //  PHASE 2: DAY-2 VALIDATION
+  // ═══════════════════════════════════════
+
+  day2Validation(gapDayCandidates, day2Candles) {
+    const confirmed = [];
+    const skipped = [];
+
+    for (const cand of gapDayCandidates) {
+      const d2 = day2Candles[cand.symbol];
+      if (!d2) { skipped.push({ symbol: cand.symbol, reason: 'No Day-2 data' }); continue; }
+
+      const assessment = ind.day2Assessment(cand.gapData, d2);
+
+      if (!assessment.canEnter) {
+        skipped.push({
+          symbol: cand.symbol,
+          reason: `Day-2 ${assessment.openType}: ${r(assessment.d2OpenVsGapClose)}% from gap close`,
+        });
+        continue;
+      }
+
+      // combined score
+      const combined = r(
+        cand.gapDayScore * 0.65
+        + assessment.pullbackScore * 0.35
+      );
+
+      confirmed.push({
+        ...cand,
+        day2: assessment,
+        combinedScore: combined,
+        day2Candle: d2,
+      });
+    }
+
+    confirmed.sort((a, b) => b.combinedScore - a.combinedScore);
+
+    return { confirmed, skipped };
+  }
+}
+
+function r(v, d = 2) { return v == null || isNaN(v) ? null : Math.round(v * 10 ** d) / 10 ** d; }
+function clamp(v, min = 0, max = 100) { return Math.min(max, Math.max(min, v)); }
+function mapRange(v, a, b, c, d) { return ((v - a) / (b - a)) * (d - c) + c; }
+
+module.exports = { GapContinuationScanner };
+```
+
+---
+
+## `gap-signals.js`
+
+```javascript
+const ind = require('./gap-indicators');
+
+/**
+ * Entry/exit engine
+ *
+ * Entry: Day-2 at pullback (limit at gap-close OR market at open if in window)
+ * Exit: RSI(14) > 75 OR 5 days OR stop loss (below gap-day low or 5%, whichever is TIGHTER)
+ */
+class GapContinuationSignalEngine {
+  constructor(config = {}) {
+    this.maxHoldDays = config.maxHoldDays ?? 5;
+    this.rsiExitLong = config.rsiExitLong ?? 75;
+    this.rsiExitShort = config.rsiExitShort ?? 25;
+    this.trailActivation = config.trailActivation ?? 3;
+    this.trailProtect = config.trailProtect ?? 0.50;
+    this.scaleOut = config.scaleOut ?? true;
+    this.scaleRatio = config.scaleRatio ?? 0.5;
+  }
+
+  /**
+   * Generate entry for a confirmed Day-2 candidate
+   */
+  generateEntry(confirmed, positionSize = null) {
+    const isLong = confirmed.direction === 'LONG';
+    const d2 = confirmed.day2;
+    const gapData = confirmed.gapData;
+    const atrVal = confirmed.indicators.atr14;
+
+    // ── ENTRY PRICE ──
+    // pullback = market order at open (if within entry window)
+    // OR limit order at gap-day close (wait for retest)
+    const entryPrice = d2.openType === 'IDEAL_PULLBACK' || d2.openType === 'IDEAL_BOUNCE'
+      ? d2.marketEntry   // buy at open (getting a discount)
+      : d2.marketEntry;  // flat open: also market
+
+    // ── STOP LOSS — "below result day's low OR 5%, whichever is LESS" ──
+    // "whichever is less" = tighter stop = the one that's CLOSER to entry
+    const stopLoss = d2.stopLoss; // already computed correctly in day2Assessment
+
+    const riskPerShare = Math.abs(entryPrice - stopLoss);
+    const stopPct = d2.stopLossPercent;
+
+    // ── TARGETS ──
+    // T1: conservative — gap range extension
+    const gapRange = gapData.gapDayHigh - gapData.gapDayLow;
+    const target1 = isLong
+      ? r(gapData.gapDayHigh + gapRange * 0.5)
+      : r(gapData.gapDayLow - gapRange * 0.5);
+
+    // T2: PEAD estimate + ATR target
+    const peadTarget = confirmed.peadEstimate
+      ? r(entryPrice * (1 + confirmed.peadEstimate / 100))
+      : null;
+    const atrTarget = atrVal
+      ? isLong ? r(entryPrice + atrVal * 3) : r(entryPrice - atrVal * 3)
+      : null;
+    const target2 = peadTarget || atrTarget || (isLong ? r(entryPrice * 1.08) : r(entryPrice * 0.92));
+
+    const t1Pct = r(((Math.abs(target1 - entryPrice)) / entryPrice) * 100);
+    const t2Pct = r(((Math.abs(target2 - entryPrice)) / entryPrice) * 100);
+    const rr1 = riskPerShare > 0 ? r(Math.abs(target1 - entryPrice) / riskPerShare) : null;
+
+    // scaling
+    const totalQty = positionSize?.quantity || null;
+    const scaleQty = totalQty && this.scaleOut ? Math.ceil(totalQty * this.scaleRatio) : null;
+    const holdQty = totalQty ? totalQty - (scaleQty || 0) : null;
+
+    return {
+      symbol: confirmed.symbol,
+      direction: confirmed.direction,
+      action: isLong ? 'BUY' : 'SELL_SHORT',
+      orderType: isLong ? 'CNC' : 'NRML',
+
+      entryPrice: r(entryPrice),
+      stopLoss: r(stopLoss),
+      stopLossPercent: r(stopPct),
+      target1: r(target1),
+      target1Percent: t1Pct,
+      target2: r(target2),
+      target2Percent: t2Pct,
+      riskReward: rr1,
+
+      maxHoldDays: this.maxHoldDays,
+
+      scaling: this.scaleOut ? {
+        enabled: true,
+        t1Qty: scaleQty, t2Qty: holdQty,
+        moveStopToBEAfterT1: true,
+      } : { enabled: false },
+
+      // context
+      gapType: confirmed.earningsQuality ? 'EARNINGS' : 'NON_EARNINGS',
+      gapPercent: gapData.gapPercent,
+      earningsClass: confirmed.earningsQuality?.qualityClass || null,
+      continuationProb: confirmed.continuationProb,
+      peadEstimate: confirmed.peadEstimate,
+      pullbackType: d2.openType,
+      sector: confirmed.sector,
+
+      _state: {
+        daysSinceEntry: 0,
+        highSinceEntry: entryPrice,
+        lowSinceEntry: entryPrice,
+        t1Hit: false,
+        trailingActive: false,
+        trailingStop: null,
+        remainingQty: totalQty,
+      },
+
+      _context: {
+        gapDayHigh: gapData.gapDayHigh,
+        gapDayLow: gapData.gapDayLow,
+        prevClose: gapData.prevClose,
+        delivery: confirmed.deliveryAnalysis,
+        priorPEADWinRate: confirmed.priorPEAD?.winRate,
+      },
+
+      combinedScore: confirmed.combinedScore,
+      quantity: totalQty,
+      investmentAmount: totalQty ? r(totalQty * entryPrice) : null,
+      maxLoss: totalQty ? r(totalQty * riskPerShare) : null,
+
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Daily exit check — Days 1-5 after entry
+   */
+  dailyExitCheck(entry, todayCandle, liveIndicators, dayNumber) {
+    const state = entry._state;
+    const isLong = entry.direction === 'LONG';
+    const price = todayCandle.c;
+
+    state.daysSinceEntry = dayNumber;
+    state.highSinceEntry = Math.max(state.highSinceEntry, todayCandle.h);
+    state.lowSinceEntry = Math.min(state.lowSinceEntry, todayCandle.l);
+
+    const profitPct = isLong
+      ? ((price - entry.entryPrice) / entry.entryPrice) * 100
+      : ((entry.entryPrice - price) / entry.entryPrice) * 100;
+
+    const peakProfit = isLong
+      ? ((state.highSinceEntry - entry.entryPrice) / entry.entryPrice) * 100
+      : ((entry.entryPrice - state.lowSinceEntry) / entry.entryPrice) * 100;
+
+    // 1. stop loss
+    if (isLong ? todayCandle.l <= entry.stopLoss : todayCandle.h >= entry.stopLoss) {
+      return {
+        action: 'EXIT_STOP_LOSS',
+        exitPrice: entry.stopLoss,
+        profitPercent: r(-entry.stopLossPercent),
+        quantity: state.remainingQty || entry.quantity,
+        reason: `Stop ₹${entry.stopLoss} hit`,
+        dayNumber,
+      };
+    }
+
+    // 2. T1 scale out
+    if (entry.scaling?.enabled && !state.t1Hit && entry.target1) {
+      if (isLong ? todayCandle.h >= entry.target1 : todayCandle.l <= entry.target1) {
+        state.t1Hit = true;
+        const sq = entry.scaling.t1Qty;
+        state.remainingQty = (entry.quantity || 0) - sq;
+        entry.stopLoss = isLong
+          ? r(entry.entryPrice * 1.002)
+          : r(entry.entryPrice * 0.998);
+
+        return {
+          action: 'SCALE_OUT_T1',
+          exitPrice: entry.target1,
+          profitPercent: entry.target1Percent,
+          quantity: sq,
+          remainingQuantity: state.remainingQty,
+          newStopLoss: entry.stopLoss,
+          reason: `T1 hit — sold ${sq}, remainder at breakeven stop`,
+          dayNumber,
+          holdingRemainder: true,
+        };
+      }
+    }
+
+    // 3. RSI > 75 exit (strategy spec)
+    if (liveIndicators.rsi14 != null && dayNumber >= 2) {
+      if (isLong && liveIndicators.rsi14 >= this.rsiExitLong) {
+        return {
+          action: 'EXIT_RSI_OVERBOUGHT',
+          exitPrice: price,
+          profitPercent: r(profitPct),
+          quantity: state.remainingQty || entry.quantity,
+          reason: `RSI(14) = ${liveIndicators.rsi14} ≥ ${this.rsiExitLong} — overbought`,
+          dayNumber,
+        };
+      }
+      if (!isLong && liveIndicators.rsi14 <= this.rsiExitShort) {
+        return {
+          action: 'EXIT_RSI_OVERSOLD',
+          exitPrice: price,
+          profitPercent: r(profitPct),
+          quantity: state.remainingQty || entry.quantity,
+          reason: `RSI(14) = ${liveIndicators.rsi14} — oversold`,
+          dayNumber,
+        };
+      }
+    }
+
+    // 4. T2
+    if (entry.target2) {
+      if (isLong ? todayCandle.h >= entry.target2 : todayCandle.l <= entry.target2) {
+        return {
+          action: 'EXIT_TARGET_2',
+          exitPrice: entry.target2,
+          profitPercent: entry.target2Percent,
+          quantity: state.remainingQty || entry.quantity,
+          reason: 'Full PEAD target reached',
+          dayNumber,
+        };
+      }
+    }
+
+    // 5. trailing stop
+    if (profitPct >= this.trailActivation) {
+      state.trailingActive = true;
+      const peak = isLong ? state.highSinceEntry : state.lowSinceEntry;
+      const locked = Math.abs(peak - entry.entryPrice) * this.trailProtect;
+      let trail = isLong
+        ? r(entry.entryPrice + locked)
+        : r(entry.entryPrice - locked);
+      trail = isLong ? Math.max(trail, entry.stopLoss) : Math.min(trail, entry.stopLoss);
+      state.trailingStop = trail;
+
+      if (isLong ? price <= trail : price >= trail) {
+        const lockPct = isLong
+          ? ((trail - entry.entryPrice) / entry.entryPrice) * 100
+          : ((entry.entryPrice - trail) / entry.entryPrice) * 100;
+        return {
+          action: 'EXIT_TRAILING',
+          exitPrice: trail,
+          profitPercent: r(lockPct),
+          peakProfit: r(peakProfit),
+          quantity: state.remainingQty || entry.quantity,
+          reason: `Trail stop at ₹${trail}`,
+          dayNumber,
+        };
+      }
+    }
+
+    // 6. time exit (5 days max)
+    if (dayNumber >= this.maxHoldDays) {
+      return {
+        action: 'EXIT_TIME',
+        exitPrice: price,
+        profitPercent: r(profitPct),
+        quantity: state.remainingQty || entry.quantity,
+        reason: `${this.maxHoldDays}-day limit`,
+        dayNumber,
+      };
+    }
+
+    // hold
+    return {
+      action: 'HOLD',
+      currentProfit: r(profitPct),
+      peakProfit: r(peakProfit),
+      stopLoss: entry.stopLoss,
+      trailingStop: state.trailingStop,
+      daysRemaining: this.maxHoldDays - dayNumber,
+      dayNumber,
+      t1Hit: state.t1Hit,
+    };
+  }
+}
+
+function r(v, d = 2) { return v == null || isNaN(v) ? null : Math.round(v * 10 ** d) / 10 ** d; }
+
+module.exports = { GapContinuationSignalEngine };
+```
+
+---
+
+## `gap-backtest.js`
+
+```javascript
+const ind = require('./gap-indicators');
+
+class GapContinuationBacktester {
+  constructor(config = {}) {
+    this.minGapPct = config.minGapPct ?? 5;
+    this.minVolMultiple = config.minVolMultiple ?? 3;
+    this.maxHoldDays = config.maxHoldDays ?? 5;
+    this.rsiExit = config.rsiExit ?? 75;
+    this.trailActivation = config.trailActivation ?? 3;
+    this.maxDay2GapUp = config.maxDay2GapUp ?? 3;
+    this.maxDay2Pullback = config.maxDay2Pullback ?? -4;
+    this.lookback = config.lookback ?? 60;
+    this.maxPositionsPerDay = config.maxPositionsPerDay ?? 3;
+  }
+
+  run(stocksHistory, niftyDaily, options = {}) {
+    const dates = niftyDaily.map(c => c.date);
+    const start = options.startDate
+      ? Math.max(dates.findIndex(d => d >= options.startDate), this.lookback)
+      : this.lookback;
+    const end = options.endDate
+      ? dates.findIndex(d => d > options.endDate)
+      : dates.length - this.maxHoldDays - 2;
+
+    const trades = [];
+
+    for (let i = start; i < end; i++) {
+      const gapDate = dates[i];
+      const entryDate = dates[i + 1];
+      if (!entryDate) continue;
+
+      let dayTrades = 0;
+
+      for (const [symbol, candles] of Object.entries(stocksHistory)) {
+        if (dayTrades >= this.maxPositionsPerDay) break;
+
+        const gapIdx = candles.findIndex(c => c.date === gapDate);
+        if (gapIdx < this.lookback || gapIdx + this.maxHoldDays + 2 >= candles.length) continue;
+
+        const gapDay = candles[gapIdx];
+        const prevDay = candles[gapIdx - 1];
+        const d2 = candles[gapIdx + 1];
+
+        const gapData = ind.detectGap(gapDay, prevDay);
+        if (!gapData || gapData.absGap < this.minGapPct) continue;
+
+        // volume filter
+        const avgVol = ind.avgVolume(candles.slice(gapIdx - 20, gapIdx), 20);
+        const volRatio = avgVol > 0 ? gapDay.v / avgVol : 0;
+        if (volRatio < this.minVolMultiple) continue;
+
+        // close quality
+        if (gapData.isGapUp && !gapData.strongClose) continue;
+        if (gapData.isGapDown && gapData.closePosition > 0.35) continue;
+
+        // pre-gap trend
+        const trend = ind.preGapTrend(candles, gapIdx);
+        if (gapData.isGapUp && !trend?.above50SMA) continue;
+
+        // Day-2 validation
+        const d2Assessment = ind.day2Assessment(gapData, d2);
+        if (!d2Assessment.canEnter) continue;
+
+        // entry at Day-2 open
+        const entryPrice = d2.o;
+        const isLong = gapData.isGapUp;
+
+        // STOP: below gap-day low OR 5%, whichever is TIGHTER
+        const stopLoss = d2Assessment.stopLoss;
+
+        // simulate
+        const exitResult = this._simulate(
+          candles, gapIdx + 1, entryPrice, stopLoss, isLong
+        );
+
+        const pnl = isLong
+          ? ((exitResult.exitPrice - entryPrice) / entryPrice) * 100
+          : ((entryPrice - exitResult.exitPrice) / entryPrice) * 100;
+
+        trades.push({
+          gapDate,
+          entryDate: d2.date,
+          exitDate: exitResult.exitDate,
+          symbol,
+          direction: isLong ? 'LONG' : 'SHORT',
+          gapPercent: gapData.gapPercent,
+          absGap: gapData.absGap,
+          closePosition: gapData.closePosition,
+          volumeRatio: r(volRatio),
+          gapHeld: gapData.gapExtended,
+          gapFilled: gapData.gapFilledIntraday,
+          hasRejection: gapData.hasRejection,
+          isMarubozu: gapData.isMarubozu,
+          d2OpenType: d2Assessment.openType,
+          d2GapPct: d2Assessment.d2OpenVsGapClose,
+          d2Continuation: d2Assessment.d2Continuation,
+          entryPrice: r(entryPrice),
+          stopLoss: r(stopLoss),
+          exitPrice: r(exitResult.exitPrice),
+          exitReason: exitResult.reason,
+          pnlPercent: r(pnl),
+          result: pnl > 0.1 ? 'WIN' : pnl < -0.1 ? 'LOSS' : 'FLAT',
+          holdDays: exitResult.holdDays,
+          peakProfit: r(exitResult.peakProfit),
+          trendBefore: trend?.above50SMA ? 'ABOVE_50SMA' : 'BELOW',
+        });
+
+        dayTrades++;
+      }
+    }
+
+    return {
+      trades,
+      summary: this._summary(trades),
+      analysis: this._analysis(trades),
+    };
+  }
+
+  _simulate(candles, entryIdx, entryPrice, stopLoss, isLong) {
+    let high = entryPrice, low = entryPrice, currentStop = stopLoss;
+
+    for (let d = 1; d <= this.maxHoldDays && entryIdx + d < candles.length; d++) {
+      const day = candles[entryIdx + d];
+      high = Math.max(high, day.h);
+      low = Math.min(low, day.l);
+
+      const profit = isLong
+        ? ((day.c - entryPrice) / entryPrice) * 100
+        : ((entryPrice - day.c) / entryPrice) * 100;
+
+      const peakProfit = isLong
+        ? ((high - entryPrice) / entryPrice) * 100
+        : ((entryPrice - low) / entryPrice) * 100;
+
+      // stop loss
+      if (isLong ? day.l <= currentStop : day.h >= currentStop) {
+        return { exitPrice: currentStop, exitDate: day.date, reason: 'STOP_LOSS', holdDays: d, peakProfit };
+      }
+
+      // RSI exit
+      if (d >= 2) {
+        const closes = candles.slice(0, entryIdx + d + 1).map(c => c.c);
+        const rsi14 = ind.rsi(closes, 14);
+        if (rsi14 !== null) {
+          if (isLong && rsi14 >= this.rsiExit) {
+            return { exitPrice: day.c, exitDate: day.date, reason: 'RSI_EXIT', holdDays: d, peakProfit };
+          }
+          if (!isLong && rsi14 <= (100 - this.rsiExit)) {
+            return { exitPrice: day.c, exitDate: day.date, reason: 'RSI_EXIT', holdDays: d, peakProfit };
+          }
+        }
+      }
+
+      // trailing
+      if (profit >= this.trailActivation) {
+        const peak = isLong ? high : low;
+        const locked = Math.abs(peak - entryPrice) * 0.5;
+        const trail = isLong ? entryPrice + locked : entryPrice - locked;
+        currentStop = isLong ? Math.max(currentStop, trail) : Math.min(currentStop, trail);
+
+        if (isLong ? day.c <= currentStop : day.c >= currentStop) {
+          return { exitPrice: currentStop, exitDate: day.date, reason: 'TRAILING', holdDays: d, peakProfit };
+        }
+      }
+
+      if (d === this.maxHoldDays) {
+        return { exitPrice: day.c, exitDate: day.date, reason: 'TIME_EXIT', holdDays: d, peakProfit };
+      }
+    }
+
+    const last = candles[Math.min(entryIdx + this.maxHoldDays, candles.length - 1)];
+    return { exitPrice: last.c, exitDate: last.date, reason: 'TIME_EXIT', holdDays: this.maxHoldDays, peakProfit: 0 };
+  }
+
+  _summary(trades) {
+    if (!trades.length) return { totalTrades: 0 };
+    const w = trades.filter(t => t.result === 'WIN');
+    const l = trades.filter(t => t.result === 'LOSS');
+    const tot = trades.reduce((s, t) => s + t.pnlPercent, 0);
+    const gp = w.reduce((s, t) => s + t.pnlPercent, 0);
+    const gl = Math.abs(l.reduce((s, t) => s + t.pnlPercent, 0));
+
+    return {
+      totalTrades: trades.length,
+      wins: w.length, losses: l.length,
+      winRate: r((w.length / trades.length) * 100),
+      totalPnl: r(tot),
+      avgPnl: r(tot / trades.length),
+      avgWin: w.length ? r(gp / w.length) : 0,
+      avgLoss: l.length ? r(-gl / l.length) : 0,
+      profitFactor: gl > 0 ? r(gp / gl) : Infinity,
+      avgHold: r(trades.reduce((s, t) => s + t.holdDays, 0) / trades.length, 1),
+      best: r(Math.max(...trades.map(t => t.pnlPercent))),
+      worst: r(Math.min(...trades.map(t => t.pnlPercent))),
+    };
+  }
+
+  _analysis(trades) {
+    if (trades.length < 5) return null;
+    const avg = a => a.length ? r(a.reduce((s, t) => s + t.pnlPercent, 0) / a.length) : 0;
+    const wr = a => a.length ? r((a.filter(t => t.result === 'WIN').length / a.length) * 100) : 0;
+
+    // by gap size
+    const large = trades.filter(t => t.absGap >= 7);
+    const medium = trades.filter(t => t.absGap >= 5 && t.absGap < 7);
+
+    // by gap-day candle quality
+    const marubozu = trades.filter(t => t.isMarubozu);
+    const withRejection = trades.filter(t => t.hasRejection);
+    const gapFilled = trades.filter(t => t.gapFilled);
+    const gapNotFilled = trades.filter(t => !t.gapFilled);
+
+    // by Day-2 entry type
+    const idealPullback = trades.filter(t => t.d2OpenType === 'IDEAL_PULLBACK');
+    const flatOpen = trades.filter(t => t.d2OpenType === 'FLAT_OPEN');
+    const deepPullback = trades.filter(t => t.d2OpenType === 'DEEP_PULLBACK');
+
+    // by Day-2 continuation signal
+    const d2Cont = trades.filter(t => t.d2Continuation);
+    const d2NoCont = trades.filter(t => !t.d2Continuation);
+
+    // by close position (ideal close vs just strong)
+    const idealClose = trades.filter(t => t.closePosition > 0.85);
+    const strongClose = trades.filter(t => t.closePosition > 0.65 && t.closePosition <= 0.85);
+
+    // by exit reason
+    const byExit = {};
+    for (const t of trades) {
+      if (!byExit[t.exitReason]) byExit[t.exitReason] = [];
+      byExit[t.exitReason].push(t);
+    }
+
+    // drawdown
+    let cum = 0, peak = 0, maxDD = 0;
+    for (const t of trades) { cum += t.pnlPercent; peak = Math.max(peak, cum); maxDD = Math.max(maxDD, peak - cum); }
+
+    return {
+      byGapSize: {
+        large7pctPlus: { count: large.length, avgPnl: avg(large), winRate: wr(large) },
+        medium5to7pct: { count: medium.length, avgPnl: avg(medium), winRate: wr(medium) },
+      },
+      candleQuality: {
+        marubozu: { count: marubozu.length, avgPnl: avg(marubozu), winRate: wr(marubozu) },
+        withRejection: { count: withRejection.length, avgPnl: avg(withRejection), winRate: wr(withRejection) },
+        rejectionEdge: marubozu.length >= 3 && withRejection.length >= 3
+          ? r(avg(marubozu) - avg(withRejection)) : null,
+      },
+      gapFillEffect: {
+        filled: { count: gapFilled.length, avgPnl: avg(gapFilled), winRate: wr(gapFilled) },
+        notFilled: { count: gapNotFilled.length, avgPnl: avg(gapNotFilled), winRate: wr(gapNotFilled) },
+        edge: gapNotFilled.length >= 3 ? r(avg(gapNotFilled) - avg(gapFilled)) : null,
+      },
+      day2EntryType: {
+        idealPullback: { count: idealPullback.length, avgPnl: avg(idealPullback), winRate: wr(idealPullback) },
+        flatOpen: { count: flatOpen.length, avgPnl: avg(flatOpen), winRate: wr(flatOpen) },
+        deepPullback: { count: deepPullback.length, avgPnl: avg(deepPullback), winRate: wr(deepPullback) },
+      },
+      d2ContinuationEffect: {
+        continued: { count: d2Cont.length, avgPnl: avg(d2Cont), winRate: wr(d2Cont) },
+        noContinuation: { count: d2NoCont.length, avgPnl: avg(d2NoCont), winRate: wr(d2NoCont) },
+        edge: d2Cont.length >= 3 ? r(avg(d2Cont) - avg(d2NoCont)) : null,
+      },
+      closePositionEffect: {
+        ideal85plus: { count: idealClose.length, avgPnl: avg(idealClose), winRate: wr(idealClose) },
+        strong65to85: { count: strongClose.length, avgPnl: avg(strongClose), winRate: wr(strongClose) },
+      },
+      byExitReason: Object.fromEntries(
+        Object.entries(byExit).map(([k, v]) => [k, { count: v.length, avgPnl: avg(v) }])
+      ),
+      maxDrawdown: r(maxDD),
+      finalCumPnl: r(cum),
+    };
+  }
+}
+
+function r(v, d = 2) { return v == null || isNaN(v) ? null : Math.round(v * 10 ** d) / 10 ** d; }
+
+module.exports = { GapContinuationBacktester };
+```
+
+-
