@@ -217,6 +217,15 @@ export default function StrategyAnalysisPage() {
     const [wbRiskGate, setWbRiskGate] = useState<any>(null)
     const wbAbortRef = useRef<AbortController | null>(null)
 
+    // Mean Reversion Weekly state
+    const [mrwScanning, setMrwScanning] = useState(false)
+    const [mrwResult, setMrwResult] = useState<any>(null)
+    const [mrwError, setMrwError] = useState('')
+    const [mrwProgress, setMrwProgress] = useState<ScanProgress | null>(null)
+    const [mrwStatusMsg, setMrwStatusMsg] = useState('')
+    const [mrwRiskGate, setMrwRiskGate] = useState<any>(null)
+    const mrwAbortRef = useRef<AbortController | null>(null)
+
     const timeframes = [
         { id: '1D', label: 'Intraday', available: true },
         { id: '1W', label: '1 Week', available: true },
@@ -677,6 +686,56 @@ export default function StrategyAnalysisPage() {
         wbAbortRef.current?.abort()
         setWbScanning(false)
         setWbStatusMsg('Scan stopped')
+    }, [])
+
+    const runMRWeekly = useCallback(async () => {
+        setMrwScanning(true)
+        setMrwError('')
+        setMrwResult(null)
+        setMrwProgress(null)
+        setMrwRiskGate(null)
+        setMrwStatusMsg('Connecting...')
+        const abort = new AbortController()
+        mrwAbortRef.current = abort
+        try {
+            const res = await fetch('/api/strategy/mean-reversion-weekly', { signal: abort.signal })
+            if (!res.ok || !res.body) throw new Error('Failed to connect')
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+            let currentEvent = ''
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) currentEvent = line.slice(7).trim()
+                    if (!line.startsWith('data: ')) continue
+                    try {
+                        const data = JSON.parse(line.slice(6))
+                        switch (currentEvent) {
+                            case 'status': setMrwStatusMsg(data.message); break
+                            case 'riskGate': setMrwRiskGate(data); break
+                            case 'progress': setMrwProgress(data); setMrwStatusMsg(`Scanning... ${data.scanned}/${data.total} stocks`); break
+                            case 'result': setMrwResult(data); setMrwStatusMsg('Analysis complete!'); break
+                            case 'error': setMrwError(data.message); break
+                            case 'done': break
+                        }
+                    } catch { /* skip */ }
+                    currentEvent = ''
+                }
+            }
+        } catch (err: any) {
+            if (err.name !== 'AbortError') setMrwError(err.message || 'Something went wrong')
+        } finally { setMrwScanning(false) }
+    }, [])
+
+    const stopMrwScan = useCallback(() => {
+        mrwAbortRef.current?.abort()
+        setMrwScanning(false)
+        setMrwStatusMsg('Scan stopped')
     }, [])
 
     const runSectorRotation = useCallback(async () => {
@@ -4728,6 +4787,301 @@ export default function StrategyAnalysisPage() {
                                         <span>Breakout: {wbResult.totalBreakoutCandidates}</span>
                                         <span>Breakdown: {wbResult.totalBreakdownCandidates}</span>
                                         <span>Backtest: {wbResult.backtest?.totalTrades ?? 0} trades</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Strategy 9: Short-Term Mean Reversion */}
+                    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-6 hover:border-violet-500/30 transition-all">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-gradient-to-br from-violet-500/20 to-purple-500/20 rounded-xl flex items-center justify-center">
+                                    <Repeat size={20} className="text-violet-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-bold text-[var(--foreground)]">Mean Reversion (1-Week)</h3>
+                                    <p className="text-[10px] text-[var(--foreground-muted)]">RSI(2) \u00b7 Bollinger Band \u00b7 Pattern+RSI(14) \u00b7 Decline Typing \u00b7 Confluence \u00b7 Hold 2-5 Days</p>
+                                </div>
+                            </div>
+                            {mrwScanning ? (
+                                <button onClick={stopMrwScan} className="flex items-center gap-1.5 bg-red-500/10 text-red-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-all">
+                                    <StopCircle size={14} /> Stop
+                                </button>
+                            ) : (
+                                <button onClick={runMRWeekly} className="flex items-center gap-1.5 bg-violet-500/10 text-violet-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-violet-500/20 transition-all">
+                                    <Play size={14} /> Scan
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="grid grid-cols-3 sm:grid-cols-3 gap-3 mb-4">
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">A: RSI(2)</div>
+                                <div className="text-sm font-bold text-violet-400">\u22645</div>
+                            </div>
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">B: Bollinger</div>
+                                <div className="text-sm font-bold text-purple-400">&lt;Lower</div>
+                            </div>
+                            <div className="bg-[var(--background)] rounded-lg p-3 text-center">
+                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">C: Pattern</div>
+                                <div className="text-sm font-bold text-fuchsia-400">Hammer</div>
+                            </div>
+                        </div>
+
+                        {mrwScanning && (
+                            <div className="mb-4">
+                                <p className="text-xs text-violet-300 mb-2">{mrwStatusMsg}</p>
+                                {mrwProgress && (
+                                    <div className="w-full bg-[var(--background)] rounded-full h-1.5">
+                                        <div className="bg-gradient-to-r from-violet-500 to-purple-500 h-1.5 rounded-full transition-all" style={{ width: `${Math.round((mrwProgress.scanned / mrwProgress.total) * 100)}%` }} />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {mrwError && <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-4"><p className="text-xs text-red-400">{mrwError}</p></div>}
+
+                        {mrwRiskGate && (
+                            <div className={`rounded-lg p-3 mb-4 border ${mrwRiskGate.allowed ? 'bg-green-500/5 border-green-500/20' : 'bg-red-500/10 border-red-500/20'}`}>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <ShieldCheck size={14} className={mrwRiskGate.allowed ? 'text-green-400' : 'text-red-400'} />
+                                    <span className={`text-xs font-semibold ${mrwRiskGate.allowed ? 'text-green-400' : 'text-red-400'}`}>
+                                        Risk Gate: {mrwRiskGate.allowed ? '\u2705 CLEAR' : '\ud83d\udeab BLOCKED'}
+                                    </span>
+                                </div>
+                                {mrwRiskGate.blocks.map((b: any, i: number) => <p key={i} className="text-[10px] text-red-400 ml-5">\u274c {b.rule}: {b.msg}</p>)}
+                                {mrwRiskGate.warnings.map((w: any, i: number) => <p key={i} className="text-[10px] text-yellow-400 ml-5">\u26a0\ufe0f {w.rule}: {w.msg}</p>)}
+                            </div>
+                        )}
+
+                        {mrwResult && (
+                            <div className="space-y-4">
+                                {/* Market Context */}
+                                <div className="bg-[var(--background)] rounded-lg p-3 flex items-center gap-4 flex-wrap text-[11px]">
+                                    <span>Regime: <span className={`font-medium ${mrwResult.market.regime?.isSafe ? 'text-green-400' : mrwResult.market.regime?.regime === 'AVOID' ? 'text-red-400' : 'text-yellow-400'}`}>{mrwResult.market.regime?.regime || '-'}</span></span>
+                                    {mrwResult.market.indiaVix && <span>VIX: <span className={mrwResult.market.indiaVix > 18 ? 'text-yellow-400' : 'text-[var(--foreground)]'}>{mrwResult.market.indiaVix}</span></span>}
+                                    <span>A: <span className="text-violet-400 font-medium">{mrwResult.meta?.a || 0}</span></span>
+                                    <span>B: <span className="text-purple-400 font-medium">{mrwResult.meta?.b || 0}</span></span>
+                                    <span>C: <span className="text-fuchsia-400 font-medium">{mrwResult.meta?.c || 0}</span></span>
+                                    <span>Confluence: <span className="text-green-400 font-medium">{mrwResult.meta?.conf || 0}</span></span>
+                                </div>
+
+                                {/* Confluence Candidates (highest priority) */}
+                                {mrwResult.confluence && mrwResult.confluence.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-green-400 mb-3 flex items-center gap-1.5">
+                                            <Sparkles size={14} /> Confluence Signals ({mrwResult.confluence.length})
+                                        </h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead><tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                    <th className="pb-2 pr-3">Symbol</th><th className="pb-2 pr-2">Score</th><th className="pb-2 pr-2">Strats</th><th className="pb-2 pr-2">RSI(2)</th><th className="pb-2 pr-2">Decline</th><th className="pb-2 pr-2">Pattern</th><th className="pb-2 pr-2">Multi-TF</th><th className="pb-2">SL</th>
+                                                </tr></thead>
+                                                <tbody>
+                                                    {mrwResult.confluence.map((c: any, idx: number) => (
+                                                        <tr key={idx} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">{c.symbol}</td>
+                                                            <td className="py-1.5 pr-2 text-green-400 font-medium">{c.compositeScore}</td>
+                                                            <td className="py-1.5 pr-2"><span className="text-[9px] px-1 py-0.5 rounded bg-green-500/10 text-green-300">{c.strategies.join('+')}</span></td>
+                                                            <td className="py-1.5 pr-2 text-violet-400">{c.rsi2 ?? '-'}</td>
+                                                            <td className="py-1.5 pr-2"><span className={`text-[9px] px-1 py-0.5 rounded ${c.declineSafe ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400'}`}>{c.declineType}</span></td>
+                                                            <td className="py-1.5 pr-2 text-[var(--foreground-muted)]">{c.patternType !== 'NONE' ? c.patternType : '-'}</td>
+                                                            <td className="py-1.5 pr-2">{c.multiTFBoth ? <span className="text-green-400 text-[9px]">D+W</span> : <span className="text-[var(--foreground-muted)] text-[9px]">D</span>}</td>
+                                                            <td className="py-1.5 text-red-400">{c.stopLoss}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Strategy A: RSI(2) Candidates */}
+                                {mrwResult.strategyA && mrwResult.strategyA.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-violet-400 mb-3">A: RSI(2) \u2264 5 ({mrwResult.strategyA.length})</h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead><tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                    <th className="pb-2 pr-3">Symbol</th><th className="pb-2 pr-2">Score</th><th className="pb-2 pr-2">RSI(2)</th><th className="pb-2 pr-2">Down</th><th className="pb-2 pr-2">Decline</th><th className="pb-2 pr-2">&gt;200SMA</th><th className="pb-2">SL</th>
+                                                </tr></thead>
+                                                <tbody>{mrwResult.strategyA.slice(0, 8).map((c: any, i: number) => (
+                                                    <tr key={i} className="border-b border-[var(--card-border)]/30">
+                                                        <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">{c.symbol}{c.isConfluence && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-green-500/20 text-green-300">C</span>}</td>
+                                                        <td className="py-1.5 pr-2 text-violet-400 font-medium">{c.compositeScore}</td>
+                                                        <td className="py-1.5 pr-2 text-violet-300 font-medium">{c.rsi2}</td>
+                                                        <td className="py-1.5 pr-2 text-[var(--foreground)]">{c.downDays}d</td>
+                                                        <td className="py-1.5 pr-2"><span className={`text-[9px] px-1 py-0.5 rounded ${c.declineSafe ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400'}`}>{c.declineType}</span></td>
+                                                        <td className="py-1.5 pr-2">{c.above200 ? <span className="text-green-400">\u2713</span> : <span className="text-red-400">\u2717</span>}</td>
+                                                        <td className="py-1.5 text-red-400">{c.stopLoss}</td>
+                                                    </tr>
+                                                ))}</tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Strategy B & C side by side */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    {mrwResult.strategyB && mrwResult.strategyB.length > 0 && (
+                                        <div className="bg-[var(--background)] rounded-lg p-3">
+                                            <h4 className="text-[11px] font-semibold text-purple-400 mb-2">B: Bollinger ({mrwResult.strategyB.length})</h4>
+                                            {mrwResult.strategyB.slice(0, 5).map((c: any, i: number) => (
+                                                <div key={i} className="flex items-center justify-between text-[10px] py-1 border-b border-[var(--card-border)]/20">
+                                                    <span className="text-[var(--foreground)] font-medium">{c.symbol}</span>
+                                                    <span className="text-purple-400">{c.compositeScore}</span>
+                                                    <span className={c.declineSafe ? 'text-green-400' : 'text-yellow-400'}>{c.declineType}</span>
+                                                    <span className="text-red-400">{c.stopLoss}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {mrwResult.strategyC && mrwResult.strategyC.length > 0 && (
+                                        <div className="bg-[var(--background)] rounded-lg p-3">
+                                            <h4 className="text-[11px] font-semibold text-fuchsia-400 mb-2">C: Pattern+RSI(14) ({mrwResult.strategyC.length})</h4>
+                                            {mrwResult.strategyC.slice(0, 5).map((c: any, i: number) => (
+                                                <div key={i} className="flex items-center justify-between text-[10px] py-1 border-b border-[var(--card-border)]/20">
+                                                    <span className="text-[var(--foreground)] font-medium">{c.symbol}</span>
+                                                    <span className="text-fuchsia-400">{c.compositeScore}</span>
+                                                    <span className="text-[var(--foreground-muted)]">{c.patternType}</span>
+                                                    <span className="text-red-400">{c.stopLoss}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Backtest */}
+                                {mrwResult.backtest && mrwResult.backtest.totalTrades > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-violet-400 mb-3 flex items-center gap-1.5"><BarChart3 size={14} /> Backtest (~1 Year)</h4>
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Trades</div><div className="text-sm font-bold text-[var(--foreground)]">{mrwResult.backtest.totalTrades}</div></div>
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Win Rate</div><div className={`text-sm font-bold ${mrwResult.backtest.winRate >= 65 ? 'text-green-400' : mrwResult.backtest.winRate >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>{mrwResult.backtest.winRate}%</div></div>
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">PF</div><div className={`text-sm font-bold ${mrwResult.backtest.profitFactor >= 1.5 ? 'text-green-400' : mrwResult.backtest.profitFactor >= 1 ? 'text-yellow-400' : 'text-red-400'}`}>{mrwResult.backtest.profitFactor === Infinity ? '\u221e' : mrwResult.backtest.profitFactor}</div></div>
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Avg PnL</div><div className={`text-sm font-bold ${mrwResult.backtest.avgPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{mrwResult.backtest.avgPnl}%</div></div>
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Avg Hold</div><div className="text-sm font-bold text-violet-400">{mrwResult.backtest.avgHold}d</div></div>
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Max Loss</div><div className="text-sm font-bold text-red-400">{mrwResult.backtest.maxConsecLoss}</div></div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Strategy Comparison */}
+                                {mrwResult.strategyComparison && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-purple-400 mb-3">Strategy Comparison</h4>
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                            {Object.entries(mrwResult.strategyComparison).filter(([k]) => k !== 'confluenceEdge').map(([k, v]: [string, any]) => v?.totalTrades > 0 && (
+                                                <div key={k} className="bg-[var(--card)] rounded-lg p-2 text-center">
+                                                    <div className="text-[9px] text-violet-400 mb-1">{k}</div>
+                                                    <div className="text-[10px] text-[var(--foreground)]">{v.totalTrades} trades</div>
+                                                    <div className={`text-[10px] font-medium ${v.winRate >= 60 ? 'text-green-400' : v.winRate >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>WR: {v.winRate}%</div>
+                                                    <div className={`text-[10px] ${v.avgPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{v.avgPnl}%</div>
+                                                </div>
+                                            ))}
+                                            {mrwResult.strategyComparison.confluenceEdge?.edge != null && (
+                                                <div className="bg-[var(--card)] rounded-lg p-2 text-center">
+                                                    <div className="text-[9px] text-green-400 mb-1">Confluence Edge</div>
+                                                    <div className={`text-sm font-bold ${mrwResult.strategyComparison.confluenceEdge.edge > 0 ? 'text-green-400' : 'text-red-400'}`}>{mrwResult.strategyComparison.confluenceEdge.edge > 0 ? '+' : ''}{mrwResult.strategyComparison.confluenceEdge.edge}%</div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Deep Analytics */}
+                                {mrwResult.analysis && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-violet-400 mb-3">Edge Analysis</h4>
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                            {/* Multi-TF */}
+                                            <div className="bg-[var(--card)] rounded-lg p-2">
+                                                <div className="text-[9px] text-violet-400 mb-1">Multi-Timeframe</div>
+                                                <div className="text-[10px] text-[var(--foreground)]">D+W: {mrwResult.analysis.multiTF?.both?.count || 0}, WR: {mrwResult.analysis.multiTF?.both?.winRate || 0}%</div>
+                                                <div className="text-[10px] text-[var(--foreground-muted)]">Daily: {mrwResult.analysis.multiTF?.daily?.count || 0}, WR: {mrwResult.analysis.multiTF?.daily?.winRate || 0}%</div>
+                                                {mrwResult.analysis.multiTF?.edge != null && <div className={`text-[9px] mt-1 ${mrwResult.analysis.multiTF.edge > 0 ? 'text-green-400' : 'text-red-400'}`}>Edge: {mrwResult.analysis.multiTF.edge > 0 ? '+' : ''}{mrwResult.analysis.multiTF.edge}%</div>}
+                                            </div>
+                                            {/* Prior Bounce */}
+                                            <div className="bg-[var(--card)] rounded-lg p-2">
+                                                <div className="text-[9px] text-purple-400 mb-1">Prior Support</div>
+                                                <div className="text-[10px] text-[var(--foreground)]">With: {mrwResult.analysis.priorBounce?.withSupport?.count || 0}, WR: {mrwResult.analysis.priorBounce?.withSupport?.winRate || 0}%</div>
+                                                <div className="text-[10px] text-[var(--foreground-muted)]">Without: {mrwResult.analysis.priorBounce?.without?.count || 0}, WR: {mrwResult.analysis.priorBounce?.without?.winRate || 0}%</div>
+                                            </div>
+                                            {/* Entry Type */}
+                                            <div className="bg-[var(--card)] rounded-lg p-2">
+                                                <div className="text-[9px] text-fuchsia-400 mb-1">Entry Type</div>
+                                                <div className="text-[10px] text-[var(--foreground)]">Market: {mrwResult.analysis.byEntryType?.marketOrder?.count || 0}, WR: {mrwResult.analysis.byEntryType?.marketOrder?.winRate || 0}%</div>
+                                                <div className="text-[10px] text-[var(--foreground-muted)]">StopBuy: {mrwResult.analysis.byEntryType?.stopBuy?.count || 0}, WR: {mrwResult.analysis.byEntryType?.stopBuy?.winRate || 0}%</div>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-4 text-[10px] text-[var(--foreground-muted)] flex-wrap mt-3 pt-3 border-t border-[var(--card-border)]/30">
+                                            <span>Max DD: <span className="text-red-400">{mrwResult.analysis.maxDrawdown}%</span></span>
+                                            <span>Best: <span className="text-green-400">+{mrwResult.backtest.best}%</span></span>
+                                            <span>Worst: <span className="text-red-400">{mrwResult.backtest.worst}%</span></span>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Decline Type Breakdown */}
+                                {mrwResult.analysis?.byDeclineType && (
+                                    <div className="bg-[var(--background)] rounded-lg p-3">
+                                        <div className="text-[10px] text-[var(--foreground-muted)] mb-2">Decline Type Performance</div>
+                                        <div className="flex items-center gap-3 flex-wrap">
+                                            {Object.entries(mrwResult.analysis.byDeclineType).map(([k, v]: [string, any]) => (
+                                                <span key={k} className="text-[10px] px-2 py-1 rounded bg-[var(--card)] text-[var(--foreground)]">
+                                                    {k}: {v.count} (<span className={v.winRate >= 60 ? 'text-green-400' : v.winRate >= 45 ? 'text-yellow-400' : 'text-red-400'}>{v.winRate}%</span>)
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Exit Reasons */}
+                                {mrwResult.analysis?.byExitReason && (
+                                    <div className="bg-[var(--background)] rounded-lg p-3">
+                                        <div className="text-[10px] text-[var(--foreground-muted)] mb-2">Exit Reasons</div>
+                                        <div className="flex items-center gap-3 flex-wrap">
+                                            {mrwResult.analysis.byExitReason.map((r: any, i: number) => (
+                                                <span key={i} className="text-[10px] px-2 py-1 rounded bg-[var(--card)] text-[var(--foreground)]">
+                                                    {r.reason.replace(/_/g, ' ')}: {r.count} (<span className={r.avgPnl >= 0 ? 'text-green-400' : 'text-red-400'}>{r.avgPnl}%</span>)
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Top Stocks */}
+                                {mrwResult.topStocks && mrwResult.topStocks.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-violet-400 mb-3 flex items-center gap-1.5"><BarChart3 size={14} /> Top Mean Reversion Stocks</h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead><tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                    <th className="pb-2 pr-3">Symbol</th><th className="pb-2 pr-3">Trades</th><th className="pb-2 pr-3">Win%</th><th className="pb-2">Avg PnL</th>
+                                                </tr></thead>
+                                                <tbody>{mrwResult.topStocks.map((s: any, i: number) => (
+                                                    <tr key={i} className="border-b border-[var(--card-border)]/30">
+                                                        <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">{s.symbol}</td>
+                                                        <td className="py-1.5 pr-3 text-[var(--foreground)]">{s.trades}</td>
+                                                        <td className={`py-1.5 pr-3 font-medium ${s.winRate >= 65 ? 'text-green-400' : s.winRate >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>{s.winRate}%</td>
+                                                        <td className={`py-1.5 font-medium ${s.avgPnl > 0 ? 'text-green-400' : 'text-red-400'}`}>{s.avgPnl > 0 ? '+' : ''}{s.avgPnl}%</td>
+                                                    </tr>
+                                                ))}</tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Scan Stats */}
+                                <div className="bg-[var(--background)] rounded-lg p-3">
+                                    <div className="text-[10px] text-[var(--foreground-muted)] flex items-center gap-4 flex-wrap">
+                                        <span>Scanned: {mrwResult.totalStocksScanned}</span>
+                                        <span>Errors: {mrwResult.totalErrors}</span>
+                                        <span>Blocked: {mrwResult.meta?.blocked || 0}</span>
+                                        <span>Backtest: {mrwResult.backtest?.totalTrades ?? 0} trades</span>
                                     </div>
                                 </div>
                             </div>
