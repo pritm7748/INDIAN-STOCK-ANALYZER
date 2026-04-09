@@ -4590,86 +4590,103 @@ export default function StrategyAnalysisPage() {
                                     <span>Success Est: <span className="text-teal-400 font-medium">{wbResult.market.regime?.estimatedSuccessRate ? `${Math.round(wbResult.market.regime.estimatedSuccessRate * 100)}%` : '-'}</span></span>
                                 </div>
 
-                                {/* Breakout Watchlist */}
+                                {/* ═══ ACTIONABLE CALLS ═══ */}
                                 {wbResult.breakoutWatch && wbResult.breakoutWatch.length > 0 && (
                                     <div className="bg-[var(--background)] rounded-lg p-4">
-                                        <h4 className="text-xs font-semibold text-teal-400 mb-3 flex items-center gap-1.5">
-                                            <TrendingUp size={14} /> Breakout Watchlist ({wbResult.totalBreakoutCandidates})
+                                        <h4 className="text-xs font-semibold text-green-400 mb-3 flex items-center gap-1.5">
+                                            <TrendingUp size={14} /> BUY Calls — Breakout ({wbResult.totalBreakoutCandidates})
                                         </h4>
-                                        <div className="overflow-x-auto">
-                                            <table className="w-full text-[11px]">
-                                                <thead>
-                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
-                                                        <th className="pb-2 pr-3">Symbol</th>
-                                                        <th className="pb-2 pr-2">Score</th>
-                                                        <th className="pb-2 pr-2">PW High</th>
-                                                        <th className="pb-2 pr-2">PW%</th>
-                                                        <th className="pb-2 pr-2">Base</th>
-                                                        <th className="pb-2 pr-2">RS</th>
-                                                        <th className="pb-2 pr-2">52W</th>
-                                                        <th className="pb-2 pr-2">RSI</th>
-                                                        <th className="pb-2">SL</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {wbResult.breakoutWatch.map((c: any, idx: number) => (
-                                                        <tr key={idx} className="border-b border-[var(--card-border)]/30">
-                                                            <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">
-                                                                {c.symbol}
-                                                                {c.isFnO && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-teal-500/20 text-teal-300">F&amp;O</span>}
-                                                            </td>
-                                                            <td className="py-1.5 pr-2 text-teal-400 font-medium">{c.weekendScore}</td>
-                                                            <td className="py-1.5 pr-2 text-[var(--foreground)]">{c.pwHigh}</td>
-                                                            <td className="py-1.5 pr-2 text-[var(--foreground)]">{c.pwRangePct}%</td>
-                                                            <td className="py-1.5 pr-2">
-                                                                <span className={`text-[9px] px-1 py-0.5 rounded ${c.baseClass === 'PERFECT_COIL' || c.baseClass === 'COILED_SPRING' ? 'bg-green-500/10 text-green-400' : c.baseClass === 'STRONG_BASE' || c.baseClass === 'VALID_BASE' ? 'bg-teal-500/10 text-teal-400' : 'bg-[var(--background)] text-[var(--foreground-muted)]'}`}>
-                                                                    {c.baseClass === 'PERFECT_COIL' ? 'PERFECT' : c.baseClass === 'COILED_SPRING' ? 'COILED' : c.baseClass === 'STRONG_BASE' ? 'STRONG' : c.baseClass === 'VALID_BASE' ? 'VALID' : 'NONE'}
-                                                                    {c.baseWeeks > 0 && ` ${c.baseWeeks}w`}
-                                                                </span>
-                                                            </td>
-                                                            <td className="py-1.5 pr-2">
-                                                                <span className={`text-[9px] px-1 py-0.5 rounded ${c.rsRank === 'VERY_STRONG' || c.rsRank === 'STRONG' ? 'bg-green-500/10 text-green-400' : c.rsRank === 'NEUTRAL' ? 'bg-[var(--background)] text-[var(--foreground-muted)]' : 'bg-red-500/10 text-red-400'}`}>{c.rsRank}</span>
-                                                            </td>
-                                                            <td className="py-1.5 pr-2">{c.nearHighZone ? <span className="text-green-400 text-[9px]">Near ATH</span> : <span className="text-[var(--foreground-muted)]">{Math.round(c.w52Position * 100)}%</span>}</td>
-                                                            <td className="py-1.5 pr-2 text-[var(--foreground)]">{c.rsi14}</td>
-                                                            <td className="py-1.5 text-red-400">{c.stopLoss}</td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
+                                        <div className="space-y-3">
+                                            {wbResult.breakoutWatch.map((c: any, idx: number) => (
+                                                <div key={idx} className={`border rounded-xl p-4 transition-all ${c.grade === 'A' ? 'border-green-500/40 bg-green-500/5' : c.grade === 'B' ? 'border-teal-500/30 bg-teal-500/5' : 'border-[var(--card-border)] bg-[var(--card)]'}`}>
+                                                    <div className="flex items-center justify-between mb-3">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${c.grade === 'A' ? 'bg-green-500/20 text-green-400' : c.grade === 'B' ? 'bg-teal-500/20 text-teal-400' : 'bg-yellow-500/20 text-yellow-400'}`}>Grade {c.grade}</span>
+                                                            <span className="text-sm font-bold text-[var(--foreground)]">{c.symbol}</span>
+                                                            {c.isFnO && <span className="text-[9px] px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300">F&amp;O</span>}
+                                                            {c.nearHighZone && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">Near ATH</span>}
+                                                        </div>
+                                                        <span className="bg-green-500/15 text-green-400 text-xs font-bold px-3 py-1 rounded-lg">BUY</span>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">Entry</div>
+                                                            <div className="text-xs font-bold text-green-400">Above ₹{c.triggerPrice}</div>
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">PW High breakout</div>
+                                                        </div>
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">Stop Loss</div>
+                                                            <div className="text-xs font-bold text-red-400">₹{c.stopLoss}</div>
+                                                            <div className="text-[9px] text-red-400/70">-{c.slPct}%</div>
+                                                        </div>
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">Target</div>
+                                                            <div className="text-xs font-bold text-blue-400">₹{c.target}</div>
+                                                            <div className="text-[9px] text-blue-400/70">+{c.tgtPct}%</div>
+                                                        </div>
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">Risk:Reward</div>
+                                                            <div className={`text-xs font-bold ${c.riskReward >= 2 ? 'text-green-400' : c.riskReward >= 1.5 ? 'text-yellow-400' : 'text-orange-400'}`}>1:{c.riskReward}</div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-3 flex-wrap text-[10px] text-[var(--foreground-muted)]">
+                                                        <span>Score: <span className="text-teal-400 font-medium">{c.weekendScore}</span></span>
+                                                        <span>Base: <span className={c.baseClass !== 'NONE' ? 'text-teal-400' : ''}>{c.baseClass}{c.baseWeeks > 0 ? ` ${c.baseWeeks}w` : ''}</span></span>
+                                                        <span>RS: <span className={c.rsRank === 'VERY_STRONG' || c.rsRank === 'STRONG' ? 'text-green-400' : ''}>{c.rsRank}</span></span>
+                                                        <span>RSI: {c.rsi14}</span>
+                                                        {c.btWinRate !== null && <span>Backtest: <span className={`font-medium ${c.btWinRate >= 60 ? 'text-green-400' : c.btWinRate >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{c.btWinRate}% win ({c.btTrades})</span></span>}
+                                                    </div>
+                                                </div>
+                                            ))}
                                         </div>
                                     </div>
                                 )}
 
-                                {/* Breakdown Watchlist */}
+                                {/* Breakdown Calls */}
                                 {wbResult.breakdownWatch && wbResult.breakdownWatch.length > 0 && (
                                     <div className="bg-[var(--background)] rounded-lg p-4">
                                         <h4 className="text-xs font-semibold text-red-400 mb-3 flex items-center gap-1.5">
-                                            <TrendingDown size={14} /> Breakdown Watchlist ({wbResult.totalBreakdownCandidates})
+                                            <TrendingDown size={14} /> SELL Calls — Breakdown ({wbResult.totalBreakdownCandidates})
                                         </h4>
-                                        <div className="overflow-x-auto">
-                                            <table className="w-full text-[11px]">
-                                                <thead>
-                                                    <tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
-                                                        <th className="pb-2 pr-3">Symbol</th>
-                                                        <th className="pb-2 pr-2">Score</th>
-                                                        <th className="pb-2 pr-2">PW Low</th>
-                                                        <th className="pb-2 pr-2">RSI</th>
-                                                        <th className="pb-2">Target</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {wbResult.breakdownWatch.map((c: any, idx: number) => (
-                                                        <tr key={idx} className="border-b border-[var(--card-border)]/30">
-                                                            <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">{c.symbol}</td>
-                                                            <td className="py-1.5 pr-2 text-red-400 font-medium">{c.weekendScore}</td>
-                                                            <td className="py-1.5 pr-2 text-[var(--foreground)]">{c.pwLow}</td>
-                                                            <td className="py-1.5 pr-2 text-[var(--foreground)]">{c.rsi14}</td>
-                                                            <td className="py-1.5 text-red-400">{c.target}</td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
+                                        <div className="space-y-3">
+                                            {wbResult.breakdownWatch.map((c: any, idx: number) => (
+                                                <div key={idx} className={`border rounded-xl p-4 transition-all ${c.grade === 'A' ? 'border-red-500/40 bg-red-500/5' : c.grade === 'B' ? 'border-orange-500/30 bg-orange-500/5' : 'border-[var(--card-border)] bg-[var(--card)]'}`}>
+                                                    <div className="flex items-center justify-between mb-3">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${c.grade === 'A' ? 'bg-red-500/20 text-red-400' : c.grade === 'B' ? 'bg-orange-500/20 text-orange-400' : 'bg-yellow-500/20 text-yellow-400'}`}>Grade {c.grade}</span>
+                                                            <span className="text-sm font-bold text-[var(--foreground)]">{c.symbol}</span>
+                                                            {c.isFnO && <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300">F&amp;O</span>}
+                                                        </div>
+                                                        <span className="bg-red-500/15 text-red-400 text-xs font-bold px-3 py-1 rounded-lg">SELL</span>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">Entry</div>
+                                                            <div className="text-xs font-bold text-red-400">Below ₹{c.triggerPrice}</div>
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">PW Low breakdown</div>
+                                                        </div>
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">Stop Loss</div>
+                                                            <div className="text-xs font-bold text-green-400">₹{c.stopLoss}</div>
+                                                            <div className="text-[9px] text-green-400/70">+{c.slPct}%</div>
+                                                        </div>
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">Target</div>
+                                                            <div className="text-xs font-bold text-blue-400">₹{c.target}</div>
+                                                            <div className="text-[9px] text-blue-400/70">-{c.tgtPct}%</div>
+                                                        </div>
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">Risk:Reward</div>
+                                                            <div className={`text-xs font-bold ${c.riskReward >= 2 ? 'text-green-400' : c.riskReward >= 1.5 ? 'text-yellow-400' : 'text-orange-400'}`}>1:{c.riskReward}</div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-3 flex-wrap text-[10px] text-[var(--foreground-muted)]">
+                                                        <span>Score: <span className="text-red-400 font-medium">{c.weekendScore}</span></span>
+                                                        <span>RSI: {c.rsi14}</span>
+                                                        {c.btWinRate !== null && <span>Backtest: <span className={`font-medium ${c.btWinRate >= 60 ? 'text-green-400' : c.btWinRate >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{c.btWinRate}% ({c.btTrades})</span></span>}
+                                                    </div>
+                                                </div>
+                                            ))}
                                         </div>
                                     </div>
                                 )}
@@ -4869,90 +4886,72 @@ export default function StrategyAnalysisPage() {
                                     <span>Confluence: <span className="text-green-400 font-medium">{mrwResult.meta?.conf || 0}</span></span>
                                 </div>
 
-                                {/* Confluence Candidates (highest priority) */}
-                                {mrwResult.confluence && mrwResult.confluence.length > 0 && (
-                                    <div className="bg-[var(--background)] rounded-lg p-4">
-                                        <h4 className="text-xs font-semibold text-green-400 mb-3 flex items-center gap-1.5">
-                                            <Sparkles size={14} /> Confluence Signals ({mrwResult.confluence.length})
-                                        </h4>
-                                        <div className="overflow-x-auto">
-                                            <table className="w-full text-[11px]">
-                                                <thead><tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
-                                                    <th className="pb-2 pr-3">Symbol</th><th className="pb-2 pr-2">Score</th><th className="pb-2 pr-2">Strats</th><th className="pb-2 pr-2">RSI(2)</th><th className="pb-2 pr-2">Decline</th><th className="pb-2 pr-2">Pattern</th><th className="pb-2 pr-2">Multi-TF</th><th className="pb-2">SL</th>
-                                                </tr></thead>
-                                                <tbody>
-                                                    {mrwResult.confluence.map((c: any, idx: number) => (
-                                                        <tr key={idx} className="border-b border-[var(--card-border)]/30">
-                                                            <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">{c.symbol}</td>
-                                                            <td className="py-1.5 pr-2 text-green-400 font-medium">{c.compositeScore}</td>
-                                                            <td className="py-1.5 pr-2"><span className="text-[9px] px-1 py-0.5 rounded bg-green-500/10 text-green-300">{c.strategies.join('+')}</span></td>
-                                                            <td className="py-1.5 pr-2 text-violet-400">{c.rsi2 ?? '-'}</td>
-                                                            <td className="py-1.5 pr-2"><span className={`text-[9px] px-1 py-0.5 rounded ${c.declineSafe ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400'}`}>{c.declineType}</span></td>
-                                                            <td className="py-1.5 pr-2 text-[var(--foreground-muted)]">{c.patternType !== 'NONE' ? c.patternType : '-'}</td>
-                                                            <td className="py-1.5 pr-2">{c.multiTFBoth ? <span className="text-green-400 text-[9px]">D+W</span> : <span className="text-[var(--foreground-muted)] text-[9px]">D</span>}</td>
-                                                            <td className="py-1.5 text-red-400">{c.stopLoss}</td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
+                                {/* ═══ ACTIONABLE BUY CALLS ═══ */}
+                                {(() => {
+                                    const allCalls = [...(mrwResult.confluence || []), ...(mrwResult.strategyA || []), ...(mrwResult.strategyB || []), ...(mrwResult.strategyC || [])]
+                                    const seen = new Set<string>()
+                                    const unique = allCalls.filter(c => { if (seen.has(c.symbol)) return false; seen.add(c.symbol); return true })
+                                    if (unique.length === 0) return <div className="bg-[var(--background)] rounded-lg p-4 text-center text-xs text-[var(--foreground-muted)]">No mean reversion setups found today. This is normal — strict filters ensure high win rate.</div>
+                                    return (
+                                        <div className="bg-[var(--background)] rounded-lg p-4">
+                                            <h4 className="text-xs font-semibold text-green-400 mb-3 flex items-center gap-1.5">
+                                                <Target size={14} /> BUY Calls — Mean Reversion ({unique.length})
+                                            </h4>
+                                            <div className="space-y-3">
+                                                {unique.map((c: any, idx: number) => (
+                                                    <div key={idx} className={`border rounded-xl p-4 transition-all ${c.grade === 'A' ? 'border-green-500/40 bg-green-500/5' : c.grade === 'B' ? 'border-violet-500/30 bg-violet-500/5' : 'border-[var(--card-border)] bg-[var(--card)]'}`}>
+                                                        <div className="flex items-center justify-between mb-3">
+                                                            <div className="flex items-center gap-2">
+                                                                <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${c.grade === 'A' ? 'bg-green-500/20 text-green-400' : c.grade === 'B' ? 'bg-violet-500/20 text-violet-400' : 'bg-yellow-500/20 text-yellow-400'}`}>Grade {c.grade}</span>
+                                                                <span className="text-sm font-bold text-[var(--foreground)]">{c.symbol}</span>
+                                                                {c.isConfluence && <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-300">{c.strategies.join('+')}</span>}
+                                                                <span className={`text-[9px] px-1.5 py-0.5 rounded ${c.declineSafe ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400'}`}>{c.declineType}</span>
+                                                            </div>
+                                                            <span className="bg-green-500/15 text-green-400 text-xs font-bold px-3 py-1 rounded-lg">BUY</span>
+                                                        </div>
+                                                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
+                                                            <div className="bg-[var(--background)] rounded-lg p-2">
+                                                                <div className="text-[9px] text-[var(--foreground-muted)]">Entry</div>
+                                                                <div className="text-xs font-bold text-green-400">{c.entryType}</div>
+                                                                <div className="text-[9px] text-[var(--foreground-muted)]">CMP: ₹{c.scanClose}</div>
+                                                            </div>
+                                                            <div className="bg-[var(--background)] rounded-lg p-2">
+                                                                <div className="text-[9px] text-[var(--foreground-muted)]">Stop Loss</div>
+                                                                <div className="text-xs font-bold text-red-400">₹{c.stopLoss}</div>
+                                                                <div className="text-[9px] text-red-400/70">-{c.slPct}%</div>
+                                                            </div>
+                                                            <div className="bg-[var(--background)] rounded-lg p-2">
+                                                                <div className="text-[9px] text-[var(--foreground-muted)]">Target 1</div>
+                                                                <div className="text-xs font-bold text-blue-400">₹{c.target1}</div>
+                                                                <div className="text-[9px] text-blue-400/70">+{c.tgtPct}%</div>
+                                                            </div>
+                                                            <div className="bg-[var(--background)] rounded-lg p-2">
+                                                                <div className="text-[9px] text-[var(--foreground-muted)]">Target 2</div>
+                                                                <div className="text-xs font-bold text-cyan-400">₹{c.target2}</div>
+                                                            </div>
+                                                            <div className="bg-[var(--background)] rounded-lg p-2">
+                                                                <div className="text-[9px] text-[var(--foreground-muted)]">R:R</div>
+                                                                <div className={`text-xs font-bold ${c.riskReward1 >= 1.5 ? 'text-green-400' : c.riskReward1 >= 1 ? 'text-yellow-400' : 'text-orange-400'}`}>1:{c.riskReward1}</div>
+                                                                <div className="text-[9px] text-[var(--foreground-muted)]">T2: 1:{c.riskReward2}</div>
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex items-center gap-3 flex-wrap text-[10px] text-[var(--foreground-muted)]">
+                                                            <span>RSI(2): <span className="text-violet-400 font-medium">{c.rsi2 ?? '-'}</span></span>
+                                                            <span>RSI(14): <span className="text-purple-400">{c.rsi14 ?? '-'}</span></span>
+                                                            <span>Down: <span className="text-[var(--foreground)]">{c.downDays}d</span></span>
+                                                            {c.patternType !== 'NONE' && c.patternType && <span>Pattern: <span className="text-fuchsia-400">{c.patternType}</span></span>}
+                                                            {c.multiTFBoth && <span className="text-green-400">D+W Oversold</span>}
+                                                            {c.priorSupport && <span className="text-green-400">Proven Support</span>}
+                                                            {c.atKeyMA && <span className="text-cyan-400">At {c.nearestMA}</span>}
+                                                            {c.bounceReliable && <span className="text-green-400">Reliable Bouncer</span>}
+                                                            {c.btWinRate !== null && <span>BT: <span className={`font-medium ${c.btWinRate >= 60 ? 'text-green-400' : c.btWinRate >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{c.btWinRate}% win ({c.btTrades})</span></span>}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
                                         </div>
-                                    </div>
-                                )}
-
-                                {/* Strategy A: RSI(2) Candidates */}
-                                {mrwResult.strategyA && mrwResult.strategyA.length > 0 && (
-                                    <div className="bg-[var(--background)] rounded-lg p-4">
-                                        <h4 className="text-xs font-semibold text-violet-400 mb-3">A: RSI(2) \u2264 5 ({mrwResult.strategyA.length})</h4>
-                                        <div className="overflow-x-auto">
-                                            <table className="w-full text-[11px]">
-                                                <thead><tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
-                                                    <th className="pb-2 pr-3">Symbol</th><th className="pb-2 pr-2">Score</th><th className="pb-2 pr-2">RSI(2)</th><th className="pb-2 pr-2">Down</th><th className="pb-2 pr-2">Decline</th><th className="pb-2 pr-2">&gt;200SMA</th><th className="pb-2">SL</th>
-                                                </tr></thead>
-                                                <tbody>{mrwResult.strategyA.slice(0, 8).map((c: any, i: number) => (
-                                                    <tr key={i} className="border-b border-[var(--card-border)]/30">
-                                                        <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">{c.symbol}{c.isConfluence && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-green-500/20 text-green-300">C</span>}</td>
-                                                        <td className="py-1.5 pr-2 text-violet-400 font-medium">{c.compositeScore}</td>
-                                                        <td className="py-1.5 pr-2 text-violet-300 font-medium">{c.rsi2}</td>
-                                                        <td className="py-1.5 pr-2 text-[var(--foreground)]">{c.downDays}d</td>
-                                                        <td className="py-1.5 pr-2"><span className={`text-[9px] px-1 py-0.5 rounded ${c.declineSafe ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400'}`}>{c.declineType}</span></td>
-                                                        <td className="py-1.5 pr-2">{c.above200 ? <span className="text-green-400">\u2713</span> : <span className="text-red-400">\u2717</span>}</td>
-                                                        <td className="py-1.5 text-red-400">{c.stopLoss}</td>
-                                                    </tr>
-                                                ))}</tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Strategy B & C side by side */}
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                    {mrwResult.strategyB && mrwResult.strategyB.length > 0 && (
-                                        <div className="bg-[var(--background)] rounded-lg p-3">
-                                            <h4 className="text-[11px] font-semibold text-purple-400 mb-2">B: Bollinger ({mrwResult.strategyB.length})</h4>
-                                            {mrwResult.strategyB.slice(0, 5).map((c: any, i: number) => (
-                                                <div key={i} className="flex items-center justify-between text-[10px] py-1 border-b border-[var(--card-border)]/20">
-                                                    <span className="text-[var(--foreground)] font-medium">{c.symbol}</span>
-                                                    <span className="text-purple-400">{c.compositeScore}</span>
-                                                    <span className={c.declineSafe ? 'text-green-400' : 'text-yellow-400'}>{c.declineType}</span>
-                                                    <span className="text-red-400">{c.stopLoss}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                    {mrwResult.strategyC && mrwResult.strategyC.length > 0 && (
-                                        <div className="bg-[var(--background)] rounded-lg p-3">
-                                            <h4 className="text-[11px] font-semibold text-fuchsia-400 mb-2">C: Pattern+RSI(14) ({mrwResult.strategyC.length})</h4>
-                                            {mrwResult.strategyC.slice(0, 5).map((c: any, i: number) => (
-                                                <div key={i} className="flex items-center justify-between text-[10px] py-1 border-b border-[var(--card-border)]/20">
-                                                    <span className="text-[var(--foreground)] font-medium">{c.symbol}</span>
-                                                    <span className="text-fuchsia-400">{c.compositeScore}</span>
-                                                    <span className="text-[var(--foreground-muted)]">{c.patternType}</span>
-                                                    <span className="text-red-400">{c.stopLoss}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
+                                    )
+                                })()}
 
                                 {/* Backtest */}
                                 {mrwResult.backtest && mrwResult.backtest.totalTrades > 0 && (

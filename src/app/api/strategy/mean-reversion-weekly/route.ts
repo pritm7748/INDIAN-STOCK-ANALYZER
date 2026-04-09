@@ -97,21 +97,43 @@ export async function GET() {
           .sort((a, b) => b.winRate - a.winRate)
           .slice(0, 15)
 
-        const formatCandidate = (c: any) => ({
-          symbol: c.symbol, compositeScore: c.compositeScore, primary: c.primary,
-          strategies: c.strategies, isConfluence: c.isConfluence,
-          entryType: c.entryType, triggerPrice: c.triggerPrice,
-          scanClose: c.scanClose, stopLoss: c.stopLoss, target1: c.target1, target2: c.target2,
-          rsi2: c.indicators.rsi2, rsi14: c.indicators.rsi14, atr14: c.indicators.atr14,
-          volRatio: c.indicators.volRatio, downDays: c.indicators.downDays,
-          declineType: c.decline?.type, declineSafe: c.decline?.safe,
-          multiTFBoth: c.multiTF?.bothOversold, priorSupport: c.priorBounce?.isProvenSupport,
-          atKeyMA: c.maPattern?.atKeyMA, nearestMA: c.maPattern?.nearest?.ma,
-          bounceReliable: c.bounceHistory?.isReliable, bounceWR: c.bounceHistory?.winRate,
-          patternType: c.patternType, patternScore: c.patternScore,
-          bb: c.bb, dist200: c.dist200, above200: c.above200,
-          regime: c.regime?.regime,
-        })
+        // per-stock stats for enrichment
+        const stockStats: Record<string, { trades: number; winRate: number; avgPnl: number }> = {}
+        for (const [sym, tds] of Object.entries(stockMap)) {
+          const wins = tds.filter(t => t.result === 'WIN').length
+          stockStats[sym] = { trades: tds.length, winRate: Math.round((wins / tds.length) * 10000) / 100, avgPnl: Math.round(tds.reduce((s, t) => s + t.pnlPct, 0) / tds.length * 100) / 100 }
+        }
+
+        const formatCandidate = (c: any) => {
+          const hist = stockStats[c.symbol]
+          const entry = c.entryType === 'STOP_BUY' && c.triggerPrice ? c.triggerPrice : c.scanClose
+          const sl = c.stopLoss, t1 = c.target1 || c.scanClose, t2 = c.target2 || c.scanClose
+          const risk = Math.abs(entry - sl)
+          const rr1 = risk > 0 ? Math.round(Math.abs(t1 - entry) / risk * 100) / 100 : 0
+          const rr2 = risk > 0 ? Math.round(Math.abs(t2 - entry) / risk * 100) / 100 : 0
+          const slPct = entry > 0 ? Math.round(((entry - sl) / entry) * 10000) / 100 : 0
+          const tgtPct = entry > 0 ? Math.round(((t1 - entry) / entry) * 10000) / 100 : 0
+          const s = c.compositeScore + (hist && hist.winRate > 60 ? 10 : 0)
+          const grade = s >= 80 ? 'A' : s >= 60 ? 'B' : 'C'
+          return {
+            symbol: c.symbol, compositeScore: c.compositeScore, primary: c.primary,
+            strategies: c.strategies, isConfluence: c.isConfluence,
+            action: 'BUY', entryType: c.entryType === 'STOP_BUY' ? `BUY above ₹${c.triggerPrice}` : 'BUY at market open',
+            entryPrice: entry, triggerPrice: c.triggerPrice,
+            scanClose: c.scanClose, stopLoss: sl, target1: t1, target2: t2,
+            riskReward1: rr1, riskReward2: rr2, slPct, tgtPct, grade,
+            btWinRate: hist?.winRate ?? null, btTrades: hist?.trades ?? 0, btAvgPnl: hist?.avgPnl ?? null,
+            rsi2: c.indicators.rsi2, rsi14: c.indicators.rsi14, atr14: c.indicators.atr14,
+            volRatio: c.indicators.volRatio, downDays: c.indicators.downDays,
+            declineType: c.decline?.type, declineSafe: c.decline?.safe,
+            multiTFBoth: c.multiTF?.bothOversold, priorSupport: c.priorBounce?.isProvenSupport,
+            atKeyMA: c.maPattern?.atKeyMA, nearestMA: c.maPattern?.nearest?.ma,
+            bounceReliable: c.bounceHistory?.isReliable, bounceWR: c.bounceHistory?.winRate,
+            patternType: c.patternType, patternScore: c.patternScore,
+            bb: c.bb, dist200: c.dist200, above200: c.above200,
+            regime: c.regime?.regime,
+          }
+        }
 
         send('result', {
           market: { regime: scanResult.regime, indiaVix },
