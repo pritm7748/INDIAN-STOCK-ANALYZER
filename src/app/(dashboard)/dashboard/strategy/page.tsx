@@ -4651,7 +4651,7 @@ export default function StrategyAnalysisPage() {
                                 </div>
 
                                 {/* ═══ ACTIONABLE CALLS ═══ */}
-                                {wbResult.breakoutWatch && wbResult.breakoutWatch.length > 0 && (
+                                {wbResult.breakoutWatch && wbResult.breakoutWatch.length > 0 ? (
                                     <div className="bg-[var(--background)] rounded-lg p-4">
                                         <h4 className="text-xs font-semibold text-green-400 mb-3 flex items-center gap-1.5">
                                             <TrendingUp size={14} /> BUY Calls — Breakout ({wbResult.totalBreakoutCandidates})
@@ -4700,10 +4700,14 @@ export default function StrategyAnalysisPage() {
                                             ))}
                                         </div>
                                     </div>
+                                ) : (
+                                    <div className="bg-[var(--background)] rounded-lg p-4 text-center text-xs text-[var(--foreground-muted)]">
+                                        No breakout setups found this week. Strict filters ensure only high-conviction signals.
+                                    </div>
                                 )}
 
                                 {/* Breakdown Calls */}
-                                {wbResult.breakdownWatch && wbResult.breakdownWatch.length > 0 && (
+                                {wbResult.breakdownWatch && wbResult.breakdownWatch.length > 0 ? (
                                     <div className="bg-[var(--background)] rounded-lg p-4">
                                         <h4 className="text-xs font-semibold text-red-400 mb-3 flex items-center gap-1.5">
                                             <TrendingDown size={14} /> SELL Calls — Breakdown ({wbResult.totalBreakdownCandidates})
@@ -4748,6 +4752,10 @@ export default function StrategyAnalysisPage() {
                                                 </div>
                                             ))}
                                         </div>
+                                    </div>
+                                ) : (
+                                    <div className="bg-[var(--background)] rounded-lg p-4 text-center text-xs text-[var(--foreground-muted)]">
+                                        No breakdown setups found this week. This is normal — breakdowns require specific technical conditions.
                                     </div>
                                 )}
 
