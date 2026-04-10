@@ -8,7 +8,8 @@ import {
     CalendarDays, ArrowRightLeft, ShieldCheck, Play,
     Crosshair, Eye, GitPullRequestArrow, PieChart, Repeat,
     Newspaper, Sparkles, ArrowUpRight, Layers, Timer,
-    BookOpen, Waves, Moon, Sun, ArrowDown, TrendingUp as TUp2
+    BookOpen, Waves, Moon, Sun, ArrowDown, TrendingUp as TUp2,
+    ArrowUpFromLine
 } from 'lucide-react'
 
 interface Holding {
@@ -225,6 +226,15 @@ export default function StrategyAnalysisPage() {
     const [mrwStatusMsg, setMrwStatusMsg] = useState('')
     const [mrwRiskGate, setMrwRiskGate] = useState<any>(null)
     const mrwAbortRef = useRef<AbortController | null>(null)
+
+    // Gap Continuation state
+    const [gcScanning, setGcScanning] = useState(false)
+    const [gcResult, setGcResult] = useState<any>(null)
+    const [gcError, setGcError] = useState('')
+    const [gcProgress, setGcProgress] = useState<ScanProgress | null>(null)
+    const [gcStatusMsg, setGcStatusMsg] = useState('')
+    const [gcRiskGate, setGcRiskGate] = useState<any>(null)
+    const gcAbortRef = useRef<AbortController | null>(null)
 
     const timeframes = [
         { id: '1D', label: 'Intraday', available: true },
@@ -736,6 +746,56 @@ export default function StrategyAnalysisPage() {
         mrwAbortRef.current?.abort()
         setMrwScanning(false)
         setMrwStatusMsg('Scan stopped')
+    }, [])
+
+    const runGapContinuation = useCallback(async () => {
+        setGcScanning(true)
+        setGcError('')
+        setGcResult(null)
+        setGcProgress(null)
+        setGcRiskGate(null)
+        setGcStatusMsg('Connecting...')
+        const abort = new AbortController()
+        gcAbortRef.current = abort
+        try {
+            const res = await fetch('/api/strategy/gap-continuation', { signal: abort.signal })
+            const reader = res.body?.getReader()
+            if (!reader) throw new Error('No stream')
+            const decoder = new TextDecoder()
+            let buf = ''
+            let currentEvent = ''
+            while (true) {
+                const { value, done } = await reader.read()
+                if (done) break
+                buf += decoder.decode(value, { stream: true })
+                const lines = buf.split('\n')
+                buf = lines.pop() || ''
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) { currentEvent = line.slice(7).trim(); continue }
+                    if (!line.startsWith('data: ')) continue
+                    try {
+                        const data = JSON.parse(line.slice(6))
+                        switch (currentEvent) {
+                            case 'status': setGcStatusMsg(data.message); break
+                            case 'riskGate': setGcRiskGate(data); break
+                            case 'progress': setGcProgress(data); setGcStatusMsg(`Scanning... ${data.scanned}/${data.total} stocks`); break
+                            case 'result': setGcResult(data); setGcStatusMsg('Analysis complete!'); break
+                            case 'error': setGcError(data.message); break
+                            case 'done': break
+                        }
+                    } catch { /* skip */ }
+                    currentEvent = ''
+                }
+            }
+        } catch (err: any) {
+            if (err.name !== 'AbortError') setGcError(err.message || 'Something went wrong')
+        } finally { setGcScanning(false) }
+    }, [])
+
+    const stopGcScan = useCallback(() => {
+        gcAbortRef.current?.abort()
+        setGcScanning(false)
+        setGcStatusMsg('Scan stopped')
     }, [])
 
     const runSectorRotation = useCallback(async () => {
@@ -5081,6 +5141,301 @@ export default function StrategyAnalysisPage() {
                                         <span>Errors: {mrwResult.totalErrors}</span>
                                         <span>Blocked: {mrwResult.meta?.blocked || 0}</span>
                                         <span>Backtest: {mrwResult.backtest?.totalTrades ?? 0} trades</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Strategy 11: Gap Continuation Swing */}
+                    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-6 hover:border-orange-500/30 transition-all">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-gradient-to-br from-orange-500/20 to-amber-500/20 rounded-xl flex items-center justify-center">
+                                    <ArrowUpFromLine size={20} className="text-orange-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-bold text-[var(--foreground)]">Gap Continuation Swing</h3>
+                                    <p className="text-[10px] text-[var(--foreground-muted)]">Gap ≥3% · Vol ≥2.5× · Close Near High · Day-2 Pullback Entry · Hold 3-5 Days</p>
+                                </div>
+                            </div>
+                            {gcScanning ? (
+                                <button onClick={stopGcScan} className="flex items-center gap-1.5 bg-red-500/10 text-red-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-all">
+                                    <StopCircle size={14} /> Stop
+                                </button>
+                            ) : (
+                                <button onClick={runGapContinuation} className="flex items-center gap-1.5 bg-orange-500/10 text-orange-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-orange-500/20 transition-all">
+                                    <Play size={14} /> Scan
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Strategy Description Badges */}
+                        <div className="flex items-center gap-2 flex-wrap mb-4">
+                            <span className="text-[9px] px-2 py-1 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20">Gap Detection</span>
+                            <span className="text-[9px] px-2 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">Day-2 Pullback</span>
+                            <span className="text-[9px] px-2 py-1 rounded-full bg-yellow-500/10 text-yellow-400 border border-yellow-500/20">Trend Filter</span>
+                            <span className="text-[9px] px-2 py-1 rounded-full bg-orange-500/10 text-orange-300 border border-orange-500/20">RSI + Trailing</span>
+                        </div>
+
+                        {gcScanning && (
+                            <div className="mb-4">
+                                <p className="text-xs text-orange-300 mb-2">{gcStatusMsg}</p>
+                                {gcProgress && (
+                                    <div className="w-full bg-[var(--background)] rounded-full h-1.5">
+                                        <div className="bg-gradient-to-r from-orange-500 to-amber-500 h-1.5 rounded-full transition-all" style={{ width: `${Math.round((gcProgress.scanned / gcProgress.total) * 100)}%` }} />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {gcError && <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-4"><p className="text-xs text-red-400">{gcError}</p></div>}
+
+                        {gcRiskGate && (
+                            <div className={`rounded-lg p-3 mb-4 border ${gcRiskGate.allowed ? 'bg-green-500/5 border-green-500/20' : 'bg-red-500/10 border-red-500/20'}`}>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <ShieldCheck size={14} className={gcRiskGate.allowed ? 'text-green-400' : 'text-red-400'} />
+                                    <span className={`text-xs font-semibold ${gcRiskGate.allowed ? 'text-green-400' : 'text-red-400'}`}>
+                                        Risk Gate: {gcRiskGate.allowed ? '\u2705 CLEAR' : '\ud83d\udeab BLOCKED'}
+                                    </span>
+                                </div>
+                                {gcRiskGate.blocks.map((b: any, i: number) => <p key={i} className="text-[10px] text-red-400 ml-5">\u274c {b.rule}: {b.msg}</p>)}
+                                {gcRiskGate.warnings.map((w: any, i: number) => <p key={i} className="text-[10px] text-yellow-400 ml-5">\u26a0\ufe0f {w.rule}: {w.msg}</p>)}
+                            </div>
+                        )}
+
+                        {gcResult && (
+                            <div className="space-y-4">
+                                {/* Market Context */}
+                                <div className="bg-[var(--background)] rounded-lg p-3 flex items-center gap-4 flex-wrap text-[11px]">
+                                    {gcResult.market.indiaVix && <span>VIX: <span className={gcResult.market.indiaVix > 18 ? 'text-yellow-400' : 'text-[var(--foreground)]'}>{gcResult.market.indiaVix}</span></span>}
+                                    <span>Today Gaps: <span className="text-orange-400 font-medium">{gcResult.meta?.todayGapCount || 0}</span></span>
+                                    <span>Entry Today: <span className="text-green-400 font-medium">{gcResult.meta?.yesterdayEntryCount || 0}</span></span>
+                                    <span>Long: <span className="text-green-400">{gcResult.meta?.longEntries || 0}</span></span>
+                                    <span>Short: <span className="text-red-400">{gcResult.meta?.shortEntries || 0}</span></span>
+                                </div>
+
+                                {/* ═══ ACTIONABLE ENTRY CALLS (Yesterday's Gaps → Enter Today) ═══ */}
+                                {gcResult.yesterdayEntry && gcResult.yesterdayEntry.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-green-400 mb-3 flex items-center gap-1.5">
+                                            <Target size={14} /> Entry TODAY — Gap Continuation ({gcResult.yesterdayEntry.length})
+                                        </h4>
+                                        <div className="space-y-3">
+                                            {gcResult.yesterdayEntry.map((c: any, idx: number) => (
+                                                <div key={idx} className={`border rounded-xl p-4 transition-all ${c.grade === 'A' ? 'border-green-500/40 bg-green-500/5' : c.grade === 'B' ? 'border-orange-500/30 bg-orange-500/5' : 'border-[var(--card-border)] bg-[var(--card)]'}`}>
+                                                    <div className="flex items-center justify-between mb-3">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${c.grade === 'A' ? 'bg-green-500/20 text-green-400' : c.grade === 'B' ? 'bg-orange-500/20 text-orange-400' : 'bg-yellow-500/20 text-yellow-400'}`}>Grade {c.grade}</span>
+                                                            <span className="text-sm font-bold text-[var(--foreground)]">{c.symbol}</span>
+                                                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300">{c.absGap > 0 ? `+${c.absGap}%` : `${c.absGap}%`} gap</span>
+                                                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">{c.volRatio}× vol</span>
+                                                            {c.d2OpenType && <span className={`text-[9px] px-1.5 py-0.5 rounded ${c.d2OpenType === 'IDEAL_PULLBACK' ? 'bg-green-500/20 text-green-300' : c.d2OpenType === 'FLAT_OPEN' ? 'bg-blue-500/20 text-blue-300' : 'bg-yellow-500/20 text-yellow-300'}`}>{c.d2OpenType}</span>}
+                                                        </div>
+                                                        <span className={`text-xs font-bold px-3 py-1 rounded-lg ${c.direction === 'LONG' ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400'}`}>{c.action}</span>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">Entry</div>
+                                                            <div className="text-xs font-bold text-green-400">{c.entryType}</div>
+                                                        </div>
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">Stop Loss</div>
+                                                            <div className="text-xs font-bold text-red-400">₹{c.stopLoss}</div>
+                                                            <div className="text-[9px] text-red-400/70">-{c.slPct}%</div>
+                                                        </div>
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">Target 1</div>
+                                                            <div className="text-xs font-bold text-blue-400">₹{c.target1}</div>
+                                                            <div className="text-[9px] text-blue-400/70">+{c.tgt1Pct}%</div>
+                                                        </div>
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">Target 2</div>
+                                                            <div className="text-xs font-bold text-cyan-400">₹{c.target2}</div>
+                                                            <div className="text-[9px] text-cyan-400/70">+{c.tgt2Pct}%</div>
+                                                        </div>
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">R:R</div>
+                                                            <div className={`text-xs font-bold ${c.riskReward >= 2 ? 'text-green-400' : c.riskReward >= 1.5 ? 'text-yellow-400' : 'text-orange-400'}`}>1:{c.riskReward}</div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-3 flex-wrap text-[10px] text-[var(--foreground-muted)]">
+                                                        <span>Close Pos: <span className={c.closePosition > 0.8 ? 'text-green-400' : c.closePosition > 0.65 ? 'text-orange-400' : 'text-yellow-400'}>{(c.closePosition * 100).toFixed(0)}%</span></span>
+                                                        {c.isMarubozu && <span className="text-green-400">Marubozu</span>}
+                                                        {c.gapExtended && <span className="text-green-400">Gap Extended</span>}
+                                                        {c.gapFilled && <span className="text-yellow-400">Gap Filled</span>}
+                                                        {c.hasRejection && <span className="text-red-400">Rejection</span>}
+                                                        {c.above50SMA && <span className="text-green-400">&gt;50SMA</span>}
+                                                        {c.above200SMA && <span className="text-green-400">&gt;200SMA</span>}
+                                                        {c.nearATH && <span className="text-amber-400">Near ATH</span>}
+                                                        {c.d2Continuation && <span className="text-green-400">D2 Continuation</span>}
+                                                        {c.heldGapLow && <span className="text-green-400">Held Gap Low</span>}
+                                                        <span>RSI: {c.rsi14}</span>
+                                                        {c.btWinRate !== null && <span>BT: <span className={`font-medium ${c.btWinRate >= 60 ? 'text-green-400' : c.btWinRate >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{c.btWinRate}% ({c.btTrades})</span></span>}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {gcResult.yesterdayEntry && gcResult.yesterdayEntry.length === 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4 text-center text-xs text-[var(--foreground-muted)]">
+                                        No gap continuation entries today. Gaps are rare events — check the watchlist below for tomorrow.
+                                    </div>
+                                )}
+
+                                {/* ═══ TODAY'S GAPS — WATCHLIST FOR TOMORROW ═══ */}
+                                {gcResult.todayGaps && gcResult.todayGaps.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-orange-400 mb-3 flex items-center gap-1.5">
+                                            <Eye size={14} /> Watchlist — Gaps Today, Enter Tomorrow IF Pullback ({gcResult.todayGaps.length})
+                                        </h4>
+                                        <div className="space-y-3">
+                                            {gcResult.todayGaps.map((c: any, idx: number) => (
+                                                <div key={idx} className={`border rounded-xl p-4 transition-all ${c.grade === 'A' ? 'border-orange-500/40 bg-orange-500/5' : c.grade === 'B' ? 'border-amber-500/30 bg-amber-500/5' : 'border-[var(--card-border)] bg-[var(--card)]'}`}>
+                                                    <div className="flex items-center justify-between mb-3">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${c.grade === 'A' ? 'bg-orange-500/20 text-orange-400' : c.grade === 'B' ? 'bg-amber-500/20 text-amber-400' : 'bg-yellow-500/20 text-yellow-400'}`}>Grade {c.grade}</span>
+                                                            <span className="text-sm font-bold text-[var(--foreground)]">{c.symbol}</span>
+                                                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300">{c.gapPercent > 0 ? `+${c.absGap}%` : `-${c.absGap}%`} gap</span>
+                                                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">{c.volRatio}× vol</span>
+                                                        </div>
+                                                        <span className="bg-orange-500/15 text-orange-400 text-xs font-bold px-3 py-1 rounded-lg">WATCH</span>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">Gap Close</div>
+                                                            <div className="text-xs font-bold text-orange-400">₹{c.entryPrice}</div>
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">Enter near this level</div>
+                                                        </div>
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">Stop Loss</div>
+                                                            <div className="text-xs font-bold text-red-400">₹{c.stopLoss}</div>
+                                                            <div className="text-[9px] text-red-400/70">-{c.slPct}%</div>
+                                                        </div>
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">Target 1</div>
+                                                            <div className="text-xs font-bold text-blue-400">₹{c.target1}</div>
+                                                        </div>
+                                                        <div className="bg-[var(--background)] rounded-lg p-2">
+                                                            <div className="text-[9px] text-[var(--foreground-muted)]">R:R</div>
+                                                            <div className={`text-xs font-bold ${c.riskReward >= 2 ? 'text-green-400' : c.riskReward >= 1.5 ? 'text-yellow-400' : 'text-orange-400'}`}>1:{c.riskReward}</div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-3 flex-wrap text-[10px] text-[var(--foreground-muted)]">
+                                                        <span>Score: <span className="text-orange-400 font-medium">{c.gapDayScore}</span></span>
+                                                        {c.idealClose && <span className="text-green-400">Ideal Close</span>}
+                                                        {c.isMarubozu && <span className="text-green-400">Marubozu</span>}
+                                                        {c.gapExtended && <span className="text-green-400">Extended</span>}
+                                                        {c.above50SMA && <span className="text-green-400">&gt;50SMA</span>}
+                                                        {c.nearATH && <span className="text-amber-400">Near ATH</span>}
+                                                        {c.wasConsolidating && <span className="text-cyan-400">Base</span>}
+                                                        <span>RSI: {c.rsi14}</span>
+                                                        {c.btWinRate !== null && <span>BT: <span className={`font-medium ${c.btWinRate >= 60 ? 'text-green-400' : c.btWinRate >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{c.btWinRate}% ({c.btTrades})</span></span>}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Backtest */}
+                                {gcResult.backtest && gcResult.backtest.totalTrades > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-amber-400 mb-3 flex items-center gap-1.5">
+                                            <BarChart3 size={14} /> Backtest Performance (~1 Year)
+                                        </h4>
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Trades</div><div className="text-sm font-bold text-[var(--foreground)]">{gcResult.backtest.totalTrades}</div></div>
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Win Rate</div><div className={`text-sm font-bold ${gcResult.backtest.winRate >= 55 ? 'text-green-400' : gcResult.backtest.winRate >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{gcResult.backtest.winRate}%</div></div>
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Profit Factor</div><div className={`text-sm font-bold ${gcResult.backtest.profitFactor >= 1.5 ? 'text-green-400' : gcResult.backtest.profitFactor >= 1 ? 'text-yellow-400' : 'text-red-400'}`}>{gcResult.backtest.profitFactor}</div></div>
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Avg PnL</div><div className={`text-sm font-bold ${gcResult.backtest.avgPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{gcResult.backtest.avgPnl}%</div></div>
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Avg Hold</div><div className="text-sm font-bold text-orange-400">{gcResult.backtest.avgHoldDays}d</div></div>
+                                            <div className="text-center"><div className="text-[10px] text-[var(--foreground-muted)]">Best/Worst</div><div className="text-sm font-bold"><span className="text-green-400">{gcResult.backtest.best}%</span> / <span className="text-red-400">{gcResult.backtest.worst}%</span></div></div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Edge Analysis */}
+                                {gcResult.analysis && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-orange-400 mb-3">Edge Analysis</h4>
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                            {/* Gap Size */}
+                                            <div className="bg-[var(--card)] rounded-lg p-3">
+                                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">By Gap Size</div>
+                                                <div className="text-[10px] flex flex-col gap-1">
+                                                    <div className="flex justify-between"><span>Large (≥7%)</span><span className="text-orange-400">{gcResult.analysis.byGapSize?.large7pctPlus?.winRate || 0}% ({gcResult.analysis.byGapSize?.large7pctPlus?.count || 0})</span></div>
+                                                    <div className="flex justify-between"><span>Medium (3-7%)</span><span className="text-amber-400">{gcResult.analysis.byGapSize?.medium3to7pct?.winRate || 0}% ({gcResult.analysis.byGapSize?.medium3to7pct?.count || 0})</span></div>
+                                                </div>
+                                            </div>
+                                            {/* Day-2 Entry */}
+                                            <div className="bg-[var(--card)] rounded-lg p-3">
+                                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Day-2 Entry Type</div>
+                                                <div className="text-[10px] flex flex-col gap-1">
+                                                    <div className="flex justify-between"><span>Ideal Pullback</span><span className="text-green-400">{gcResult.analysis.day2EntryType?.idealPullback?.winRate || 0}% ({gcResult.analysis.day2EntryType?.idealPullback?.count || 0})</span></div>
+                                                    <div className="flex justify-between"><span>Flat Open</span><span className="text-blue-400">{gcResult.analysis.day2EntryType?.flatOpen?.winRate || 0}% ({gcResult.analysis.day2EntryType?.flatOpen?.count || 0})</span></div>
+                                                    <div className="flex justify-between"><span>Deep Pull</span><span className="text-yellow-400">{gcResult.analysis.day2EntryType?.deepPullback?.winRate || 0}% ({gcResult.analysis.day2EntryType?.deepPullback?.count || 0})</span></div>
+                                                </div>
+                                            </div>
+                                            {/* Gap Fill Effect */}
+                                            <div className="bg-[var(--card)] rounded-lg p-3">
+                                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Gap Fill Effect</div>
+                                                <div className="text-[10px] flex flex-col gap-1">
+                                                    <div className="flex justify-between"><span>Not Filled</span><span className="text-green-400">{gcResult.analysis.gapFillEffect?.notFilled?.winRate || 0}% ({gcResult.analysis.gapFillEffect?.notFilled?.count || 0})</span></div>
+                                                    <div className="flex justify-between"><span>Filled</span><span className="text-yellow-400">{gcResult.analysis.gapFillEffect?.filled?.winRate || 0}% ({gcResult.analysis.gapFillEffect?.filled?.count || 0})</span></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {/* Exit Reason Breakdown */}
+                                        {gcResult.analysis.byExitReason && (
+                                            <div className="mt-3 bg-[var(--card)] rounded-lg p-3">
+                                                <div className="text-[10px] text-[var(--foreground-muted)] mb-1">Exit Reasons</div>
+                                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                                    {Object.entries(gcResult.analysis.byExitReason).map(([reason, data]: any) => (
+                                                        <div key={reason} className="text-[10px]">
+                                                            <span className="text-[var(--foreground-muted)]">{reason}: </span>
+                                                            <span className={data.avgPnl >= 0 ? 'text-green-400' : 'text-red-400'}>{data.avgPnl}% ({data.count})</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Top Stocks */}
+                                {gcResult.topStocks && gcResult.topStocks.length > 0 && (
+                                    <div className="bg-[var(--background)] rounded-lg p-4">
+                                        <h4 className="text-xs font-semibold text-amber-400 mb-3">Top Gap Continuation Stocks</h4>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-[11px]">
+                                                <thead><tr className="text-left text-[var(--foreground-muted)] border-b border-[var(--card-border)]">
+                                                    <th className="pb-2 pr-3">Symbol</th><th className="pb-2 pr-2">Trades</th><th className="pb-2 pr-2">Win%</th><th className="pb-2">Avg PnL</th>
+                                                </tr></thead>
+                                                <tbody>
+                                                    {gcResult.topStocks.map((s: any, i: number) => (
+                                                        <tr key={i} className="border-b border-[var(--card-border)]/30">
+                                                            <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">{s.symbol}</td>
+                                                            <td className="py-1.5 pr-2 text-[var(--foreground)]">{s.trades}</td>
+                                                            <td className="py-1.5 pr-2"><span className={s.winRate >= 60 ? 'text-green-400' : s.winRate >= 45 ? 'text-yellow-400' : 'text-red-400'}>{s.winRate}%</span></td>
+                                                            <td className={`py-1.5 ${s.avgPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{s.avgPnl}%</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Scan Stats */}
+                                <div className="bg-[var(--background)] rounded-lg p-3">
+                                    <div className="text-[10px] text-[var(--foreground-muted)] flex items-center gap-4 flex-wrap">
+                                        <span>Scanned: {gcResult.totalStocksScanned}</span>
+                                        <span>Errors: {gcResult.totalErrors}</span>
+                                        <span>Max Drawdown: {gcResult.analysis?.maxDrawdown ?? '-'}%</span>
+                                        <span>Cum PnL: {gcResult.analysis?.finalCumPnl ?? '-'}%</span>
                                     </div>
                                 </div>
                             </div>
