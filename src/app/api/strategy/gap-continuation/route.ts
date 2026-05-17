@@ -126,6 +126,7 @@ export async function GET() {
             gapDayScore: c.gapDayScore, combinedScore: newScore, grade,
             btWinRate: hist?.winRate ?? null, btTrades: hist?.trades ?? 0, btAvgPnl: hist?.avgPnl ?? null,
             gapHistUp: c.gapHistory?.gapUp || null, gapHistDown: c.gapHistory?.gapDown || null,
+            exitRules: c.exitRules || null,
           }
         }
 

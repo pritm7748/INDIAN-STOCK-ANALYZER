@@ -37,6 +37,8 @@ export const MRW_CONFIG = {
   MAX_GAP_UP: 3,
   MAX_POSITIONS: 3,
   MIN_HISTORY: 210,
+  MAX_SL_PCT: 5,
+  MIN_AVG_VOLUME: 500000,
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -77,7 +79,7 @@ function bollingerBands(closes: number[], period = 20, mult = 2) {
   if (closes.length < period) return null
   const slice = closes.slice(-period)
   const mean = slice.reduce((a, b) => a + b, 0) / period
-  const stdDev = Math.sqrt(slice.reduce((s, v) => s + (v - mean) ** 2, 0) / period)
+  const stdDev = Math.sqrt(slice.reduce((s, v) => s + (v - mean) ** 2, 0) / (period - 1))
   const upper = mean + mult * stdDev, lower = mean - mult * stdDev
   const close = closes[closes.length - 1]
   const bw = mean > 0 ? ((upper - lower) / mean) * 100 : 0
@@ -325,13 +327,15 @@ export function scanMRWeekly(
     scanned++
     const dc = stock.dailyCandles
     if (dc.length < MRW_CONFIG.MIN_HISTORY) { blocked++; continue }
+    const avgV = avgVolume(dc, 20)
+    if (avgV !== null && avgV < MRW_CONFIG.MIN_AVG_VOLUME) { blocked++; continue }
     const closes = dc.map(c => c.close)
     const today = dc[dc.length - 1], yesterday = dc[dc.length - 2]
 
     const r2v = rsi(closes, 2), r14v = rsi(closes, 14)
     const bb = bollingerBands(closes, MRW_CONFIG.B_BB_PERIOD, MRW_CONFIG.B_BB_STD)
     const dist = distFromMeans(closes)
-    const atrV = atr(dc, 14), avgV = avgVolume(dc, 20)
+    const atrV = atr(dc, 14)
     const volR = avgV && avgV > 0 ? today.volume / avgV : 1
     const decline = classifyDecline(dc)
     const mtf = multiTFOversold(dc)
@@ -351,8 +355,8 @@ export function scanMRWeekly(
       aScore += clamp(mapRange(r2v!, 0, 5, 100, 50)) * 0.30
       aScore += clamp(mapRange(downD, 3, 7, 50, 100)) * 0.20
       aScore += clamp(mapRange(Math.abs(dist!.dist5 || 3), 3, 8, 50, 100)) * 0.20
-      aScore += (regime?.score || 50) * 0.0015 * 100
-      aScore += (vix != null ? clamp(mapRange(vix, 10, 22, 100, 40)) : 70) * 0.0015 * 100
+      aScore += (regime?.score || 50) * 0.15
+      aScore += (vix != null ? clamp(mapRange(vix, 10, 22, 100, 40)) : 70) * 0.15
     }
     // ── Strategy B: Bollinger ──
     const bPass = bb?.belowLower && dist?.above200 && bb?.bandsWideEnough && volR < MRW_CONFIG.B_MAX_VOL_RATIO
@@ -404,19 +408,39 @@ export function scanMRWeekly(
     if (primary === 'PATTERN' && pattern.stop) sl = pattern.stop
     else if (primary === 'BOLLINGER') sl = r2(today.close * (1 - MRW_CONFIG.B_STOP_PCT / 100))
     else sl = r2(today.close * (1 - MRW_CONFIG.A_STOP_PCT / 100))
-    if (atrV) { const atrSl = r2(today.close - atrV * 1.5); if (atrSl < sl) sl = atrSl }
-    const t1 = primary === 'BOLLINGER' ? bb?.middle : dist?.sma5
-    const t2 = dist?.sma20
+    // P0: ATR stop should TIGHTEN (raise for longs), not widen — use > not <
+    if (atrV) { const atrSl = r2(today.close - atrV * 1.5); if (atrSl > sl) sl = atrSl }
+    // P1: Enforce max SL cap
+    const maxSlFloor = r2(today.close * (1 - MRW_CONFIG.MAX_SL_PCT / 100))
+    if (sl < maxSlFloor) sl = maxSlFloor
+
+    // P1: Targets — floor at entry+1% to prevent negative R:R
+    const entryEst = entryType === 'STOP_BUY' && triggerPrice ? triggerPrice : today.close
+    let t1 = primary === 'BOLLINGER' ? bb?.middle : dist?.sma5
+    let t2 = dist?.sma20
+    if (t1 && t1 <= entryEst) t1 = r2(entryEst * 1.015)
+    if (t2 && t2 <= entryEst) t2 = r2(entryEst * 1.03)
+
+    // Strategy-specific exit rules
+    const exitRules = primary === 'RSI2' || primary === 'CONFLUENCE'
+      ? { rsiExit: `RSI(2) ≥ ${MRW_CONFIG.A_RSI2_EXIT}`, smaExit: 'Close above 5-SMA', maxHold: `${MRW_CONFIG.MAX_HOLD_DAYS} days`, stopPct: `${MRW_CONFIG.A_STOP_PCT}%` }
+      : primary === 'BOLLINGER'
+      ? { bbExit: 'Close above BB middle band', maxHold: `${MRW_CONFIG.MAX_HOLD_DAYS} days`, stopPct: `${MRW_CONFIG.B_STOP_PCT}%` }
+      : { rsiExit: `RSI(14) > ${MRW_CONFIG.C_RSI14_EXIT}`, maxHold: `${MRW_CONFIG.MAX_HOLD_DAYS} days`, stopPct: `${MRW_CONFIG.A_STOP_PCT}%` }
+
+    // P2: Gap risk warning
+    const gapRisk = `Skip if next open gaps down >${Math.abs(MRW_CONFIG.MAX_GAP_DOWN)}% or up >${MRW_CONFIG.MAX_GAP_UP}%`
 
     const entry = {
       symbol: stock.symbol, compositeScore, primary, strategies, isConfluence: isConf,
       entryType, triggerPrice,
       scanClose: r2(today.close), stopLoss: sl, target1: t1, target2: t2,
-      indicators: { rsi2: r2v, rsi14: r14v, atr14: atrV, close: r2(today.close), volRatio: r2(volR), downDays: downD },
+      indicators: { rsi2: r2v, rsi14: r14v, atr14: atrV, close: r2(today.close), volRatio: r2(volR), downDays: downD, avgVolume: avgV },
       bb: bPass ? { lower: bb!.lower, middle: bb!.middle, bw: bb!.bandwidth, pctB: bb!.percentB } : null,
       dist200: dist?.dist200, above200: dist?.above200,
       decline, multiTF: mtf, priorBounce: pb, maPattern: maP, bounceHistory: bHist, regime,
       patternType: pattern.type, patternScore: pattern.score,
+      exitRules, gapRisk,
     }
 
     if (aPass) stratA.push(entry)

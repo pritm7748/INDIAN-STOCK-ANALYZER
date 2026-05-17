@@ -3,7 +3,7 @@
 // Uses 1y daily data → builds weekly candles → weekend scan + backtest
 
 import yahooFinance from 'yahoo-finance2'
-import { weekendScan, runWeeklyBacktest, preWeekGate, FNO_SET } from '@/lib/strategy/weekly-breakout'
+import { weekendScan, runWeeklyBacktest, preWeekGate, FNO_SET, buildWeeklyCandles, marketRegime } from '@/lib/strategy/weekly-breakout'
 import { STOCK_LIST } from '@/lib/stockList'
 
 const yf = new (yahooFinance as any)()
@@ -45,8 +45,10 @@ export async function GET() {
           if (vr?.quotes?.length > 0) { const lv = vr.quotes.filter((q: any) => q.close !== null).pop(); if (lv) indiaVix = Math.round(lv.close * 100) / 100 }
         } catch { /* skip */ }
 
-        // ── 3. Risk Gate ──
-        const riskGate = preWeekGate({ indiaVix, regime: null })
+        // ── 3. Risk Gate (P0: compute regime from Nifty data BEFORE scan) ──
+        const niftyWeekly = buildWeeklyCandles(niftyCandles as any)
+        const niftyRegime = marketRegime(niftyWeekly as any, 12)
+        const riskGate = preWeekGate({ indiaVix, regime: niftyRegime })
         send('riskGate', riskGate)
 
         // ── 4. Scan stocks ──
@@ -109,9 +111,10 @@ export async function GET() {
         const enrichBO = (c: any) => {
           const trigger = c.levels.breakoutTrigger, sl = c.levels.stopLossLong, tgt = c.levels.targetLong
           const hist = stockStats[c.symbol]
-          const lastClose = c.indicators?.close || trigger
+          const lastClose = c.indicators?.lastClose || trigger
           return {
             symbol: c.symbol, direction: c.direction, weekendScore: c.weekendScore, isFnO: c.isFnO,
+            sector: c.sector || 'UNKNOWN',
             action: 'BUY', entryType: 'BUY above PW High', triggerPrice: trigger, stopLoss: sl, target: tgt,
             riskReward: rr(trigger, sl, tgt), slPct: trigger > 0 ? Math.round(((trigger - sl) / trigger) * 10000) / 100 : 0,
             tgtPct: trigger > 0 ? Math.round(((tgt - trigger) / trigger) * 10000) / 100 : 0,
@@ -122,6 +125,7 @@ export async function GET() {
             rsRank: c.relativeStrength?.rsRank || '-', rsScore: c.relativeStrength?.rsScore || 0,
             w52Position: c.fiftyTwoWeek?.position || 0, nearHighZone: c.fiftyTwoWeek?.nearHighZone || false,
             rsi14: c.indicators?.rsi14, atr14: c.indicators?.atr14,
+            exitRules: c.exitRules || null,
           }
         }
         const enrichBD = (c: any) => {
@@ -129,12 +133,14 @@ export async function GET() {
           const hist = stockStats[c.symbol]
           return {
             symbol: c.symbol, direction: c.direction, weekendScore: c.weekendScore, isFnO: c.isFnO,
+            sector: c.sector || 'UNKNOWN',
             action: 'SELL', entryType: 'SELL below PW Low', triggerPrice: trigger, stopLoss: sl, target: tgt,
             riskReward: rr(trigger, sl, tgt), slPct: trigger > 0 ? Math.round(Math.abs((sl - trigger) / trigger) * 10000) / 100 : 0,
             tgtPct: trigger > 0 ? Math.round(Math.abs((trigger - tgt) / trigger) * 10000) / 100 : 0,
             grade: gradeCall(c.weekendScore, hist?.winRate ?? null),
             btWinRate: hist?.winRate ?? null, btTrades: hist?.trades ?? 0, btAvgPnl: hist?.avgPnl ?? null,
             pwHigh: c.pw.pwHigh, pwLow: c.pw.pwLow, pwRangePct: c.pw.pwRangePct, rsi14: c.indicators?.rsi14,
+            exitRules: c.exitRules || null,
           }
         }
 

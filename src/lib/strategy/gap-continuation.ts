@@ -214,7 +214,7 @@ function day2Assessment(gapData: GapData, day2Candle: Candle): Day2Assessment | 
       canEnter = true
       openType = d2OpenVsGapClose < -0.5 ? 'IDEAL_PULLBACK' : 'FLAT_OPEN'
     }
-    else if (d2OpenVsGapClose >= -4) { canEnter = true; openType = 'DEEP_PULLBACK' }
+    else if (d2OpenVsGapClose >= -4) { canEnter = false; openType = 'DEEP_PULLBACK' }
     else { canEnter = false; openType = 'GAP_FAILING' }
   } else {
     if (d2OpenVsGapClose < -3) { canEnter = false; openType = 'TOO_EXTENDED' }
@@ -230,10 +230,15 @@ function day2Assessment(gapData: GapData, day2Candle: Candle): Day2Assessment | 
   // STOP LOSS: below gap-day low OR 5%, whichever is TIGHTER
   const stopByGapLow = isGapUp ? gapData.gapDayLow : gapData.gapDayHigh
   const stopBy5Pct = isGapUp ? d2.open * 0.95 : d2.open * 1.05
-  const stopLoss = isGapUp
+  let stopLoss = isGapUp
     ? Math.max(stopByGapLow, stopBy5Pct) // MAX = tighter for longs
     : Math.min(stopByGapLow, stopBy5Pct) // MIN = tighter for shorts
-  const stopPercent = Math.abs((d2.open - stopLoss) / d2.open) * 100
+  let stopPercent = Math.abs((d2.open - stopLoss) / d2.open) * 100
+  // P1: Enforce max SL cap
+  if (stopPercent > 6) {
+    stopLoss = isGapUp ? r(d2.open * 0.94) : r(d2.open * 1.06)
+    stopPercent = 6
+  }
 
   // Day-2 quality
   const heldGapDayLow = isGapUp ? d2.low > gapData.gapDayLow : d2.high < gapData.gapDayHigh
@@ -316,6 +321,8 @@ const GC_CONFIG = {
   MAX_DAY2_PULLBACK: -4,   // Day-2 can pull back at most -4%
   MAX_POSITIONS_PER_DAY: 3,
   LOOKBACK: 60,
+  MAX_SL_PCT: 6,
+  MIN_AVG_VOLUME: 300000,
 }
 
 // ═══════════════════════════════════════════════════════
@@ -335,12 +342,13 @@ export interface GapCandidate {
   gapType: 'TODAY_GAP' | 'YESTERDAY_GAP_ENTRY'
   grade: string
   btWinRate: number | null; btTrades: number; btAvgPnl: number | null
+  exitRules: any
 }
 
 export function scanGapContinuation(
   stocks: { symbol: string; dailyCandles: Candle[] }[],
   niftyCandles: Candle[],
-  _vix: number | null,
+  vix: number | null,
 ): { todayGaps: GapCandidate[]; yesterdayEntry: GapCandidate[]; meta: any } {
 
   const todayGaps: GapCandidate[] = []  // stocks that gapped today (watchlist for tomorrow)
@@ -349,6 +357,8 @@ export function scanGapContinuation(
   for (const stock of stocks) {
     const daily = stock.dailyCandles
     if (!daily || daily.length < GC_CONFIG.LOOKBACK + 5) continue
+    // P1: Liquidity filter
+    if (avgVolume(daily.slice(0, daily.length - 1), 20) < GC_CONFIG.MIN_AVG_VOLUME) continue
 
     // ─── CHECK: Gap YESTERDAY → entry TODAY ───
     const len = daily.length
@@ -368,7 +378,8 @@ export function scanGapContinuation(
 
           if (okClose) {
             const trend = preGapTrend(daily, len - 2)
-            const trendOk = isGapUp ? trend?.above50SMA === true : true
+            // P1: Gap-ups need above 50-SMA; shorts need NOT above 50-SMA
+            const trendOk = isGapUp ? trend?.above50SMA === true : trend?.above50SMA !== true
 
             if (trendOk) {
               // Day-2 = today
@@ -389,6 +400,15 @@ export function scanGapContinuation(
                 if (gapData.hasRejection) score -= 5
                 if (gapData.gapFilledIntraday) score -= 5
                 if (gapData.gapExtended) score += 3
+                // P1: Day-2 held gap-day low — strong confirmation
+                if (d2.heldGapDayLow) score += 5
+                // P1: Per-stock gap history
+                if (gapHistory) {
+                  const cr = isGapUp ? gapHistory.gapUp?.continuationRate : gapHistory.gapDown?.continuationRate
+                  if (cr && cr > 60) score += 5; else if (cr && cr < 40) score -= 3
+                }
+                // P2: VIX penalty
+                if (vix !== null && vix > 18) score -= 3
 
                 const combined = r(score * 0.65 + d2.pullbackScore * 0.35)
 
@@ -414,6 +434,11 @@ export function scanGapContinuation(
                   target1: t1, tgt1Pct: t1Pct, target2: t2, tgt2Pct: t2Pct,
                   riskReward: rr, gapType: 'YESTERDAY_GAP_ENTRY', grade,
                   btWinRate: null, btTrades: 0, btAvgPnl: null,
+                  exitRules: {
+                    rsiExit: isGapUp ? `RSI(14) \u2265 ${GC_CONFIG.RSI_EXIT_LONG}` : `RSI(14) \u2264 ${GC_CONFIG.RSI_EXIT_SHORT}`,
+                    trailing: `+${GC_CONFIG.TRAIL_ACTIVATION}% activates, locks ${GC_CONFIG.TRAIL_PROTECT * 100}% of peak`,
+                    maxHold: `${GC_CONFIG.MAX_HOLD_DAYS} days`,
+                  },
                 })
               }
             }
@@ -437,7 +462,7 @@ export function scanGapContinuation(
 
           if (okClose) {
             const trend = preGapTrend(daily, len - 1)
-            const trendOk = isGapUp ? trend?.above50SMA === true : true
+            const trendOk = isGapUp ? trend?.above50SMA === true : trend?.above50SMA !== true
 
             if (trendOk) {
               const gapHistory = historicalGapStats(daily, 3, 5)
@@ -454,6 +479,13 @@ export function scanGapContinuation(
               if (gapData.hasRejection) score -= 5
               if (gapData.gapFilledIntraday) score -= 5
               if (gapData.gapExtended) score += 3
+              // P1: Per-stock gap history
+              if (gapHistory) {
+                const cr = isGapUp ? gapHistory.gapUp?.continuationRate : gapHistory.gapDown?.continuationRate
+                if (cr && cr > 60) score += 5; else if (cr && cr < 40) score -= 3
+              }
+              // P2: VIX penalty
+              if (vix !== null && vix > 18) score -= 3
 
               // Tentative target (will refine on Day-2)
               const tentativeEntry = gapData.gapDayClose
@@ -480,6 +512,11 @@ export function scanGapContinuation(
                 target1: t1, tgt1Pct: t1Pct, target2: t2, tgt2Pct: t2Pct,
                 riskReward: rr, gapType: 'TODAY_GAP', grade,
                 btWinRate: null, btTrades: 0, btAvgPnl: null,
+                exitRules: {
+                  rsiExit: isGapUp ? `RSI(14) \u2265 ${GC_CONFIG.RSI_EXIT_LONG}` : `RSI(14) \u2264 ${GC_CONFIG.RSI_EXIT_SHORT}`,
+                  trailing: `+${GC_CONFIG.TRAIL_ACTIVATION}% activates, locks ${GC_CONFIG.TRAIL_PROTECT * 100}% of peak`,
+                  maxHold: `${GC_CONFIG.MAX_HOLD_DAYS} days`,
+                },
               })
             }
           }
@@ -650,7 +687,7 @@ function simulate(candles: Candle[], entryIdx: number, entryPrice: number, stopL
       const trail = isLong ? entryPrice + locked : entryPrice - locked
       currentStop = isLong ? Math.max(currentStop, trail) : Math.min(currentStop, trail)
 
-      if (isLong ? day.close <= currentStop : day.close >= currentStop) {
+      if (isLong ? day.low <= currentStop : day.high >= currentStop) {
         return { exitPrice: currentStop, exitDate: day.date, reason: 'TRAILING', holdDays: d, peakProfit }
       }
     }
@@ -679,7 +716,7 @@ function summarize(trades: BtTrade[]) {
     totalPnl: r(tot), avgPnl: r(tot / trades.length),
     avgWin: w.length ? r(gp / w.length) : 0,
     avgLoss: l.length ? r(-gl / l.length) : 0,
-    profitFactor: gl > 0 ? r(gp / gl) : 99,
+    profitFactor: gl > 0 ? r(gp / gl) : (gp > 0 ? Infinity : 0),
     avgHoldDays: r(trades.reduce((s, t) => s + t.holdDays, 0) / trades.length, 1),
     best: r(Math.max(...trades.map(t => t.pnlPercent))),
     worst: r(Math.min(...trades.map(t => t.pnlPercent))),

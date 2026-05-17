@@ -4663,8 +4663,10 @@ export default function StrategyAnalysisPage() {
                                                         <div className="flex items-center gap-2">
                                                             <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${c.grade === 'A' ? 'bg-green-500/20 text-green-400' : c.grade === 'B' ? 'bg-teal-500/20 text-teal-400' : 'bg-yellow-500/20 text-yellow-400'}`}>Grade {c.grade}</span>
                                                             <span className="text-sm font-bold text-[var(--foreground)]">{c.symbol}</span>
+                                                            {c.sector && c.sector !== 'UNKNOWN' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300">{c.sector}</span>}
                                                             {c.isFnO && <span className="text-[9px] px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300">F&amp;O</span>}
                                                             {c.nearHighZone && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">Near ATH</span>}
+                                                            {c.lastClose && <span className="text-[9px] text-[var(--foreground-muted)]">CMP: ₹{Math.round(c.lastClose * 100) / 100}</span>}
                                                         </div>
                                                         <span className="bg-green-500/15 text-green-400 text-xs font-bold px-3 py-1 rounded-lg">BUY</span>
                                                     </div>
@@ -4696,6 +4698,14 @@ export default function StrategyAnalysisPage() {
                                                         <span>RSI: {c.rsi14}</span>
                                                         {c.btWinRate !== null && <span>Backtest: <span className={`font-medium ${c.btWinRate >= 60 ? 'text-green-400' : c.btWinRate >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{c.btWinRate}% win ({c.btTrades})</span></span>}
                                                     </div>
+                                                    {c.exitRules && (
+                                                        <div className="mt-2 flex items-center gap-2 flex-wrap text-[9px] text-[var(--foreground-muted)] border-t border-[var(--card-border)]/30 pt-2">
+                                                            <span className="text-cyan-400/70">⏰ Exit Rules:</span>
+                                                            {c.exitRules.fridayExit && <span>Friday close</span>}
+                                                            {c.exitRules.trailingStop && <span>· Trail: {c.exitRules.trailingStop}</span>}
+                                                            {c.exitRules.failedBO && <span>· {c.exitRules.failedBO}</span>}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>
@@ -4719,6 +4729,7 @@ export default function StrategyAnalysisPage() {
                                                         <div className="flex items-center gap-2">
                                                             <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${c.grade === 'A' ? 'bg-red-500/20 text-red-400' : c.grade === 'B' ? 'bg-orange-500/20 text-orange-400' : 'bg-yellow-500/20 text-yellow-400'}`}>Grade {c.grade}</span>
                                                             <span className="text-sm font-bold text-[var(--foreground)]">{c.symbol}</span>
+                                                            {c.sector && c.sector !== 'UNKNOWN' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300">{c.sector}</span>}
                                                             {c.isFnO && <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300">F&amp;O</span>}
                                                         </div>
                                                         <span className="bg-red-500/15 text-red-400 text-xs font-bold px-3 py-1 rounded-lg">SELL</span>
@@ -4749,6 +4760,14 @@ export default function StrategyAnalysisPage() {
                                                         <span>RSI: {c.rsi14}</span>
                                                         {c.btWinRate !== null && <span>Backtest: <span className={`font-medium ${c.btWinRate >= 60 ? 'text-green-400' : c.btWinRate >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{c.btWinRate}% ({c.btTrades})</span></span>}
                                                     </div>
+                                                    {c.exitRules && (
+                                                        <div className="mt-2 flex items-center gap-2 flex-wrap text-[9px] text-[var(--foreground-muted)] border-t border-[var(--card-border)]/30 pt-2">
+                                                            <span className="text-cyan-400/70">⏰ Exit Rules:</span>
+                                                            {c.exitRules.fridayExit && <span>Friday close</span>}
+                                                            {c.exitRules.trailingStop && <span>· Trail: {c.exitRules.trailingStop}</span>}
+                                                            {c.exitRules.failedBO && <span>· {c.exitRules.failedBO}</span>}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>
@@ -5014,6 +5033,19 @@ export default function StrategyAnalysisPage() {
                                                             {c.bounceReliable && <span className="text-green-400">Reliable Bouncer</span>}
                                                             {c.btWinRate !== null && <span>BT: <span className={`font-medium ${c.btWinRate >= 60 ? 'text-green-400' : c.btWinRate >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{c.btWinRate}% win ({c.btTrades})</span></span>}
                                                         </div>
+                                                        {c.exitRules && (
+                                                            <div className="mt-2 flex items-center gap-2 flex-wrap text-[9px] text-[var(--foreground-muted)] border-t border-[var(--card-border)]/30 pt-2">
+                                                                <span className="text-cyan-400/70">⏰ Exit:</span>
+                                                                {c.exitRules.rsiExit && <span>{c.exitRules.rsiExit}</span>}
+                                                                {c.exitRules.smaExit && <span>· {c.exitRules.smaExit}</span>}
+                                                                {c.exitRules.bbExit && <span>{c.exitRules.bbExit}</span>}
+                                                                {c.exitRules.maxHold && <span>· Max {c.exitRules.maxHold}</span>}
+                                                                {c.exitRules.stopPct && <span>· SL {c.exitRules.stopPct}</span>}
+                                                            </div>
+                                                        )}
+                                                        {c.gapRisk && (
+                                                            <div className="mt-1 text-[9px] text-yellow-400/60">⚠️ {c.gapRisk}</div>
+                                                        )}
                                                     </div>
                                                 ))}
                                             </div>
@@ -5281,6 +5313,14 @@ export default function StrategyAnalysisPage() {
                                                         <span>RSI: {c.rsi14}</span>
                                                         {c.btWinRate !== null && <span>BT: <span className={`font-medium ${c.btWinRate >= 60 ? 'text-green-400' : c.btWinRate >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{c.btWinRate}% ({c.btTrades})</span></span>}
                                                     </div>
+                                                    {c.exitRules && (
+                                                        <div className="mt-2 flex items-center gap-2 flex-wrap text-[9px] text-[var(--foreground-muted)] border-t border-[var(--card-border)]/30 pt-2">
+                                                            <span className="text-cyan-400/70">⏰ Exit:</span>
+                                                            {c.exitRules.rsiExit && <span>{c.exitRules.rsiExit}</span>}
+                                                            {c.exitRules.trailing && <span>· Trail: {c.exitRules.trailing}</span>}
+                                                            {c.exitRules.maxHold && <span>· Max {c.exitRules.maxHold}</span>}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>
@@ -5342,6 +5382,14 @@ export default function StrategyAnalysisPage() {
                                                         <span>RSI: {c.rsi14}</span>
                                                         {c.btWinRate !== null && <span>BT: <span className={`font-medium ${c.btWinRate >= 60 ? 'text-green-400' : c.btWinRate >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>{c.btWinRate}% ({c.btTrades})</span></span>}
                                                     </div>
+                                                    {c.exitRules && (
+                                                        <div className="mt-2 flex items-center gap-2 flex-wrap text-[9px] text-[var(--foreground-muted)] border-t border-[var(--card-border)]/30 pt-2">
+                                                            <span className="text-cyan-400/70">⏰ Exit:</span>
+                                                            {c.exitRules.rsiExit && <span>{c.exitRules.rsiExit}</span>}
+                                                            {c.exitRules.trailing && <span>· Trail: {c.exitRules.trailing}</span>}
+                                                            {c.exitRules.maxHold && <span>· Max {c.exitRules.maxHold}</span>}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>

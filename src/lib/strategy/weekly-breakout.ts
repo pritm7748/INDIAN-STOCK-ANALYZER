@@ -26,14 +26,14 @@ export const WB_CONFIG = {
 }
 
 export const FNO_SET = new Set([
-  'RELIANCE','SBIN','ICICIBANK','HDFCBANK','KOTAKBANK','AXISBANK',
-  'TCS','INFY','WIPRO','HCLTECH','TATAMOTORS','M&M','MARUTI',
-  'TATASTEEL','HINDALCO','JSWSTEEL','BAJFINANCE','BHARTIARTL','ADANIENT',
-  'LT','SUNPHARMA','ITC','TATAPOWER','DLF','BANKBARODA','PNB',
-  'INDUSINDBK','TECHM','POWERGRID','NTPC','BAJAJFINSV','ONGC',
-  'COALINDIA','VEDL','SAIL','TATACONSUM','CIPLA','DRREDDY',
-  'APOLLOHOSP','SBILIFE','BPCL','GAIL','HEROMOTOCO','EICHERMOT',
-  'DIVISLAB','ULTRACEMCO','TITAN','NESTLEIND','SHRIRAMFIN',
+  'RELIANCE', 'SBIN', 'ICICIBANK', 'HDFCBANK', 'KOTAKBANK', 'AXISBANK',
+  'TCS', 'INFY', 'WIPRO', 'HCLTECH', 'TATAMOTORS', 'M&M', 'MARUTI',
+  'TATASTEEL', 'HINDALCO', 'JSWSTEEL', 'BAJFINANCE', 'BHARTIARTL', 'ADANIENT',
+  'LT', 'SUNPHARMA', 'ITC', 'TATAPOWER', 'DLF', 'BANKBARODA', 'PNB',
+  'INDUSINDBK', 'TECHM', 'POWERGRID', 'NTPC', 'BAJAJFINSV', 'ONGC',
+  'COALINDIA', 'VEDL', 'SAIL', 'TATACONSUM', 'CIPLA', 'DRREDDY',
+  'APOLLOHOSP', 'SBILIFE', 'BPCL', 'GAIL', 'HEROMOTOCO', 'EICHERMOT',
+  'DIVISLAB', 'ULTRACEMCO', 'TITAN', 'NESTLEIND', 'SHRIRAMFIN',
 ])
 
 interface DCandle { date: string; open: number; high: number; low: number; close: number; volume: number }
@@ -238,7 +238,7 @@ function falseBreakoutHistory(wc: WCandle[], lookback = 20) {
   return { falseRate: r2(rate), maxConsecFalse: maxF, reliabilityScore: r2(clamp(100 - pen)), isSerialFalseBreaker: rate > 50 && total >= 3 }
 }
 
-function marketRegime(niftyW: WCandle[], lookback = 12) {
+export function marketRegime(niftyW: WCandle[], lookback = 12) {
   if (niftyW.length < lookback + 4) return null
   const recent = niftyW.slice(-lookback), closes = recent.map(w => w.close)
   const totalMove = Math.abs(closes[closes.length - 1] - closes[0])
@@ -354,7 +354,7 @@ function detectRetest(bDay: DCandle, rDay: DCandle, level: number, dir: string) 
 // ═══════════════════════════════════════════════════════════
 
 export function weekendScan(
-  stocks: { symbol: string; dailyCandles: DCandle[] }[],
+  stocks: { symbol: string; dailyCandles: DCandle[]; sector?: string }[],
   niftyDaily: DCandle[]
 ): { breakoutWatch: any[]; breakdownWatch: any[]; regime: any; niftyTrend: any; meta: any } {
   const niftyW = buildWeeklyCandles(niftyDaily)
@@ -381,13 +381,15 @@ export function weekendScan(
     const volP = preBreakoutVolPattern(wc, Math.min(base?.baseWeeks || 6, 8))
     const falseBo = falseBreakoutHistory(wc, 20)
     const w52 = fiftyTwoWeekContext(wc)
-    const closes = dc.map(c => c.close), vols = dc.map(c => c.volume)
+    const closes = dc.map(c => c.close)
     const rsi14 = dailyRSI(closes, 14), atr14 = dailyATR(dc, 14)
     const adr = avgDailyRange(dc, 20), adv = avgDailyVol(dc, 50), awv = avgWeeklyVol(wc, 10)
     const wvr = awv && awv > 0 ? pw.pwVolume / awv : 0
     const candleBias = candleFollowThroughBias(pw.pwCandleType, 'LONG')
+    const lastClose = dc[dc.length - 1].close
+    const sector = stock.sector || 'UNKNOWN'
 
-    // Filters
+    // Filters (P0: isFnO removed for LONG; P1: !nAbove50 removed for BD; P1: tightened PW close)
     const tight = pw.pwRangePct < WB_CONFIG.MAX_PW_RANGE_PCT
     const notShort = !pw.isShortWeek
     const vol = wvr >= WB_CONFIG.MIN_WEEKLY_VOL_MULTI
@@ -395,39 +397,61 @@ export function weekendScan(
     const rsiShort = rsi14 != null && rsi14 > WB_CONFIG.RSI_SHORT_MIN && rsi14 < WB_CONFIG.RSI_SHORT_MAX
     const reliab = !falseBo || falseBo.falseRate <= WB_CONFIG.MAX_FALSE_BO_RATE
     const rsOk = !rs || rs.rsScore >= WB_CONFIG.MIN_RS_SCORE
+    const closedUpper = pw.pwClosePos > 0.50
 
-    const isBO = tight && notShort && isFnO && vol && trend?.aboveSMA && rsiLong && reliab && rsOk && (pw.closedNearHigh || pw.closedMidRange)
-    const isBD = tight && notShort && isFnO && vol && trend && !trend.aboveSMA && rsiShort && reliab && pw.closedNearLow && !nAbove50
+    // P0: Any stock can break out (isFnO is bonus, not gate). Shorts still require isFnO (can't short non-F&O)
+    // P1: Breakdowns allowed even in bull Nifty (penalty in score instead)
+    // P1: PW close tightened from closedMidRange (>0.35) to closedUpper (>0.50)
+    const isBO = tight && notShort && vol && trend?.aboveSMA && rsiLong && reliab && rsOk && (pw.closedNearHigh || closedUpper)
+    const isBD = tight && notShort && isFnO && vol && trend && !trend.aboveSMA && rsiShort && reliab && pw.closedNearLow
 
     if (!isBO && !isBD) continue
 
     const dir = isBO ? 'LONG' : 'SHORT'
     let sc = 0
-    if (base) sc += (base.baseScore / 100) * 25
+    if (base) sc += (safeNum(base.baseScore) / 100) * 25
     if (trend) { sc += (dir === 'LONG' && trend.trend === 'STRONG_UPTREND' ? 15 : dir === 'LONG' && trend.trend === 'UPTREND' ? 10 : 3) }
-    if (rs) sc += ((dir === 'LONG' ? rs.rsScore : 100 - rs.rsScore) / 100) * 12
-    if (volP) sc += (volP.accumScore / 100) * 12
+    if (rs) sc += ((dir === 'LONG' ? safeNum(rs.rsScore) : 100 - safeNum(rs.rsScore)) / 100) * 12
+    if (volP) sc += (safeNum(volP.accumScore) / 100) * 12
     sc += (dir === 'LONG' ? pw.pwClosePos : 1 - pw.pwClosePos) * 8
-    if (falseBo) sc += (falseBo.reliabilityScore / 100) * 8
-    if (w52) sc += (w52.contextScore / 100) * 7
-    if (regime) sc += (regime.regimeScore / 100) * 5
+    if (falseBo) sc += (safeNum(falseBo.reliabilityScore) / 100) * 8
+    if (w52) sc += (safeNum(w52.contextScore) / 100) * 7
+    if (regime) sc += (safeNum(regime.regimeScore) / 100) * 5
     sc += candleBias * 4
     if (rsi14 != null) { if (dir === 'LONG' && rsi14 >= 55 && rsi14 <= 68) sc += 4; else if (dir === 'LONG' && rsi14 >= 48) sc += 2 }
+    // P0: F&O bonus for longs (more liquid, tradeable via futures)
+    if (isFnO && dir === 'LONG') sc += 4
+    // P1: Penalty for shorting when Nifty is in uptrend (instead of hard block)
+    if (dir === 'SHORT' && nAbove50) sc -= 6
 
-    const adrTarget = adr ? r2(pw.pwHigh + adr.adr * 3) : r2(pw.pwHigh + pw.pwRange)
+    // P3: Shorts use 2× ADR target (downside moves are faster in Indian markets)
+    const tgtLong = adr ? r2(pw.pwHigh + adr.adr * 3) : r2(pw.pwHigh + pw.pwRange)
+    const tgtShort = adr ? r2(pw.pwLow - adr.adr * 2) : r2(pw.pwLow - pw.pwRange * 0.8)
+
+    // P1: Enforce MAX_SL_PCT cap in live signals (was only in backtest before)
+    let slLong = base?.exists ? base.baseLowest : pw.pwLow
+    let slShort = base?.exists ? base.baseHighest : pw.pwHigh
+    const maxSlLong = pw.pwHigh * (1 - WB_CONFIG.MAX_SL_PCT / 100)
+    const maxSlShort = pw.pwLow * (1 + WB_CONFIG.MAX_SL_PCT / 100)
+    if (slLong < maxSlLong) slLong = maxSlLong
+    if (slShort > maxSlShort) slShort = maxSlShort
 
     const entry = {
-      symbol: stock.symbol, direction: dir, weekendScore: r2(sc), isFnO, pw,
+      symbol: stock.symbol, direction: dir, weekendScore: r2(clamp(sc)), isFnO, sector, pw,
       base, trend, relativeStrength: rs, volumePattern: volP, falseBreakoutHistory: falseBo,
       fiftyTwoWeek: w52, regime, pwCandleBias: candleBias,
       levels: {
         breakoutTrigger: pw.pwHigh, breakdownTrigger: pw.pwLow,
-        stopLossLong: base?.exists ? base.baseLowest : pw.pwLow,
-        stopLossShort: base?.exists ? base.baseHighest : pw.pwHigh,
-        targetLong: adrTarget,
-        targetShort: adr ? r2(pw.pwLow - adr.adr * 3) : r2(pw.pwLow - pw.pwRange),
+        stopLossLong: r2(slLong), stopLossShort: r2(slShort),
+        targetLong: tgtLong, targetShort: tgtShort,
       },
-      indicators: { rsi14, atr14, adr, avgDailyVolume: adv, avgWeeklyVolume: awv },
+      indicators: { rsi14, atr14, adr, avgDailyVolume: adv, avgWeeklyVolume: awv, lastClose },
+      exitRules: {
+        fridayExit: true,
+        trailingStop: `+${WB_CONFIG.TRAIL_ACTIVATION}% activates, locks ${WB_CONFIG.TRAIL_PROTECTION * 100}% of peak`,
+        failedBO: `Exit if inside PW range for ${WB_CONFIG.FAILED_BO_DAYS} consecutive days`,
+        maxSL: `${WB_CONFIG.MAX_SL_PCT}% max risk`,
+      },
     }
 
     if (isBO) boWatch.push(entry); else bdWatch.push(entry)
@@ -502,7 +526,9 @@ export function runWeeklyBacktest(
       }
       if (!entryDay) continue
 
-      const ePrice = entryType === 'RETEST' ? (detectRetest(wd[entryIdx - 1], entryDay, isLong ? pw.pwHigh : pw.pwLow, cand.direction)?.retestEntry || entryDay.close) : entryDay.close
+      // P2: Use breakout level + slippage instead of close for more realistic backtest
+      const boLevel = isLong ? pw.pwHigh * 1.002 : pw.pwLow * 0.998
+      const ePrice = entryType === 'RETEST' ? (detectRetest(wd[entryIdx - 1], entryDay, isLong ? pw.pwHigh : pw.pwLow, cand.direction)?.retestEntry || entryDay.close) : r2(boLevel)
       let sl = cand.base?.exists ? (isLong ? cand.base.baseLowest : cand.base.baseHighest) : (isLong ? pw.pwLow : pw.pwHigh)
       if (Math.abs((ePrice - sl) / ePrice) > 0.07) sl = isLong ? ePrice * 0.93 : ePrice * 1.07
 
@@ -616,6 +642,7 @@ function r4(n: number) { return Math.round(n * 10000) / 10000 }
 function clamp(v: number, min = 0, max = 100) { return Math.min(max, Math.max(min, v)) }
 function mapRange(v: number, i1: number, i2: number, o1: number, o2: number) { return ((v - i1) / (i2 - i1)) * (o2 - o1) + o1 }
 function dayGap(d1: string, d2: string) { return Math.round(Math.abs(new Date(d2).getTime() - new Date(d1).getTime()) / 864e5) }
+function safeNum(v: number | null | undefined, fallback = 0): number { if (v == null || isNaN(v) || !isFinite(v)) return fallback; return v }
 function linSlope(vals: number[]) {
   const n = vals.length; if (n < 2) return 0
   let sx = 0, sy = 0, sxy = 0, sx2 = 0
