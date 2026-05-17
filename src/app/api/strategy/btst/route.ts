@@ -54,7 +54,8 @@ export async function GET() {
             if (niftyCandles.length >= 2) {
               const last = niftyCandles[niftyCandles.length - 1]
               const prev = niftyCandles[niftyCandles.length - 2]
-              niftyChangePercent = ((last.close - prev.close) / prev.close) * 100
+              // P1: Use open-to-close (consistent with backtest)
+              niftyChangePercent = ((last.close - last.open) / last.open) * 100
               niftyPositive = niftyChangePercent > 0
             }
           }
@@ -208,6 +209,28 @@ export async function GET() {
             deliveryEst: c.indicators.deliveryEstimate,
             gapUpProb: c.gapHistory?.afterBullishDay?.upProb ?? null,
             isFnO: FNO_SYMBOLS.has(c.symbol),
+            // P0: Exit rules / trade management
+            stopLoss: c.indicators.atr14
+              ? Math.round((c.direction === 'LONG'
+                ? c.indicators.close - c.indicators.atr14 * BTST_CONFIG.SL_ATR_MULTIPLE
+                : c.indicators.close + c.indicators.atr14 * BTST_CONFIG.SL_ATR_MULTIPLE) * 100) / 100
+              : Math.round((c.direction === 'LONG'
+                ? c.indicators.close * (1 - BTST_CONFIG.FALLBACK_SL_PCT / 100)
+                : c.indicators.close * (1 + BTST_CONFIG.FALLBACK_SL_PCT / 100)) * 100) / 100,
+            slPct: c.indicators.atr14
+              ? Math.round((c.indicators.atr14 * BTST_CONFIG.SL_ATR_MULTIPLE / c.indicators.close) * 10000) / 100
+              : BTST_CONFIG.FALLBACK_SL_PCT,
+            target: c.indicators.atr14
+              ? Math.round((c.direction === 'LONG'
+                ? c.indicators.close + c.indicators.atr14 * BTST_CONFIG.TARGET_ATR_MULTIPLE
+                : c.indicators.close - c.indicators.atr14 * BTST_CONFIG.TARGET_ATR_MULTIPLE) * 100) / 100
+              : Math.round((c.direction === 'LONG' ? c.indicators.close * 1.025 : c.indicators.close * 0.975) * 100) / 100,
+            exitRules: {
+              primary: 'Sell at next day open',
+              stopLoss: c.indicators.atr14 ? `${BTST_CONFIG.SL_ATR_MULTIPLE}× ATR below entry` : `${BTST_CONFIG.FALLBACK_SL_PCT}% below entry`,
+              target: c.indicators.atr14 ? `${BTST_CONFIG.TARGET_ATR_MULTIPLE}× ATR above entry` : '2.5% above entry',
+              riskPerTrade: `${BTST_CONFIG.MAX_RISK_PER_TRADE * 100}% of capital`,
+            },
           })),
           backtest: backtestResult.summary,
           drawdown: backtestResult.drawdown,

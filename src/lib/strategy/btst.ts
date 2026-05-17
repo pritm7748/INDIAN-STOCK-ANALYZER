@@ -38,11 +38,11 @@ export const BTST_CONFIG = {
   WEIGHT_CLOSING_STRENGTH: 15,
   WEIGHT_VOLUME: 12,
   WEIGHT_LAST_HOUR: 15,         // proxy from daily close position
-  WEIGHT_VWAP: 8,
+  WEIGHT_VWAP: 0,            // disabled — (close+EMA20)/2 is not real VWAP
   WEIGHT_DELIVERY: 10,
   WEIGHT_TREND: 8,
   WEIGHT_RSI: 5,
-  WEIGHT_GAP_TENDENCY: 7,
+  WEIGHT_GAP_TENDENCY: 12,    // redistributed from VWAP
   WEIGHT_SECTOR: 5,
 
   // Trade management
@@ -63,6 +63,7 @@ export const BTST_CONFIG = {
   LOOKBACK_DAILY: 30,           // days of history for indicators
   GAP_HISTORY_LOOKBACK: 120,
   SKIP_FRIDAYS: true,
+  MIN_AVG_VOLUME: 200000,     // min 200K avg daily volume
 }
 
 // F&O segment stocks (liquid, can short via futures)
@@ -349,12 +350,12 @@ export function evaluateBTST(
     aboveEma: { value: today.close, ema: ema20, pass: ema20 !== null && today.close > ema20 },
     niftyPositive: { value: r2(market.niftyChangePercent), pass: market.niftyPositive },
     rsi: { value: rsi14, pass: rsi14 !== null && rsi14 >= BTST_CONFIG.RSI_MIN && rsi14 <= BTST_CONFIG.RSI_MAX },
-    fno: { value: isFnO, pass: isFnO },
+    fno: { value: isFnO, pass: true },  // P0: F&O not required for BTST longs (cash segment)
     notCircuit: { pass: !circuit.isUpperCircuit },
     candleBody: { pass: body.isBullish && body.bodyPercent > BTST_CONFIG.MIN_BODY_PERCENT },
   }
 
-  const coreKeys: (keyof BTSTChecks)[] = ['dayChange', 'closingStrength', 'volume', 'aboveEma', 'niftyPositive', 'rsi', 'fno']
+  const coreKeys: (keyof BTSTChecks)[] = ['dayChange', 'closingStrength', 'volume', 'aboveEma', 'niftyPositive', 'rsi', 'fno', 'candleBody']
   let passCount = 0, firstFailure: string | null = null
   for (const k of coreKeys) {
     if (checks[k].pass) passCount++
@@ -427,7 +428,7 @@ export function evaluateSTBT(
     candleBody: { pass: !body.isBullish && body.bodyPercent > BTST_CONFIG.MIN_BODY_PERCENT },
   }
 
-  const coreKeys: (keyof BTSTChecks)[] = ['dayChange', 'closingStrength', 'volume', 'aboveEma', 'niftyPositive', 'rsi', 'fno']
+  const coreKeys: (keyof BTSTChecks)[] = ['dayChange', 'closingStrength', 'volume', 'aboveEma', 'niftyPositive', 'rsi', 'fno', 'candleBody']
   let passCount = 0, firstFailure: string | null = null
   for (const k of coreKeys) {
     if (checks[k].pass) passCount++
@@ -469,15 +470,17 @@ export function scanBTST(
 
   for (const stock of stocks) {
     if (stock.dailyCandles.length < BTST_CONFIG.LOOKBACK_DAILY + 2) continue
+    // P1: Liquidity filter
+    const vols = stock.dailyCandles.slice(-20).map(c => c.volume)
+    const avgVol = vols.reduce((a, b) => a + b, 0) / (vols.length || 1)
+    if (avgVol < BTST_CONFIG.MIN_AVG_VOLUME) continue
     const isFnO = FNO_SYMBOLS.has(stock.symbol)
 
-    if (market.niftyPositive) {
-      const result = evaluateBTST(stock.symbol, stock.dailyCandles, isFnO, market)
-      if (result.passed) btstCandidates.push(result)
-    } else {
-      const result = evaluateSTBT(stock.symbol, stock.dailyCandles, isFnO, market)
-      if (result.passed) stbtCandidates.push(result)
-    }
+    // P0: Run BOTH BTST + STBT for every stock (not market-gated)
+    const btstResult = evaluateBTST(stock.symbol, stock.dailyCandles, isFnO, market)
+    if (btstResult.passed) btstCandidates.push(btstResult)
+    const stbtResult = evaluateSTBT(stock.symbol, stock.dailyCandles, isFnO, market)
+    if (stbtResult.passed) stbtCandidates.push(stbtResult)
   }
 
   btstCandidates.sort((a, b) => b.compositeScore - a.compositeScore)
@@ -883,7 +886,7 @@ function buildDrawdown(trades: BTSTTrade[]) {
 // ═══════════════════════════════════════════════════════════
 
 function safeMean(arr: number[]): number { return arr.length === 0 ? 0 : arr.reduce((a, b) => a + b, 0) / arr.length }
-function r2(n: number) { return Math.round(n * 100) / 100 }
+function r2(n: number | null | undefined) { return n != null && !isNaN(n as number) ? Math.round((n as number) * 100) / 100 : 0 }
 function r4(n: number) { return Math.round(n * 10000) / 10000 }
 
 function computeSharpe(pnls: number[]): number {

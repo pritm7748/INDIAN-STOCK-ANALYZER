@@ -4385,12 +4385,15 @@ export default function StrategyAnalysisPage() {
                                                         <th className="pb-2 pr-2">Vol×</th>
                                                         <th className="pb-2 pr-2">RSI</th>
                                                         <th className="pb-2 pr-2">Gap↑%</th>
+                                                        <th className="pb-2 pr-2">SL</th>
+                                                        <th className="pb-2 pr-2">Target</th>
                                                         <th className="pb-2">Action</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {btstResult.candidates.map((c: any) => (
-                                                        <tr key={c.rank} className="border-b border-[var(--card-border)]/30">
+                                                    {btstResult.candidates.map((c: any, _cIdx: number) => (
+                                                        <>
+                                                        <tr key={`r-${c.rank}`} className="border-b border-[var(--card-border)]/30">
                                                             <td className="py-1.5 pr-2 text-[var(--foreground-muted)]">{c.rank}</td>
                                                             <td className="py-1.5 pr-3 font-medium text-[var(--foreground)]">
                                                                 {c.symbol}
@@ -4417,6 +4420,8 @@ export default function StrategyAnalysisPage() {
                                                                     </span>
                                                                 ) : <span className="text-[var(--foreground-muted)]">-</span>}
                                                             </td>
+                                                            <td className="py-1.5 pr-2 text-red-400 font-medium">₹{c.stopLoss}</td>
+                                                            <td className="py-1.5 pr-2 text-green-400 font-medium">₹{c.target}</td>
                                                             <td className="py-1.5">
                                                                 <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
                                                                     c.action === 'STRONG BUY' ? 'bg-green-500/10 text-green-400' :
@@ -4425,6 +4430,20 @@ export default function StrategyAnalysisPage() {
                                                                 }`}>{c.action}</span>
                                                             </td>
                                                         </tr>
+                                                        {c.exitRules && (
+                                                            <tr className="border-b border-[var(--card-border)]/10">
+                                                                <td colSpan={12} className="py-1 pl-6">
+                                                                    <div className="flex items-center gap-3 flex-wrap text-[9px] text-[var(--foreground-muted)]">
+                                                                        <span className="text-cyan-400/70">⏰ Exit:</span>
+                                                                        <span>{c.exitRules.primary}</span>
+                                                                        <span>· SL: {c.exitRules.stopLoss}</span>
+                                                                        <span>· Tgt: {c.exitRules.target}</span>
+                                                                        <span>· Risk: {c.exitRules.riskPerTrade}</span>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        )}
+                                                        </>
                                                     ))}
                                                 </tbody>
                                             </table>
