@@ -25,6 +25,7 @@ export interface MomentumConfig {
   TRADING_DAYS_PER_YEAR: number
   RISK_FREE_RATE: number
   EARNINGS_BLACKOUT_DAYS: number
+  MAX_SECTOR_CONCENTRATION: number
 }
 
 export interface StockData {
@@ -137,6 +138,7 @@ export const DEFAULT_CONFIG: MomentumConfig = {
   TRADING_DAYS_PER_YEAR: 252,
   RISK_FREE_RATE: 0.065,
   EARNINGS_BLACKOUT_DAYS: 5,
+  MAX_SECTOR_CONCENTRATION: 3,  // max stocks from one sector
 }
 
 // ============================================================================
@@ -344,12 +346,12 @@ export function generateMomentumPortfolio(
   const regime = checkMarketRegime(niftyPrices, cfg.NIFTY_SMA_PERIOD)
 
   const performanceMetrics: PerformanceMetrics = {
-    expectedCAGR: '18-28%',
-    expectedWinRate: '55-62%',
-    avgWinnerLoserRatio: '1.8 : 1',
-    maxDrawdownRange: '20-35%',
-    sharpeEstimate: '0.8-1.2',
-    methodology: 'Jegadeesh & Titman (1993) — Multi-period momentum with composite scoring',
+    expectedCAGR: '18-28% (academic benchmark)',
+    expectedWinRate: '55-62% (academic benchmark)',
+    avgWinnerLoserRatio: '1.8 : 1 (academic benchmark)',
+    maxDrawdownRange: '20-35% (academic benchmark)',
+    sharpeEstimate: '0.8-1.2 (academic benchmark)',
+    methodology: 'Jegadeesh & Titman (1993) — Multi-period momentum. Metrics are academic benchmarks, not backtested on this universe.',
   }
 
   if (!regime.isBull) {
@@ -392,11 +394,17 @@ export function generateMomentumPortfolio(
 
     const volatility = calcRealizedVolatility(stock.prices, 20, cfg.TRADING_DAYS_PER_YEAR) || 0
 
+    // P1: Risk-adjust composite — divide by volatility for ranking
+    const riskAdjustedComposite = volatility > 0
+      ? momentum.composite / volatility
+      : momentum.composite
+
     scored.push({
       symbol: stock.symbol,
       name: stock.name,
       sector: stock.sector,
       ...momentum,
+      composite: riskAdjustedComposite,
       volatility,
       currentPrice: stock.prices[stock.prices.length - 1],
       avgDailyTurnoverCr: stock.avgDailyTurnoverCr,
@@ -404,11 +412,26 @@ export function generateMomentumPortfolio(
     })
   }
 
-  // Step 2: Rank by composite score
-  scored.sort((a, b) => b.composite - a.composite)
+  // P0: Filter out negative-momentum stocks
+  const positiveOnly = scored.filter(s => s.composite > 0)
 
-  // Step 3: Pick top N
-  const topStocks = scored.slice(0, cfg.TOP_N_STOCKS)
+  // Step 2: Rank by risk-adjusted composite score
+  positiveOnly.sort((a, b) => b.composite - a.composite)
+
+  // Step 3: Pick top N with sector concentration cap
+  const topStocks: typeof positiveOnly = []
+  const sectorCount: Record<string, number> = {}
+  for (const s of positiveOnly) {
+    if (topStocks.length >= cfg.TOP_N_STOCKS) break
+    const sec = s.sector || 'Unknown'
+    const count = sectorCount[sec] || 0
+    if (count >= cfg.MAX_SECTOR_CONCENTRATION) {
+      filteredOut.push({ symbol: s.symbol, name: s.name, reason: `Sector cap: ${sec} already has ${cfg.MAX_SECTOR_CONCENTRATION} picks` })
+      continue
+    }
+    topStocks.push(s)
+    sectorCount[sec] = count + 1
+  }
 
   // Step 4: Calculate weights (inverse-volatility)
   const totalInvVol = topStocks.reduce((sum, s) => {
@@ -424,9 +447,9 @@ export function generateMomentumPortfolio(
     const stockData = universe.find(u => u.symbol === s.symbol)
     const trailingLevel = stockData ? calcTrailingStopLevel(stockData.prices, cfg.TRAILING_STOP_LOOKBACK) : null
 
-    // Trailing stop only active if hypothetical gain already exceeds activation threshold
-    // For a fresh scan, we check recent price action: if 10-day low is above the hard SL
-    const trailingActive = trailingLevel !== null && trailingLevel > hardStopLoss
+    // P0: Trailing stop is NEVER active for new (un-entered) positions.
+    // It activates only after entry when position gains >= TRAILING_STOP_ACTIVATION.
+    const trailingActive = false
 
     const dsh = stockData ? daysSinceHigh(stockData.prices) : 0
     const vs52w = stockData ? priceVs52wHigh(stockData.prices) : null

@@ -463,15 +463,15 @@ export function checkMarketRegime(niftyCloses: number[], cfg: MeanReversionConfi
 export function scanUniverse(universe: MRStockData[], niftyCloses: number[], currentDate: string | null = null, cfg: MeanReversionConfig = DEFAULT_MR_CONFIG): MRScanResult {
   const regime = checkMarketRegime(niftyCloses, cfg)
   if (!regime.tradeable) {
-    return { date: currentDate, regime, signal: 'NO_TRADES', message: regime.reason, candidates: [], totalScanned: universe.length, totalFiltered: 0, signalCount: 0, signals: [], filtered: [], watchlist: [], positionSizeMultiplier: 1.0, config: cfg, performance: { expectedWinRate: '70-80%', avgGain: '3-5%', avgHoldingDays: '4-7 days', maxDrawdown: '10-15%' } }
+    return { date: currentDate, regime, signal: 'NO_TRADES', message: regime.reason, candidates: [], totalScanned: universe.length, totalFiltered: 0, signalCount: 0, signals: [], filtered: [], watchlist: [], positionSizeMultiplier: 1.0, config: cfg, performance: { expectedWinRate: '70-80% (academic benchmark)', avgGain: '3-5% (academic benchmark)', avgHoldingDays: '4-7 days', maxDrawdown: '10-15% (academic benchmark)' } }
   }
   const signals: any[] = []
   const filtered: any[] = []
   const notTriggered: any[] = []
 
   for (const stock of universe) {
-    if (stock.avgDailyTurnoverCr && stock.avgDailyTurnoverCr < cfg.MIN_AVG_TURNOVER_CR) {
-      filtered.push({ symbol: stock.symbol, name: stock.name, reason: `Turnover ₹${stock.avgDailyTurnoverCr.toFixed(1)}cr < ₹${cfg.MIN_AVG_TURNOVER_CR}cr` }); continue
+    if (stock.avgDailyTurnoverCr == null || stock.avgDailyTurnoverCr < cfg.MIN_AVG_TURNOVER_CR) {
+      filtered.push({ symbol: stock.symbol, name: stock.name, reason: `Turnover ₹${(stock.avgDailyTurnoverCr ?? 0).toFixed(1)}cr < ₹${cfg.MIN_AVG_TURNOVER_CR}cr` }); continue
     }
     if (stock.closes && stock.closes[stock.closes.length - 1] < cfg.MIN_PRICE) {
       filtered.push({ symbol: stock.symbol, name: stock.name, reason: `Price ₹${stock.closes[stock.closes.length - 1]} below ₹${cfg.MIN_PRICE}` }); continue
@@ -487,7 +487,7 @@ export function scanUniverse(universe: MRStockData[], niftyCloses: number[], cur
   }
   signals.sort((a, b) => b.qualityScore - a.qualityScore)
   const watchlist = notTriggered.filter(s => s.score >= 3 && s.aboveSma200).sort((a, b) => { const rA = parseFloat(a.rsi2) || 100; const rB = parseFloat(b.rsi2) || 100; return rA - rB }).slice(0, 10)
-  return { date: currentDate, regime, totalScanned: universe.length, totalFiltered: filtered.length, signalCount: signals.length, signals, filtered, watchlist, positionSizeMultiplier: regime.positionSizeMultiplier || 1.0, config: cfg, performance: { expectedWinRate: '70-80%', avgGain: '3-5%', avgHoldingDays: '4-7 days', maxDrawdown: '10-15%' } }
+  return { date: currentDate, regime, totalScanned: universe.length, totalFiltered: filtered.length, signalCount: signals.length, signals, filtered, watchlist, positionSizeMultiplier: regime.positionSizeMultiplier || 1.0, config: cfg, performance: { expectedWinRate: '70-80% (academic benchmark)', avgGain: '3-5% (academic benchmark)', avgHoldingDays: '4-7 days', maxDrawdown: '10-15% (academic benchmark)' } }
 }
 
 // ============================================================================

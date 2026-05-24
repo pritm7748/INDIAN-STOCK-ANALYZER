@@ -320,7 +320,7 @@ export function calcStockMomentum(prices: number[], cfg: SRConfig = DEFAULT_SR_C
 export function selectStocksInSector(sectorStocks: any[], count: number = DEFAULT_SR_CONFIG.STOCKS_PER_SECTOR, cfg: SRConfig = DEFAULT_SR_CONFIG) {
   const scored: any[] = []
   for (const stock of sectorStocks) {
-    if (stock.avgDailyTurnoverCr && stock.avgDailyTurnoverCr < cfg.MIN_AVG_TURNOVER_CR) continue
+    if (stock.avgDailyTurnoverCr == null || stock.avgDailyTurnoverCr < cfg.MIN_AVG_TURNOVER_CR) continue
     if (!stock.prices || stock.prices.length < cfg.RS_LOOKBACK_3M + 10) continue
     const momentum = calcStockMomentum(stock.prices, cfg); if (!momentum) continue
     const vol = calcVolatility(stock.prices)

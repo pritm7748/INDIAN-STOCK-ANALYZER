@@ -381,7 +381,7 @@ export function analyzeBulkDeal(dealData: any, stockData: any): any {
   } else { conditions.push({ name: 'PRICE_CONVICTION', met: false, detail: 'No market price data available' }) }
 
   // CONDITION 4: Liquidity
-  const isLiquid = stockData.avgDailyTurnoverCr && stockData.avgDailyTurnoverCr >= CONFIG.MIN_AVG_TURNOVER_CR
+  const isLiquid = stockData.avgDailyTurnoverCr != null && stockData.avgDailyTurnoverCr >= CONFIG.MIN_AVG_TURNOVER_CR
   if (isLiquid) {
     score++; conditions.push({ name: 'LIQUIDITY', met: true, detail: `Avg turnover ₹${stockData.avgDailyTurnoverCr}cr` })
   } else { conditions.push({ name: 'LIQUIDITY', met: false, detail: `Avg turnover ₹${stockData.avgDailyTurnoverCr || 0}cr < ₹${CONFIG.MIN_AVG_TURNOVER_CR}cr` }) }

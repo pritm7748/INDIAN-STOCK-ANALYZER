@@ -119,8 +119,22 @@ export async function GET() {
 
         const scanResult = scanUniverse(allStockData, currentDate, DEFAULT_SWING_CONFIG)
 
+        // P2: Enrich signals with per-stock exit rules for UI
+        const enrichSignal = (s: any) => ({
+          ...s,
+          exitRules: s.trade ? {
+            stopLoss: `Hard SL at ₹${s.trade.stopLoss} (${s.trade.riskPct})`,
+            target: s.trade.target1 ? `T1: ₹${s.trade.target1} (${s.trade.target1Pct})` : s.trade.targetMethod,
+            trailing: s.trade.target2Method || '10-EMA trailing stop',
+            partial: s.trade.partialExitAt || null,
+            timeStop: s.trade.timeStop || `Max ${DEFAULT_SWING_CONFIG.MAX_HOLDING_DAYS} trading days`,
+          } : null,
+        })
+
         send('result', {
           ...scanResult,
+          setupA_signals: scanResult.setupA_signals.map(enrichSignal),
+          setupB_signals: scanResult.setupB_signals.map(enrichSignal),
           fetchStats: {
             totalSymbols: allSymbols.length,
             successfulFetches: allStockData.length,

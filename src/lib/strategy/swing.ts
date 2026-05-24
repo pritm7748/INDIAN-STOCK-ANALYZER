@@ -752,7 +752,15 @@ export function checkSetupB_MacdCrossover(indicators: IndicatorSnapshot, cfg: Sw
   }
 
   // SIGNAL DECISION — 4 of 5 met AND must have crossover AND volume surge
-  const triggered = score >= 4 && indicators.macdBullishCrossover && volumeSurge
+  // P0: Also require uptrend (price > SMA50 or at minimum EMA20)
+  const hasUptrend = indicators.sma50 !== null
+    ? indicators.close > indicators.sma50
+    : (indicators.ema20 !== null && indicators.close > indicators.ema20)
+  const triggered = score >= 4 && indicators.macdBullishCrossover && volumeSurge && hasUptrend
+
+  if (!hasUptrend && !reasons.some(r => r.includes('uptrend'))) {
+    reasons.push('✗ No uptrend (price below 50-SMA)')
+  }
 
   let trade: TradeParams | null = null
 
@@ -800,11 +808,11 @@ export function applyIndianMarketFilters(
   }
 
   // 2. Minimum turnover
-  if (stock.avgDailyTurnoverCr && stock.avgDailyTurnoverCr < cfg.MIN_AVG_TURNOVER_CR) {
+  if (stock.avgDailyTurnoverCr == null || stock.avgDailyTurnoverCr < cfg.MIN_AVG_TURNOVER_CR) {
     return {
       pass: false,
       warnings,
-      reason: `Avg turnover ₹${stock.avgDailyTurnoverCr.toFixed(1)}cr < ₹${cfg.MIN_AVG_TURNOVER_CR}cr minimum`,
+      reason: `Avg turnover ₹${(stock.avgDailyTurnoverCr ?? 0).toFixed(1)}cr < ₹${cfg.MIN_AVG_TURNOVER_CR}cr minimum`,
     }
   }
 
@@ -988,10 +996,10 @@ export function scanUniverse(
       })
       .slice(0, 20),
     performance: {
-      expectedWinRate: '55-65%',
-      rewardRisk: '2:1 to 3:1',
+      expectedWinRate: '55-65% (academic benchmark)',
+      rewardRisk: '2:1 to 3:1 (academic benchmark)',
       avgHoldingDays: '10-20 trading days',
-      methodology: 'Mark Minervini 20-EMA pullback + MACD crossover with volume confirmation',
+      methodology: 'Mark Minervini 20-EMA pullback + MACD crossover. Metrics are academic benchmarks, not backtested on this universe.',
     },
     config: cfg,
   }
@@ -1100,8 +1108,8 @@ export function monitorPosition(
     }
   }
 
-  // 4. DEAD MONEY TIME STOP
-  if (daysSinceEntry >= cfg.DEAD_MONEY_DAYS && pnlPct < cfg.DEAD_MONEY_THRESHOLD) {
+  // 4. DEAD MONEY TIME STOP — exit if barely moved after 15 days
+  if (daysSinceEntry >= cfg.DEAD_MONEY_DAYS && pnlPct < 0.01) {
     return {
       action: 'EXIT_FULL',
       reason: 'DEAD_MONEY',

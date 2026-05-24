@@ -1660,6 +1660,17 @@ export default function StrategyAnalysisPage() {
                                                             </div>
                                                         ))}
                                                     </div>
+
+                                                    {/* Exit Rules */}
+                                                    {(h as any).exitRules && (
+                                                        <div className="mt-2 flex items-center gap-2 flex-wrap text-[9px] text-[var(--foreground-muted)] border-t border-[var(--card-border)]/30 pt-2">
+                                                            <span className="text-cyan-400/70">⏰ Exit:</span>
+                                                            <span>{(h as any).exitRules.stopLoss}</span>
+                                                            {(h as any).exitRules.trailing && <span>· {(h as any).exitRules.trailing}</span>}
+                                                            <span>· {(h as any).exitRules.exit}</span>
+                                                            <span>· {(h as any).exitRules.sizing}</span>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>
@@ -1964,6 +1975,18 @@ export default function StrategyAnalysisPage() {
                                                         ))}
                                                     </div>
                                                 )}
+
+                                                {/* Exit Rules */}
+                                                {sig.exitRules && (
+                                                    <div className="flex items-center gap-2 flex-wrap text-[9px] text-[var(--foreground-muted)] border-t border-[var(--card-border)]/30 pt-2">
+                                                        <span className="text-emerald-400/70">⏰ Exit:</span>
+                                                        <span>{sig.exitRules.stopLoss}</span>
+                                                        {sig.exitRules.target && <span>· {sig.exitRules.target}</span>}
+                                                        <span>· {sig.exitRules.trailing}</span>
+                                                        {sig.exitRules.partial && <span>· {sig.exitRules.partial}</span>}
+                                                        <span>· {sig.exitRules.timeStop}</span>
+                                                    </div>
+                                                )}
                                             </div>
                                         ))}
                                     </div>
@@ -2029,6 +2052,17 @@ export default function StrategyAnalysisPage() {
                                                         {sig.warnings.map((w: string, i: number) => (
                                                             <span key={i} className="px-2 py-0.5 bg-amber-500/10 text-amber-400 text-[9px] rounded-lg">⚠️ {w}</span>
                                                         ))}
+                                                    </div>
+                                                )}
+
+                                                {/* Exit Rules */}
+                                                {sig.exitRules && (
+                                                    <div className="flex items-center gap-2 flex-wrap text-[9px] text-[var(--foreground-muted)] border-t border-[var(--card-border)]/30 pt-2">
+                                                        <span className="text-violet-400/70">⏰ Exit:</span>
+                                                        <span>{sig.exitRules.stopLoss}</span>
+                                                        {sig.exitRules.target && <span>· {sig.exitRules.target}</span>}
+                                                        <span>· {sig.exitRules.trailing}</span>
+                                                        <span>· {sig.exitRules.timeStop}</span>
                                                     </div>
                                                 )}
                                             </div>

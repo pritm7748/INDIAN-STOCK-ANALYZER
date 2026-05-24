@@ -120,9 +120,21 @@ export async function GET() {
         const currentDate = new Date(Date.now() + (5.5 * 60 * 60 * 1000)).toISOString().slice(0, 10) // IST
         const scanResult = scanUniverse(stockDataList, niftyCloses, currentDate)
 
+        // P2: Enrich signals with per-stock exit rules for UI
+        const enrichedSignals = scanResult.signals.map((s: any) => ({
+          ...s,
+          exitRules: s.trade ? {
+            stopLoss: `${s.trade.stopMethod}`,
+            exit1: s.trade.exitConditions?.rsi2_overbought || `RSI(2) > ${DEFAULT_MR_CONFIG.RSI2_OVERBOUGHT}`,
+            exit2: s.trade.exitConditions?.above_5sma || `Close > 5-SMA`,
+            timeStop: s.trade.exitConditions?.time_stop || `${DEFAULT_MR_CONFIG.TIME_STOP_DAYS} days no bounce`,
+            target: `BB middle ₹${s.trade.bbMiddleTarget} (${s.trade.expectedBounce})`,
+          } : null,
+        }))
+
         send({
           type: 'result',
-          data: scanResult,
+          data: { ...scanResult, signals: enrichedSignals },
           summary: {
             totalScanned: scanResult.totalScanned,
             signalCount: scanResult.signalCount,

@@ -130,8 +130,22 @@ export async function GET() {
 
         const portfolio = generateMomentumPortfolio(allStockData, niftyPrices, DEFAULT_CONFIG)
 
+        // P2: Enrich holdings with explicit exitRules for UI consistency
+        const enrichedHoldings = portfolio.holdings.map(h => ({
+          ...h,
+          exitRules: {
+            stopLoss: `Hard SL at ₹${h.stopLoss.toFixed(2)} (-${(DEFAULT_CONFIG.STOP_LOSS_PCT * 100).toFixed(0)}%)`,
+            trailing: h.trailingStopLevel !== null
+              ? `Trail at ${DEFAULT_CONFIG.TRAILING_STOP_LOOKBACK}-day low (₹${h.trailingStopLevel.toFixed(2)}) — activates after +${(DEFAULT_CONFIG.TRAILING_STOP_ACTIVATION * 100).toFixed(0)}%`
+              : null,
+            exit: `Time exit on ${portfolio.rebalance.exitDate} (~${DEFAULT_CONFIG.HOLDING_PERIOD} trading days)`,
+            sizing: `Weight: ${(h.weightInvVol * 100).toFixed(1)}% (inv-vol)`,
+          },
+        }))
+
         send('result', {
           ...portfolio,
+          holdings: enrichedHoldings,
           fetchStats: {
             totalSymbols: allSymbols.length,
             successfulFetches: allStockData.length,
